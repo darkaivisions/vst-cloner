@@ -12,14 +12,18 @@
     "profile",
     "capture",
     "agent",
-    "clone"
+    "clone",
+    "bridge",
+    "apps/desktop"
   ],
   "scripts": {
     "vch": "node capture/bin/vch.ts",
-    "typecheck": "tsc -p tsconfig.json",
-    "test": "node --test \"profile/test/*.test.ts\" \"capture/test/*.test.ts\" \"agent/test/*.test.ts\" \"clone/test/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json && tsc -p apps/desktop/tsconfig.json",
+    "test": "node --test \"profile/test/*.test.ts\" \"capture/test/*.test.ts\" \"agent/test/*.test.ts\" \"clone/test/*.test.ts\" \"bridge/test/*.test.ts\"",
     "host:configure": "cmake -S host -B host/build -DCMAKE_BUILD_TYPE=Release",
-    "host:build": "cmake --build host/build --config Release --parallel"
+    "host:build": "cmake --build host/build --config Release --parallel",
+    "app": "npm run tauri --workspace @vst-cloner/desktop -- dev",
+    "app:build": "npm run tauri --workspace @vst-cloner/desktop -- build"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

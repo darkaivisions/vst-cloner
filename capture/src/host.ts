@@ -95,11 +95,28 @@ export function findHost(): string {
 }
 
 /** Runs vch-host and returns its JSON messages. `onMessage` receives them as they arrive. */
-export function runHost(args: string[], options: { hostPath?: string; onMessage?: (m: HostMessage) => void } = {}): Promise<HostMessage[]> {
+export class CancelledError extends Error {
+  constructor() {
+    super("cancelled");
+    this.name = "CancelledError";
+  }
+}
+
+export function throwIfCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new CancelledError();
+}
+
+export function runHost(
+  args: string[],
+  options: { hostPath?: string; onMessage?: (m: HostMessage) => void; signal?: AbortSignal } = {},
+): Promise<HostMessage[]> {
   const hostPath = options.hostPath ?? findHost();
+  throwIfCancelled(options.signal);
 
   return new Promise((resolve, reject) => {
     const child = spawn(hostPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const onAbort = () => child.kill();
+    options.signal?.addEventListener("abort", onAbort, { once: true });
     const messages: HostMessage[] = [];
     let buffered = "";
     let stderr = "";
@@ -129,8 +146,10 @@ export function runHost(args: string[], options: { hostPath?: string; onMessage?
 
     child.on("error", (error) => reject(new HostError(`cannot start vch-host: ${error.message}`)));
     child.on("close", (code, signal) => {
+      options.signal?.removeEventListener("abort", onAbort);
       const error = messages.find((m) => m.type === "error");
-      if (error) reject(new HostError(error.message, stderr));
+      if (options.signal?.aborted) reject(new CancelledError());
+      else if (error) reject(new HostError(error.message, stderr));
       else if (code !== 0) reject(new HostError(`vch-host exited with ${signal ?? `code ${code}`}`, stderr));
       else resolve(messages);
     });
@@ -149,13 +168,19 @@ export async function hostVersion(hostPath?: string): Promise<string> {
   });
 }
 
-export async function pluginInfo(plugin: string, options: { identifier?: string; sampleRate?: number; channels?: number; hostPath?: string } = {}): Promise<HostInfo> {
+export async function pluginInfo(
+  plugin: string,
+  options: { identifier?: string; sampleRate?: number; channels?: number; hostPath?: string; signal?: AbortSignal } = {},
+): Promise<HostInfo> {
   const args = ["info", plugin];
   if (options.identifier) args.push("--id", options.identifier);
   if (options.sampleRate) args.push("--sample-rate", String(options.sampleRate));
   if (options.channels) args.push("--channels", String(options.channels));
 
-  const messages = await runHost(args, options.hostPath ? { hostPath: options.hostPath } : {});
+  const messages = await runHost(args, {
+    ...(options.hostPath ? { hostPath: options.hostPath } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
   const info = messages.find((m): m is HostInfo => m.type === "info");
   if (!info) throw new HostError("vch-host returned no plugin info");
   return info;

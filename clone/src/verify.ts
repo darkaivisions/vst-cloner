@@ -37,18 +37,18 @@ function summarize(rows: { rms: number; max: number }[]): FitStats {
 }
 
 /** Renders the clone with every captured setting and compares it with the original. */
-export async function verifyClone(profile: Profile, model: EqModel, clonePath: string, options: { log: Logger; hostPath?: string }): Promise<VerifyReport> {
+export async function verifyClone(profile: Profile, model: EqModel, clonePath: string, options: { log: Logger; hostPath?: string; signal?: AbortSignal }): Promise<VerifyReport> {
   const { log } = options;
   const sampleRate = profile.manifest.capture.sampleRate;
   const parameters = profile.parameters.parameters;
   const grid = logGrid(sampleRate);
 
-  const info = await pluginInfo(clonePath, { sampleRate, ...(options.hostPath ? { hostPath: options.hostPath } : {}) });
+  const info = await pluginInfo(clonePath, { sampleRate, ...(options.hostPath ? { hostPath: options.hostPath } : {}), ...(options.signal ? { signal: options.signal } : {}) });
   const cloneIndexByName = new Map(info.parameters.map((p) => [p.name, p.index]));
   const toClone = new Map<number, { index: number; toggle: boolean }>();
   for (const param of cloneParameters(model, parameters)) {
     const index = cloneIndexByName.get(param.name);
-    if (index === undefined) throw new Error(`clone has no parameter '${param.name}'`);
+    if (index === undefined) throw new Error(`Der Klon hat keinen Parameter „${param.name}“`);
     toClone.set(param.original, { index, toggle: param.kind === "toggle" });
   }
 
@@ -79,12 +79,13 @@ export async function verifyClone(profile: Profile, model: EqModel, clonePath: s
     await writeFile(join(workDir, "input.wav"), encodeWav({ sampleRate: audio.sampleRate, channels: [audio.channels[0]!] }));
     await writeFile(join(workDir, "job.json"), JSON.stringify(job));
 
-    log("info", `Rendering the clone with ${renders.length} captured settings …`);
+    log("info", `Klon wird mit ${renders.length} gemessenen Einstellungen nachgemessen …`);
     let done = 0;
     await runHost(["render", join(workDir, "job.json")], {
       ...(options.hostPath ? { hostPath: options.hostPath } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
       onMessage: (m) => {
-        if (m.type === "render" && ++done % 25 === 0) log("detail", `rendered ${done}/${renders.length}`);
+        if (m.type === "render" && ++done % 25 === 0) log("detail", `${done}/${renders.length} gemessen`);
       },
     });
 

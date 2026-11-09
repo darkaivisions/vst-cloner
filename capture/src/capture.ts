@@ -37,6 +37,8 @@ export interface CaptureOptions {
   /** Keep the temporary working directory (job file, WAVs) for debugging. */
   keepWorkDir?: boolean;
   onProgress?: (event: CaptureProgress) => void;
+  /** aborts the capture (kills vch-host) */
+  signal?: AbortSignal;
 }
 
 export type CaptureProgress =
@@ -92,6 +94,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
     sampleRate: options.sampleRate,
     channels: options.channels,
     ...(options.identifier ? { identifier: options.identifier } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
   });
 
   if (info.mainOutputChannels === 0) throw new Error(`${info.plugin.name} has no audio output bus`);
@@ -129,6 +132,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
     const results = new Map<string, HostRenderMessage>();
     await runHost(["render", join(workDir, "job.json")], {
       hostPath,
+      ...(options.signal ? { signal: options.signal } : {}),
       onMessage: (message) => {
         if (message.type !== "render") return;
         results.set(message.id, message);

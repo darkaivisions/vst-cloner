@@ -129,8 +129,10 @@ vst-cloner/
      Faust bleibt für Effektklassen, deren DSP-Code der Agent schreibt.
    - Offen: „Flat Tilt“-artige Formen, linearphasige Flanken, Parameter-Glättung, CLAP
 4. **Desktop-Oberfläche:** Tauri, schlank und übersichtlich: Plugin wählen → Messen → Klonen,
-   KI-Einstellungen, gut lesbares Live-Log aller Schritte ← als Nächstes
-5. **Kompressor + Distortion** (inkl. lokalem NAM-Training, CPU/GPU)
+   KI-Einstellungen, gut lesbares Live-Log aller Schritte ✔
+   - Architektur: Web-Oberfläche ↔ Rust-Hülle ↔ Node-Bridge (`bridge/`, JSON-Zeilen, Jobs mit
+     Fortschritt/Protokoll/Abbruch); Bibliothek mit Import/Export der Profile
+5. **Kompressor + Distortion** (inkl. lokalem NAM-Training, CPU/GPU) ← als Nächstes
 6. **Delay + Reverb**
 7. **REA-Integration** (Analyst-Agent, `spec.md`, Clean-Room-Trennung) + **yabridge-Check**
 8. **Distribution:** Installer, Updates, Profilbibliothek

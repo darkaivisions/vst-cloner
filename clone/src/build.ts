@@ -5,6 +5,7 @@ import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CancelledError, throwIfCancelled } from "@vst-cloner/capture";
 
 export type LogLevel = "info" | "detail" | "warn";
 export type Logger = (level: LogLevel, message: string) => void;
@@ -43,9 +44,12 @@ export async function findJuceDir(): Promise<string | undefined> {
 }
 
 /** Runs a command and forwards its output line by line. */
-export function run(command: string, args: string[], cwd: string, log: Logger): Promise<void> {
+export function run(command: string, args: string[], cwd: string, log: Logger, signal?: AbortSignal): Promise<void> {
+  throwIfCancelled(signal);
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const onAbort = () => child.kill();
+    signal?.addEventListener("abort", onAbort, { once: true });
     const tail: string[] = [];
     const forward = (chunk: Buffer) => {
       for (const line of chunk.toString("utf8").split(/\r?\n/)) {
@@ -58,9 +62,12 @@ export function run(command: string, args: string[], cwd: string, log: Logger): 
     child.stdout.on("data", forward);
     child.stderr.on("data", forward);
     child.on("error", (error) => reject(new Error(`cannot run ${command}: ${error.message}`)));
-    child.on("close", (code) =>
-      code === 0 ? resolve() : reject(new Error(`${command} ${args[0] ?? ""} failed (exit ${code}):\n${tail.slice(-15).join("\n")}`)),
-    );
+    child.on("close", (code) => {
+      signal?.removeEventListener("abort", onAbort);
+      if (signal?.aborted) reject(new CancelledError());
+      else if (code === 0) resolve();
+      else reject(new Error(`${command} ${args[0] ?? ""} fehlgeschlagen (Exit ${code}):\n${tail.slice(-15).join("\n")}`));
+    });
   });
 }
 
@@ -95,6 +102,7 @@ export interface BuildOptions {
   outputDir: string;
   install?: boolean;
   log: Logger;
+  signal?: AbortSignal;
 }
 
 /** Builds the EQ plugin template with a generated model header into VST3 and LV2 bundles. */
@@ -120,7 +128,7 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
   await writeIfChanged(join(generated, "CloneModel.h"), options.modelHeader);
 
   const juceDir = await findJuceDir();
-  log("info", juceDir ? `JUCE: ${juceDir}` : "JUCE: downloading 9.0.5 (first build only)");
+  log("detail", juceDir ? `JUCE: ${juceDir}` : "JUCE 9.0.5 wird heruntergeladen (nur beim ersten Build)");
 
   const configure = [
     "-S", workDir, "-B", buildDir,
@@ -132,15 +140,15 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
   ];
   if (!existsSync(join(buildDir, "CMakeCache.txt")) && onPath("ninja")) configure.push("-G", "Ninja");
 
-  log("info", "Configuring plugin build (CMake) …");
-  await run("cmake", configure, workDir, log);
-  log("info", "Compiling plugin (first build takes a few minutes, later builds are fast) …");
-  await run("cmake", ["--build", buildDir, "--config", "Release", "--parallel"], workDir, log);
+  log("info", "Plugin-Build wird vorbereitet (CMake) …");
+  await run("cmake", configure, workDir, log, options.signal);
+  log("info", "Plugin wird kompiliert – beim ersten Mal ca. 1 Minute, danach Sekunden …");
+  await run("cmake", ["--build", buildDir, "--config", "Release", "--parallel"], workDir, log, options.signal);
 
   const artefacts = join(buildDir, "vch_clone_artefacts", "Release");
   const vst3Source = join(artefacts, "VST3", `${options.pluginName}.vst3`);
   const lv2Source = join(artefacts, "LV2", `${options.pluginName}.lv2`);
-  for (const path of [vst3Source, lv2Source]) if (!existsSync(path)) throw new Error(`build finished but ${path} is missing`);
+  for (const path of [vst3Source, lv2Source]) if (!existsSync(path)) throw new Error(`Build fertig, aber ${path} fehlt`);
 
   await mkdir(options.outputDir, { recursive: true });
   const vst3 = join(options.outputDir, `${options.pluginName}.vst3`);
@@ -149,8 +157,8 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
     await rm(to, { recursive: true, force: true });
     await cp(from, to, { recursive: true });
   }
-  log("info", `Plugin written: ${vst3}`);
-  log("info", `Plugin written: ${lv2}`);
+  log("info", `Plugin geschrieben: ${vst3}`);
+  log("info", `Plugin geschrieben: ${lv2}`);
 
   const installed: string[] = [];
   if (options.install) {
@@ -161,7 +169,7 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
       await rm(target, { recursive: true, force: true });
       await cp(from, target, { recursive: true });
       installed.push(target);
-      log("info", `Installed: ${target}`);
+      log("info", `Installiert: ${target}`);
     }
   }
 

@@ -27,6 +27,9 @@
     "agent/src",
     "agent/test",
     "clone/src",
-    "clone/test"
+    "clone/test",
+    "bridge/src",
+    "bridge/bin",
+    "bridge/test"
   ]
 }

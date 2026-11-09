@@ -1,0 +1,18 @@
+{
+  "name": "@vst-cloner/bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "JSON-lines bridge between the desktop app and the vst-cloner packages",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "exports": {
+    ".": "./src/server.ts"
+  },
+  "dependencies": {
+    "@vst-cloner/agent": "0.1.0",
+    "@vst-cloner/capture": "0.1.0",
+    "@vst-cloner/clone": "0.1.0",
+    "@vst-cloner/profile": "0.1.0",
+    "fflate": "^0.8.3"
+  }
+}

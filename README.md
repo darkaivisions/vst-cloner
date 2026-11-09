@@ -6,7 +6,7 @@ neu gebaut. Kein dekompilierter Code, keine extrahierten Samples – nur gemesse
 
 Gesamtplan und Meilensteine: [PLAN.md](PLAN.md) · Profilformat: [docs/profile-format.md](docs/profile-format.md)
 
-**Stand: Meilenstein 3** – Capture-Host, Profilformat, LLM-Anbindung und EQ-Klone (VST3/LV2) funktionieren.
+**Stand: Meilenstein 4** – Desktop-App, Capture-Host, Profilformat, LLM-Anbindung und EQ-Klone (VST3/LV2) funktionieren.
 Getestet unter Linux mit nativen VST3-Plugins und Windows-Plugins über yabridge.
 
 ## Voraussetzungen
@@ -24,7 +24,22 @@ npm run host:build
 
 Mit vorhandenem JUCE-Checkout: `cmake -S host -B host/build -DVCH_JUCE_DIR=/pfad/zu/JUCE`.
 
-## Benutzung
+## Desktop-App
+
+```bash
+npm run app        # startet die Oberfläche (beim ersten Mal wird der Rust-Teil kompiliert)
+```
+
+Drei Bereiche: **Klonen** (Plugin wählen → Messen → Klon bauen), **Bibliothek** (gespeicherte Profile:
+Klon neu bauen ohne Original, exportieren, importieren) und **KI-Modelle** (Anbieter, Schlüssel, Rollen,
+Test). Unten zeigt das **Protokoll** jeden Schritt, nach Phasen gegliedert; „Details“ blendet auch die
+Ausgaben von Compiler und Host ein.
+
+Profile und Klone liegen unter `~/.local/share/vst-cloner/` (Windows: `%APPDATA%\vst-cloner`).
+Voraussetzung zusätzlich zu oben: Rust (`cargo`) und unter Linux WebKitGTK 4.1.
+Die App nutzt vorerst Node.js und den Projektordner – eigenständige Installationspakete folgen mit Meilenstein 8.
+
+## Benutzung (Kommandozeile)
 
 ```bash
 # Was steckt im Plugin?
@@ -128,6 +143,9 @@ agent/     LLM-Anbieter (Vercel AI SDK), models.dev-Katalog, Schlüsselbund, Fä
 clone/     Frequenzgang-Analyse, EQ-Erkennung, Messplan, Filter-Fit, Plugin-Build, Vergleich
 plugin-template/eq/
            C++/JUCE-EQ-Engine für Klone (Formeln identisch mit clone/src/dsp/biquad.ts)
+bridge/    JSON-Zeilen-Schnittstelle zwischen Oberfläche und den Paketen (Jobs, Fortschritt, Protokoll)
+apps/desktop/
+           Tauri-App: Web-Oberfläche (TypeScript) + Rust-Hülle, die die Bridge startet
 ```
 
 ## Tests

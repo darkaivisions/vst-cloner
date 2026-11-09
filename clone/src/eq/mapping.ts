@@ -202,7 +202,7 @@ export function detectEq(parameters: Parameter[], renders: CaptureRender[] = [])
     .sort((a, b) => a.band - b.band);
 
   if (usable.length === 0) {
-    throw new NotAnEqError("no EQ bands found (expected parameters like 'Band 1 Frequency', 'Band 1 Gain')");
+    throw new NotAnEqError("Keine EQ-Bänder gefunden (erwartet werden Parameter wie „Band 1 Frequency“, „Band 1 Gain“)");
   }
 
   const template = usable.reduce((best, b) => (Object.keys(b.params).length > Object.keys(best.params).length ? b : best));

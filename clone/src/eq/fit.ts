@@ -210,7 +210,7 @@ export function fitEq(profile: Profile, onProgress?: (p: FitProgress) => void): 
   const offset = new Float64Array(grid.length).fill(baselineDb);
 
   const observations = extractObservations(profile, mapping, grid, offset);
-  if (observations.length === 0) throw new Error("profile contains no EQ measurements – capture it with '--class eq'");
+  if (observations.length === 0) throw new Error("Das Profil enthält keine EQ-Messungen – bitte mit der EQ-Messung (--class eq) aufnehmen");
 
   const shapeOptions = mapping.shapes ?? [{ label: "bell", kind: "bell" as ShapeKind }];
   const reports: ShapeReport[] = [];
@@ -227,12 +227,12 @@ export function fitEq(profile: Profile, onProgress?: (p: FitProgress) => void): 
 
     if (shape.kind === "unsupported") {
       shapes.push({ label: shape.label, kind: shape.kind });
-      reports.push({ label: shape.label, kind: shape.kind, note: "shape not supported yet – the clone passes the signal unchanged" });
+      reports.push({ label: shape.label, kind: shape.kind, note: "Form noch nicht unterstützt – der Klon leitet das Signal unverändert durch" });
       return;
     }
     if (train.length === 0) {
       shapes.push({ label: shape.label, kind: shape.kind });
-      reports.push({ label: shape.label, kind: shape.kind, note: "no measurements for this shape" });
+      reports.push({ label: shape.label, kind: shape.kind, note: "keine Messungen für diese Form" });
       return;
     }
 
@@ -254,7 +254,7 @@ export function fitEq(profile: Profile, onProgress?: (p: FitProgress) => void): 
       ...(trainStats ? { train: trainStats } : {}),
       ...(validateStats ? { validate: validateStats } : {}),
       ...(approximateStats ? { approximate: approximateStats } : {}),
-      ...(approximateSlopes?.length ? { note: `approximated by the steepest exact slope: ${approximateSlopes.join(", ")}` } : {}),
+      ...(approximateSlopes?.length ? { note: `angenähert durch die steilste exakte Flanke: ${approximateSlopes.join(", ")}` } : {}),
     });
   });
 
