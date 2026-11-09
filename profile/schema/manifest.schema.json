@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:vcprofile:v1:manifest",
+  "title": "vcprofile manifest",
+  "type": "object",
+  "required": ["format", "schemaVersion", "id", "createdAt", "generator", "plugin", "capture"],
+  "properties": {
+    "format": { "const": "vcprofile" },
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "generator": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "plugin": {
+      "type": "object",
+      "required": ["name", "manufacturer", "version", "format", "identifier"],
+      "properties": {
+        "name": { "type": "string" },
+        "descriptiveName": { "type": "string" },
+        "manufacturer": { "type": "string" },
+        "version": { "type": "string" },
+        "format": { "type": "string" },
+        "category": { "type": "string" },
+        "identifier": { "type": "string" },
+        "uniqueId": { "type": "integer" },
+        "isInstrument": { "type": "boolean" },
+        "mainInputChannels": { "type": "integer", "minimum": 0 },
+        "mainOutputChannels": { "type": "integer", "minimum": 0 },
+        "latencySamples": { "type": "integer", "minimum": 0 },
+        "tailSeconds": { "type": "number", "minimum": 0 },
+        "file": {
+          "type": "object",
+          "required": ["name", "sha256"],
+          "properties": {
+            "name": { "type": "string" },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        }
+      }
+    },
+    "capture": {
+      "type": "object",
+      "required": ["host", "os", "sampleRate", "blockSize", "channels", "prerollSeconds", "tailSeconds"],
+      "properties": {
+        "host": {
+          "type": "object",
+          "required": ["name", "version"],
+          "properties": {
+            "name": { "type": "string" },
+            "version": { "type": "string" }
+          }
+        },
+        "os": { "type": "string" },
+        "sampleRate": { "type": "number", "exclusiveMinimum": 0 },
+        "blockSize": { "type": "integer", "minimum": 1 },
+        "channels": { "type": "integer", "minimum": 1 },
+        "prerollSeconds": { "type": "number", "minimum": 0 },
+        "tailSeconds": { "type": "number", "minimum": 0 },
+        "plan": { "type": "object" }
+      }
+    },
+    "notes": { "type": "string" }
+  }
+}

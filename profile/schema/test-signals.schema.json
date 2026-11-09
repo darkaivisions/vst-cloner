@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:vcprofile:v1:test-signals",
+  "title": "vcprofile test signals",
+  "description": "Deterministic description of the capture input. The signal is regenerated from this file; sha256 verifies the result.",
+  "type": "object",
+  "required": ["generatorVersion", "sampleRate", "channels", "length", "sha256", "segments"],
+  "properties": {
+    "generatorVersion": { "type": "integer", "minimum": 1 },
+    "sampleRate": { "type": "number", "exclusiveMinimum": 0 },
+    "channels": { "type": "integer", "minimum": 1 },
+    "length": { "type": "integer", "minimum": 1 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "start", "length"],
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "enum": ["silence", "impulse", "logSweep", "noise", "levelSteps", "toneBurst"] },
+          "start": { "type": "integer", "minimum": 0 },
+          "length": { "type": "integer", "minimum": 1 },
+          "params": { "type": "object" }
+        }
+      }
+    }
+  }
+}

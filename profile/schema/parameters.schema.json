@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:vcprofile:v1:parameters",
+  "title": "vcprofile parameters",
+  "type": "object",
+  "required": ["parameters"],
+  "properties": {
+    "parameters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "id", "name", "default", "numSteps", "discrete", "boolean", "automatable"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "label": { "type": "string" },
+          "default": { "type": "number", "minimum": 0, "maximum": 1 },
+          "value": { "type": "number", "minimum": 0, "maximum": 1 },
+          "numSteps": { "type": "integer" },
+          "discrete": { "type": "boolean" },
+          "boolean": { "type": "boolean" },
+          "automatable": { "type": "boolean" },
+          "meta": { "type": "boolean" },
+          "category": { "type": "integer" },
+          "texts": {
+            "description": "Display text at normalized values (all steps for discrete parameters, 11 points otherwise)",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["value", "text"],
+              "properties": {
+                "value": { "type": "number" },
+                "text": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

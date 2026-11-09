@@ -1,0 +1,5 @@
+node_modules/
+host/build/
+*.vcprofile
+.vch-work/
+.DS_Store

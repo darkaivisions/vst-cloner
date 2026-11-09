@@ -1,0 +1,16 @@
+{
+  "name": "@vst-cloner/profile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reader/writer and JSON schema for .vcprofile capture profiles",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema/*": "./schema/*"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "fflate": "^0.8.3"
+  }
+}

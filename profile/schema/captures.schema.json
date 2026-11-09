@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:vcprofile:v1:captures",
+  "title": "vcprofile capture index",
+  "type": "object",
+  "required": ["renders"],
+  "properties": {
+    "renders": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "file", "kind", "params", "latencySamples", "peak"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+          "file": { "type": "string", "pattern": "^captures/[A-Za-z0-9_-]+\\.wav$" },
+          "kind": { "enum": ["default", "sweep", "random", "custom"] },
+          "sweepParameter": { "type": "integer", "minimum": 0 },
+          "params": {
+            "description": "Parameters that differ from the base state (normalized values as reported by the plugin)",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["index", "value"],
+              "properties": {
+                "index": { "type": "integer", "minimum": 0 },
+                "value": { "type": "number", "minimum": 0, "maximum": 1 },
+                "text": { "type": "string" }
+              }
+            }
+          },
+          "latencySamples": { "type": "integer", "minimum": 0 },
+          "peak": { "type": "number", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

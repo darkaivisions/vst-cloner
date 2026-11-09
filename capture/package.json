@@ -1,0 +1,17 @@
+{
+  "name": "@vst-cloner/capture",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Test signals, capture planning and the vch command line tool",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "bin": {
+    "vch": "./bin/vch.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@vst-cloner/profile": "0.1.0"
+  }
+}
