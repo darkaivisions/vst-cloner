@@ -2,7 +2,7 @@ import { mkdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { encodeWav, readProfile, type Profile } from "@vst-cloner/profile";
-import { capture, type CaptureProgress } from "./capture.ts";
+import { capture, type CapturePlanner, type CaptureProgress } from "./capture.ts";
 import { HostError, pluginInfo, runHost } from "./host.ts";
 import { DEFAULT_PLAN, PlanTooLargeError, planCaptures, resolveFixedValues, type PlanOptions } from "./plan.ts";
 import { generateTestSignal, regenerateTestSignal } from "./signals.ts";
@@ -20,6 +20,12 @@ Usage:
                                         Write the test signal (e.g. for capturing in a DAW)
   vch llm …                             Language model providers (see 'vch llm --help')
 
+  vch clone   <profile> [-o <dir>] [--name <text>] [--install] [--refit] [--no-verify] [-v]
+                                        Analyse, build the clone (VST3 + LV2), compare it with the original
+  vch analyze <profile> [--save] [--json]
+                                        Fit the EQ model and show how well it matches
+  vch verify  <profile> <clone.vst3>    Compare a built clone with the original measurements
+
 Capture options:
   -o, --output <file>       Output profile (.vcprofile)
   --id <identifier>         Plugin type inside a bundle (see 'vch list')
@@ -28,6 +34,8 @@ Capture options:
   --channels <n>            Default 2
   --preroll <seconds>       Silence before each render, default 0.5
   --tail <seconds>          Recorded tail after the signal, default 2
+  --class <name>            Effect-class specific plan: 'eq' (replaces the generic sweep plan;
+                            --points/--random/--include/--exclude are then ignored)
   --notes <text>            Free text stored in the manifest
   --keep-work               Keep the temporary working directory
 
@@ -63,6 +71,7 @@ const OPTIONS = {
   exclude: { type: "string" },
   "max-renders": { type: "string" },
   set: { type: "string", multiple: true },
+  class: { type: "string" },
   json: { type: "boolean" },
   help: { type: "boolean", short: "h" },
 } as const;
@@ -191,15 +200,23 @@ async function commandPlan(positionals: string[], values: Values): Promise<void>
   if (plan.renders.length > options.maxRenders) console.log(new PlanTooLargeError(plan.renders.length, options.maxRenders).message);
 }
 
+async function loadPlanner(name: string | undefined): Promise<CapturePlanner | undefined> {
+  if (name === undefined || name === "generic") return undefined;
+  if (name === "eq") return (await import("@vst-cloner/clone")).eqPlanner;
+  throw new UsageError(`unknown --class '${name}' (available: eq)`);
+}
+
 async function commandCapture(positionals: string[], values: Values): Promise<void> {
   const plugin = requirePositional(positionals, 0, "plugin path");
   if (!values.output) throw new UsageError("missing --output <file.vcprofile>");
   const output = resolve(values.output.endsWith(".vcprofile") ? values.output : `${values.output}.vcprofile`);
 
+  const planner = await loadPlanner(values.class);
   const started = Date.now();
   const profile = await capture({
     plugin,
     output,
+    ...(planner ? { planner } : {}),
     ...(values.id ? { identifier: values.id } : {}),
     sampleRate: number(values, "sample-rate", 48000),
     blockSize: number(values, "block-size", 512, true),
@@ -301,6 +318,10 @@ export async function main(argv: string[]): Promise<number> {
   if (argv[0] === "llm") {
     const llm = await import("@vst-cloner/agent/cli");
     return llm.main(argv.slice(1));
+  }
+  if (argv[0] === "clone" || argv[0] === "analyze" || argv[0] === "verify") {
+    const cloning = await import("@vst-cloner/clone/cli");
+    return cloning.main(argv[0], argv.slice(1));
   }
 
   let parsed;

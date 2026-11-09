@@ -7,6 +7,7 @@
   "required": ["generatorVersion", "sampleRate", "channels", "length", "sha256", "segments"],
   "properties": {
     "generatorVersion": { "type": "integer", "minimum": 1 },
+    "preset": { "type": "string" },
     "sampleRate": { "type": "number", "exclusiveMinimum": 0 },
     "channels": { "type": "integer", "minimum": 1 },
     "length": { "type": "integer", "minimum": 1 },

@@ -92,7 +92,7 @@ parameters.json      Parameter, Bereiche, Defaults, Wertetexte
 test-signals.json    Segmente + Seeds der Testsignale (reproduzierbar statt gespeichert) + SHA-256
 captures.json        Index: Render-ID → Datei, Parameterwerte, Latenz, Pegel
 captures/*.wav       Antworten als WAV float32 (verlustfrei, ZIP-komprimiert)
-spec.md              Funktionale Spezifikation (ohne Code)            (ab M6)
+spec.md              Funktionale Spezifikation (ohne Code)            (ab M7)
 model/               Faust .dsp, .nam, RTNeural .json                  (ab M3)
 report.json          Qualitätsmetriken des letzten Builds              (ab M3)
 checksums.sha256
@@ -103,11 +103,11 @@ checksums.sha256
 ## Projektstruktur (Monorepo)
 ```
 vst-cloner/
-├─ apps/desktop/   Tauri v2 UI                                   (M7)
+├─ apps/desktop/   Tauri v2 UI                                   (M4)
 ├─ host/           C++/JUCE vch-host (CMake, Win + Linux)
 ├─ capture/        Node/TS: Testsignale, Messplan, CLI `vch`
 ├─ profile/        JSON-Schema + Reader/Writer + WAV-I/O (TS)
-├─ agent/          Node/TS: AI SDK, MCP→REA, Analyst-/Builder-Agent (M2/M6)
+├─ agent/          Node/TS: AI SDK, MCP→REA, Analyst-/Builder-Agent (M2/M7)
 ├─ dsp/            Faust-Templates, Fit-Tools, NAM-Training      (M3+)
 └─ docs/
 ```
@@ -121,12 +121,19 @@ vst-cloner/
 2. **LLM-Layer** ✔
    - Provider-Einstellungen, Auto-Discovery lokal, Fähigkeitstest, Keychain, Kostenanzeige
    - CLI `vch llm …`; Metadaten aus Anbieter-APIs + models.dev-Katalog (24 h Cache, offline nutzbar)
-3. **Erster Klon-Typ: EQ/Filter** ← als Nächstes
-   - Biquad-Fit + Faust-Generierung + Vergleich, Export LV2/VST3/CLAP
-4. **Kompressor + Distortion** (inkl. lokalem NAM-Training, CPU/GPU)
-5. **Delay + Reverb**
-6. **REA-Integration** (Analyst-Agent, `spec.md`, Clean-Room-Trennung) + **yabridge-Check**
-7. **Desktop-App + Distribution:** Tauri-Wizard, Installer, Updates, Profilbibliothek
+3. **Erster Klon-Typ: EQ/Filter** ✔
+   - EQ-Messplan (Formen × Frequenz × Gain × Güte), Frequenzgang-Analyse, Filter-Fit,
+     JUCE-Plugin (VST3/LV2), Vergleich Klon ↔ Original
+   - Abweichung zur ursprünglichen Planung: EQs nutzen eine feste C++-Engine, die das Modell als
+     Daten erhält. Pro Klon generierter Faust-Code war zu langsam zu übersetzen (≈ 11 s pro Band).
+     Faust bleibt für Effektklassen, deren DSP-Code der Agent schreibt.
+   - Offen: „Flat Tilt“-artige Formen, linearphasige Flanken, Parameter-Glättung, CLAP
+4. **Desktop-Oberfläche:** Tauri, schlank und übersichtlich: Plugin wählen → Messen → Klonen,
+   KI-Einstellungen, gut lesbares Live-Log aller Schritte ← als Nächstes
+5. **Kompressor + Distortion** (inkl. lokalem NAM-Training, CPU/GPU)
+6. **Delay + Reverb**
+7. **REA-Integration** (Analyst-Agent, `spec.md`, Clean-Room-Trennung) + **yabridge-Check**
+8. **Distribution:** Installer, Updates, Profilbibliothek
 
 ## Risiken / Erwartungen
 - Sehr gut klonbar: lineare Effekte, Kompressoren, Amps/Verzerrer.

@@ -12,6 +12,29 @@ interface SegmentSpec {
   params?: Record<string, number>;
 }
 
+export type SignalPreset = "full" | "eq";
+
+export const SIGNAL_PRESETS: SignalPreset[] = ["full", "eq"];
+
+/** Short sequence for linear, time-invariant effects (EQs, filters): impulse response + sweep as cross-check. */
+export function eqSegmentSpecs(sampleRate: number): SegmentSpec[] {
+  return [
+    { id: "lead", kind: "silence", seconds: 0.05 },
+    { id: "impulse", kind: "impulse", seconds: 1, params: { amplitude: 0.5 } },
+    {
+      id: "sweep",
+      kind: "logSweep",
+      seconds: 1.5,
+      params: { f1: 20, f2: Math.min(20000, 0.45 * sampleRate), amplitude: 0.25, fadeSeconds: 0.01 },
+    },
+    { id: "gap-1", kind: "silence", seconds: 0.25 },
+  ];
+}
+
+export function segmentSpecs(preset: SignalPreset, sampleRate: number, seed = 1): SegmentSpec[] {
+  return preset === "eq" ? eqSegmentSpecs(sampleRate) : defaultSegmentSpecs(sampleRate, seed);
+}
+
 /** Default measurement sequence: covers linear (impulse, sweep), nonlinear (noise) and dynamic (levels, bursts) behavior. */
 export function defaultSegmentSpecs(sampleRate: number, seed = 1): SegmentSpec[] {
   const levelSteps = { frequency: 1000, fromDb: -60, toDb: 0, stepDb: 6, stepSeconds: 0.25 };
@@ -129,12 +152,12 @@ export interface GeneratedSignal {
   set: TestSignalSet;
 }
 
-export function generateTestSignal(options: { sampleRate: number; channels: number; seed?: number }): GeneratedSignal {
-  const { sampleRate, channels, seed = 1 } = options;
+export function generateTestSignal(options: { sampleRate: number; channels: number; seed?: number; preset?: SignalPreset }): GeneratedSignal {
+  const { sampleRate, channels, seed = 1, preset = "full" } = options;
   const segments: Segment[] = [];
   let start = 0;
 
-  for (const spec of defaultSegmentSpecs(sampleRate, seed)) {
+  for (const spec of segmentSpecs(preset, sampleRate, seed)) {
     const length = Math.max(1, Math.round(spec.seconds * sampleRate));
     segments.push({ id: spec.id, kind: spec.kind, start, length, ...(spec.params ? { params: spec.params } : {}) });
     start += length;
@@ -144,7 +167,7 @@ export function generateTestSignal(options: { sampleRate: number; channels: numb
   const audio = renderTestSignal(partial);
   return {
     audio,
-    set: { generatorVersion: SIGNAL_GENERATOR_VERSION, ...partial, sha256: signalHash(audio) },
+    set: { generatorVersion: SIGNAL_GENERATOR_VERSION, preset, ...partial, sha256: signalHash(audio) },
   };
 }
 

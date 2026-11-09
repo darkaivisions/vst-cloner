@@ -77,6 +77,8 @@ export interface Segment {
 
 export interface TestSignalSet {
   generatorVersion: number;
+  /** Segment preset used ("full", "eq"). */
+  preset?: string;
   sampleRate: number;
   channels: number;
   length: number;
@@ -97,9 +99,15 @@ export interface CaptureRender {
   file: string;
   kind: RenderKind;
   sweepParameter?: number;
+  /** "train" renders are used for fitting, "validate" renders only for checking the model. */
+  purpose?: "train" | "validate";
+  /** Free-form description of the render, e.g. "Bell 1000 Hz +12 dB Q 0.7". */
+  label?: string;
   params: ParameterValue[];
   latencySamples: number;
   peak: number;
+  /** All output channels were identical; the file stores one channel. */
+  mono?: boolean;
 }
 
 export interface CaptureIndex {

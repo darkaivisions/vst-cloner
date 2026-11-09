@@ -25,6 +25,8 @@
     "capture/bin",
     "capture/test",
     "agent/src",
-    "agent/test"
+    "agent/test",
+    "clone/src",
+    "clone/test"
   ]
 }

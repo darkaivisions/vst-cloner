@@ -16,7 +16,9 @@ ZIP-Archiv (Deflate). `manifest.json` steht zuerst, damit Werkzeuge das Format s
 | `test-signals.json` | ja | Segmente des Eingangssignals + SHA-256 | `profile/schema/test-signals.schema.json` |
 | `captures.json` | ja | Index der Renders | `profile/schema/captures.schema.json` |
 | `captures/<id>.wav` | ja | Antwort des Plugins, WAV 32-bit float | – |
-| `spec.md`, `model/…`, `report.json` | nein | Ab späteren Meilensteinen | – |
+| `model/eq.json` | nein | Gefittetes EQ-Modell (von `vch clone`/`vch analyze --save`) | – |
+| `report.json` | nein | Fit- und Vergleichsbericht des letzten Klons | – |
+| `spec.md` | nein | Funktionale Spezifikation (ab Meilenstein 7) | – |
 | `checksums.sha256` | ja | `sha256  pfad` für jede andere Datei | – |
 
 Beim Lesen werden alle Prüfsummen, die JSON-Schemas und Querverweise geprüft
@@ -45,13 +47,21 @@ Ablauf pro Render im Host:
 Damit ist jede Capture-Datei sampelgenau zum Eingangssignal ausgerichtet und
 genau `length + tailSeconds * sampleRate` Samples lang.
 
+Optionale Felder pro Render:
+- `mono: true` – alle Ausgangskanäle waren bitgleich; die Datei enthält nur einen Kanal.
+- `purpose` – `"train"` (für den Fit) oder `"validate"` (nur zur Gegenprobe).
+- `label` – lesbare Beschreibung, z. B. „Bell · 1000 Hz · +12.0 dB · Q 0.70“.
+
 ## Testsignal
 
 Das Eingangssignal wird nicht gespeichert, sondern aus `test-signals.json` neu erzeugt
 (`vch extract` schreibt es als `input.wav`). `sha256` ist der Hash der erzeugten
 WAV-Datei. Weicht er ab (anderer Generator), bleiben die Segmentgrenzen trotzdem gültig.
 
-Segmente der Generator-Version 1 (alle Kanäle identisch):
+`preset` nennt die Segmentfolge: `full` (Standard) oder `eq` (kurz: Impuls mit 1 s Fenster,
+Sweep 1,5 s, für lineare Effekte).
+
+Segmente der Generator-Version 1, Preset `full` (alle Kanäle identisch):
 
 | Segment | Art | Zweck |
 |---|---|---|

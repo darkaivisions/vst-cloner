@@ -15,6 +15,9 @@
           "file": { "type": "string", "pattern": "^captures/[A-Za-z0-9_-]+\\.wav$" },
           "kind": { "enum": ["default", "sweep", "random", "custom"] },
           "sweepParameter": { "type": "integer", "minimum": 0 },
+          "purpose": { "enum": ["train", "validate"] },
+          "label": { "type": "string" },
+          "mono": { "type": "boolean", "description": "All output channels were identical; the file stores one channel" },
           "params": {
             "description": "Parameters that differ from the base state (normalized values as reported by the plugin)",
             "type": "array",

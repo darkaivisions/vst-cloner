@@ -3,6 +3,7 @@ import { arch, platform, release, tmpdir } from "node:os";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
+  decodeWav,
   encodeWav,
   PROFILE_FORMAT,
   SCHEMA_VERSION,
@@ -11,9 +12,9 @@ import {
   type CaptureRender,
   type Profile,
 } from "@vst-cloner/profile";
-import { findHost, hostVersion, pluginInfo, runHost, type HostRenderMessage, type RenderJob } from "./host.ts";
-import { planCaptures, resolveFixedValues, type PlanOptions } from "./plan.ts";
-import { generateTestSignal } from "./signals.ts";
+import { findHost, hostVersion, pluginInfo, runHost, type HostInfo, type HostRenderMessage, type RenderJob } from "./host.ts";
+import { planCaptures, PlanTooLargeError, resolveFixedValues, type CapturePlan, type PlanOptions } from "./plan.ts";
+import { generateTestSignal, type SignalPreset } from "./signals.ts";
 
 export const GENERATOR = { name: "vst-cloner", version: "0.1.0" };
 
@@ -27,6 +28,8 @@ export interface CaptureOptions {
   prerollSeconds: number;
   tailSeconds: number;
   plan: PlanOptions;
+  /** Effect-class specific plan (replaces the generic sweep plan). */
+  planner?: CapturePlanner;
   /** "<parameter>=<value>" specs applied to every render, see resolveFixedValues. */
   set?: string[];
   notes?: string;
@@ -42,6 +45,24 @@ export type CaptureProgress =
   | { stage: "workdir"; path: string }
   | { stage: "render"; done: number; total: number; id: string; milliseconds: number }
   | { stage: "write"; path: string };
+
+/** A capture planner for a specific effect class (e.g. EQ). */
+export interface CapturePlanner {
+  name: string;
+  signalPreset: SignalPreset;
+  plan(info: HostInfo, options: PlanOptions): CapturePlan;
+}
+
+/** Re-encodes a WAV file as mono when all channels are bit-identical (halves the profile size for stereo-linked effects). */
+export function collapseIdenticalChannels(bytes: Uint8Array): { bytes: Uint8Array; mono: boolean } {
+  const audio = decodeWav(bytes);
+  const [first, ...rest] = audio.channels;
+  if (!first || rest.length === 0) return { bytes, mono: false };
+  for (const channel of rest) {
+    for (let i = 0; i < first.length; i++) if (channel[i] !== first[i]) return { bytes, mono: false };
+  }
+  return { bytes: encodeWav({ sampleRate: audio.sampleRate, channels: [first] }), mono: true };
+}
 
 /** SHA-256 of a plugin file, or of a bundle directory (sorted relative paths + file hashes). */
 export async function hashPluginPath(path: string): Promise<string> {
@@ -76,10 +97,16 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
   if (info.mainOutputChannels === 0) throw new Error(`${info.plugin.name} has no audio output bus`);
 
   const planOptions = { ...options.plan, fixed: resolveFixedValues(info.parameters, options.set ?? []) };
-  const plan = planCaptures(info.parameters, planOptions);
+  const plan = options.planner ? options.planner.plan(info, planOptions) : planCaptures(info.parameters, planOptions);
+  if (plan.renders.length > planOptions.maxRenders) throw new PlanTooLargeError(plan.renders.length, planOptions.maxRenders);
   progress({ stage: "plan", parameters: info.parameters.length, selected: plan.selected.length, renders: plan.renders.length });
 
-  const signal = generateTestSignal({ sampleRate: options.sampleRate, channels: options.channels, seed: options.plan.seed });
+  const signal = generateTestSignal({
+    sampleRate: options.sampleRate,
+    channels: options.channels,
+    seed: options.plan.seed,
+    preset: options.planner?.signalPreset ?? "full",
+  });
   const workDir = await mkdtemp(join(tmpdir(), "vch-capture-"));
   progress({ stage: "workdir", path: workDir });
 
@@ -116,15 +143,19 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
       const result = results.get(planned.id);
       if (!result) throw new Error(`vch-host did not render ${planned.id}`);
       const file = `captures/${planned.id}.wav`;
-      files.set(file, await readFile(join(workDir, file)));
+      const { bytes, mono } = collapseIdenticalChannels(await readFile(join(workDir, file)));
+      files.set(file, bytes);
       renders.push({
         id: planned.id,
         file,
         kind: planned.kind,
         ...(planned.sweepParameter !== undefined ? { sweepParameter: planned.sweepParameter } : {}),
+        ...(planned.purpose ? { purpose: planned.purpose } : {}),
+        ...(planned.label ? { label: planned.label } : {}),
         params: result.params.map((p) => ({ index: p.index, value: Math.min(1, Math.max(0, p.value)), text: p.text })),
         latencySamples: result.latencySamples,
         peak: result.peak,
+        ...(mono ? { mono: true } : {}),
       });
     }
 
@@ -161,6 +192,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
           prerollSeconds: options.prerollSeconds,
           tailSeconds: options.tailSeconds,
           plan: {
+            planner: options.planner?.name ?? "generic",
             points: options.plan.points,
             random: options.plan.random,
             seed: options.plan.seed,

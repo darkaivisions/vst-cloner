@@ -36,6 +36,8 @@ export interface PlannedRender {
   id: string;
   kind: RenderKind;
   sweepParameter?: number;
+  purpose?: "train" | "validate";
+  label?: string;
   params: { index: number; value: number }[];
 }
 

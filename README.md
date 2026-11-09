@@ -6,7 +6,7 @@ neu gebaut. Kein dekompilierter Code, keine extrahierten Samples – nur gemesse
 
 Gesamtplan und Meilensteine: [PLAN.md](PLAN.md) · Profilformat: [docs/profile-format.md](docs/profile-format.md)
 
-**Stand: Meilenstein 2** – Capture-Host, Profilformat, Kommandozeile und LLM-Anbindung funktionieren.
+**Stand: Meilenstein 3** – Capture-Host, Profilformat, LLM-Anbindung und EQ-Klone (VST3/LV2) funktionieren.
 Getestet unter Linux mit nativen VST3-Plugins und Windows-Plugins über yabridge.
 
 ## Voraussetzungen
@@ -42,6 +42,33 @@ npm run vch -- extract mein-plugin.vcprofile ./entpackt
 ```
 
 Oder direkt: `node capture/bin/vch.ts …`
+
+### EQ klonen
+
+```bash
+# 1. EQ vermessen (eigener Messplan: jede Filterform bei mehreren Frequenzen, Gains und Güten)
+npm run vch -- capture ~/.vst3/MeinEQ.vst3 --class eq --tail 0.25 -o mein-eq.vcprofile
+
+# 2. Klon bauen, mit dem Original vergleichen und optional installieren
+npm run vch -- clone mein-eq.vcprofile -o ./mein-eq-clone --install
+```
+
+Der Klon ist ein eigenständiges VST3- und LV2-Plugin mit denselben Parameternamen und Regelwegen
+wie das Original (gleiche normierte Werte → gleiche Einstellung). Ablauf:
+
+1. **Analyse:** Frequenzgang jeder Messung aus der Impulsantwort.
+2. **Fit:** Pro Filterform werden Filterdesign (bilinear oder „matched“ ohne Stauchung nahe Nyquist),
+   Frequenz-/Güte-Definition und Q-Kennlinie bestimmt. Ein Teil der Messungen dient nur zur Gegenprobe.
+3. **Build:** Eine feste C++-EQ-Engine (`plugin-template/eq`) erhält das Modell als Datendatei.
+   Erster Build ca. 1 Minute, danach Sekunden.
+4. **Prüfung:** Der fertige Klon wird mit allen Einstellungen gemessen und mit dem Original verglichen.
+
+Modell und Bericht werden im Profil gespeichert (`model/eq.json`, `report.json`); ein erneutes
+`vch clone` baut den Klon dann ohne neue Analyse. Einzelschritte: `vch analyze`, `vch verify`.
+
+Unterstützte Formen: Bell, Low/High Shelf, Low/High Cut (6–96 dB/Okt.), Notch, Band Pass, Tilt Shelf.
+Linearphasige „Brickwall“-Flanken werden angenähert, andere Formen vorerst durchgeleitet – der Bericht
+weist beides getrennt aus.
 
 ### Plugins mit vielen Parametern
 
@@ -98,6 +125,9 @@ host/      vch-host: C++20/JUCE 9, headless. Lädt VST3/LV2, rendert offline.
 profile/   JSON-Schemas, Reader/Writer mit Prüfsummen, WAV-I/O
 capture/   Testsignale, Messplan, Ansteuerung von vch-host, CLI `vch`
 agent/     LLM-Anbieter (Vercel AI SDK), models.dev-Katalog, Schlüsselbund, Fähigkeitstests, Rollen
+clone/     Frequenzgang-Analyse, EQ-Erkennung, Messplan, Filter-Fit, Plugin-Build, Vergleich
+plugin-template/eq/
+           C++/JUCE-EQ-Engine für Klone (Formeln identisch mit clone/src/dsp/biquad.ts)
 ```
 
 ## Tests
@@ -107,6 +137,7 @@ npm run typecheck
 npm test
 VCH_TEST_PLUGIN=~/.vst3/MeinPlugin.vst3 npm test   # inkl. Capture mit echtem Plugin
 VCH_TEST_MODEL=ollama/qwen3:8b npm test             # inkl. Live-Test eines Modells
+VCH_TEST_BUILD=1 npm test                           # inkl. Plugin-Build und Engine-Vergleich
 ```
 
 ## Lizenz
