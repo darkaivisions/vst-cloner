@@ -113,14 +113,15 @@ vst-cloner/
 ```
 
 ## Meilensteine
-1. **Profilformat + Capture-Host** ← aktuell
+1. **Profilformat + Capture-Host** ✔
    - JSON-Schema v1, Reader/Writer, Prüfsummen
    - vch-host: Plugin laden (VST3/LV2), Parameter auslesen, Offline-Rendering
    - CLI: `vch info`, `vch capture <plugin> -o out.vcprofile`, `vch inspect`
    - Abnahme: Profil eines Plugins auf Linux erzeugbar (Windows-Build über CMake/MSVC)
-2. **LLM-Layer**
+2. **LLM-Layer** ✔
    - Provider-Einstellungen, Auto-Discovery lokal, Fähigkeitstest, Keychain, Kostenanzeige
-3. **Erster Klon-Typ: EQ/Filter**
+   - CLI `vch llm …`; Metadaten aus Anbieter-APIs + models.dev-Katalog (24 h Cache, offline nutzbar)
+3. **Erster Klon-Typ: EQ/Filter** ← als Nächstes
    - Biquad-Fit + Faust-Generierung + Vergleich, Export LV2/VST3/CLAP
 4. **Kompressor + Distortion** (inkl. lokalem NAM-Training, CPU/GPU)
 5. **Delay + Reverb**

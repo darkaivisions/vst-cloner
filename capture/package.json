@@ -12,6 +12,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@vst-cloner/profile": "0.1.0"
+    "@vst-cloner/profile": "0.1.0",
+    "@vst-cloner/agent": "0.1.0"
   }
 }

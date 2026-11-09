@@ -18,6 +18,7 @@ Usage:
   vch extract <file.vcprofile> <dir>    Unpack captures and the regenerated input signal
   vch signal  <out.wav> [--sample-rate <hz>] [--channels <n>]
                                         Write the test signal (e.g. for capturing in a DAW)
+  vch llm …                             Language model providers (see 'vch llm --help')
 
 Capture options:
   -o, --output <file>       Output profile (.vcprofile)
@@ -297,6 +298,11 @@ async function commandSignal(positionals: string[], values: Values): Promise<voi
 }
 
 export async function main(argv: string[]): Promise<number> {
+  if (argv[0] === "llm") {
+    const llm = await import("@vst-cloner/agent/cli");
+    return llm.main(argv.slice(1));
+  }
+
   let parsed;
   try {
     parsed = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true });

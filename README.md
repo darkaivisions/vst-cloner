@@ -6,7 +6,7 @@ neu gebaut. Kein dekompilierter Code, keine extrahierten Samples – nur gemesse
 
 Gesamtplan und Meilensteine: [PLAN.md](PLAN.md) · Profilformat: [docs/profile-format.md](docs/profile-format.md)
 
-**Stand: Meilenstein 1** – Capture-Host, Profilformat und Kommandozeile funktionieren.
+**Stand: Meilenstein 2** – Capture-Host, Profilformat, Kommandozeile und LLM-Anbindung funktionieren.
 Getestet unter Linux mit nativen VST3-Plugins und Windows-Plugins über yabridge.
 
 ## Voraussetzungen
@@ -64,6 +64,32 @@ Ab Meilenstein 3 erzeugt die App solche Messpläne automatisch je nach Effekt-Kl
 - **Unter Windows:** vch-host mit CMake/MSVC bauen und dort capturen, das Profil
   anschließend unter Linux weiterverarbeiten.
 
+## KI-Modelle einrichten
+
+Der spätere Klon-Agent kann lokale und Cloud-Modelle nutzen. Metadaten (Kontextlänge,
+Tool-Unterstützung, Preise) kommen aus dem Anbieter selbst und dem täglich aktualisierten
+[models.dev](https://models.dev)-Katalog.
+
+```bash
+npm run vch -- llm status                 # Überblick: Anbieter, Schlüssel, Rollen, lokale Server
+npm run vch -- llm discover --add         # laufende lokale Server (Ollama, LM Studio, …) übernehmen
+npm run vch -- llm add anthropic          # Cloud-Anbieter hinzufügen
+npm run vch -- llm key anthropic          # API-Schlüssel im System-Schlüsselbund speichern
+npm run vch -- llm models ollama          # Modelle mit Kontext, Tools, Preisen
+npm run vch -- llm test ollama/qwen3:8b   # Live-Test: Text, Tool-Aufrufe, strukturierte Ausgabe
+npm run vch -- llm role builder anthropic/claude-sonnet-5
+```
+
+- **Anbieter:** OpenAI, Anthropic, Google Gemini, Mistral, OpenRouter, Ollama, LM Studio,
+  llama.cpp, vLLM sowie jeder OpenAI-kompatible Endpunkt (`vch llm add custom --base-url …
+  --catalog <models.dev-id>`, z. B. Groq oder DeepSeek).
+- **Rollen:** `analyst` (wertet Plugin-Metadaten mit REA aus, „Dirty Room“) und `builder`
+  (schreibt den Klon-Code nur aus Spezifikation und Messdaten, „Clean Room“).
+- **Schlüssel** liegen im System-Schlüsselbund (GNOME Keyring/KWallet, Windows-Anmeldeinformationsverwaltung),
+  nie in Konfigurationsdateien. Umgebungsvariablen wie `ANTHROPIC_API_KEY` haben Vorrang.
+  `vch llm key` fragt den Schlüssel verdeckt ab – am besten in einem normalen Terminal ausführen.
+- **Ollama:** Für lange Agent-Sitzungen `OLLAMA_CONTEXT_LENGTH=32768` setzen.
+
 ## Aufbau
 
 ```
@@ -71,6 +97,7 @@ host/      vch-host: C++20/JUCE 9, headless. Lädt VST3/LV2, rendert offline.
            Ausgabe als JSON-Zeilen auf stdout (Plugin-Ausgaben werden nach stderr umgeleitet).
 profile/   JSON-Schemas, Reader/Writer mit Prüfsummen, WAV-I/O
 capture/   Testsignale, Messplan, Ansteuerung von vch-host, CLI `vch`
+agent/     LLM-Anbieter (Vercel AI SDK), models.dev-Katalog, Schlüsselbund, Fähigkeitstests, Rollen
 ```
 
 ## Tests
@@ -79,6 +106,7 @@ capture/   Testsignale, Messplan, Ansteuerung von vch-host, CLI `vch`
 npm run typecheck
 npm test
 VCH_TEST_PLUGIN=~/.vst3/MeinPlugin.vst3 npm test   # inkl. Capture mit echtem Plugin
+VCH_TEST_MODEL=ollama/qwen3:8b npm test             # inkl. Live-Test eines Modells
 ```
 
 ## Lizenz
