@@ -10,7 +10,8 @@ import {
   type EqMapping,
   type ShapeKind,
 } from "./mapping.ts";
-import { bandSections, type BandSettings, type CutQMode, type EqModel, type FitStats, type ShapeFit, type ShapeReport } from "./model.ts";
+import { bandSections, type BandSettings, type BrickwallFit, type CutQMode, type EqModel, type FitStats, type ShapeFit, type ShapeReport } from "./model.ts";
+import { ellipticLowpass } from "../dsp/elliptic.ts";
 
 export interface Observation {
   renderId: string;
@@ -66,10 +67,12 @@ export function extractObservations(profile: Profile, mapping: EqMapping, grid: 
 
     let order = 2;
     let approximate = false;
+    let brickwall = false;
     if (template.slope !== undefined && mapping.slopes) {
       const slope = mapping.slopes[optionIndex(renderValue(render, byIndex.get(template.slope)!).norm, mapping.slopes.length)]!;
       order = slope.order;
       approximate = slope.approximate && (kind === "lowCut" || kind === "highCut");
+      brickwall = Boolean(slope.brickwall) && (kind === "lowCut" || kind === "highCut");
     }
 
     const measured = magnitudeDb(captureImpulseResponse(profile, render.id), sampleRate, grid);
@@ -87,6 +90,7 @@ export function extractObservations(profile: Profile, mapping: EqMapping, grid: 
         gainDb: physical(render, template.gain !== undefined ? byIndex.get(template.gain) : undefined, mapping, 0),
         q: physical(render, template.q !== undefined ? byIndex.get(template.q) : undefined, mapping, Math.SQRT1_2),
         order,
+        ...(brickwall ? { brickwall: true } : {}),
       },
       measuredDb: measured,
     });
@@ -110,6 +114,73 @@ function objective(observations: Observation[], fit: ShapeFit, sampleRate: numbe
   let total = 0;
   for (const o of observations) total += rmsDifference(cascadeDb(bandSections(o.settings, fit, sampleRate), sampleRate, grid), o.measuredDb);
   return total / observations.length;
+}
+
+/** Slope in dB/octave per dB of displayed gain: least squares over the measured curves (regression on log2 f). */
+function flatTiltSlope(observations: Observation[], grid: Float64Array): number {
+  const x = Array.from(grid, (f) => Math.log2(f));
+  const mx = x.reduce((a, b) => a + b, 0) / x.length;
+  const sxx = x.reduce((s, v) => s + (v - mx) ** 2, 0);
+  let num = 0, den = 0;
+  for (const o of observations) {
+    const my = o.measuredDb.reduce((a, b) => a + b, 0) / o.measuredDb.length;
+    let sxy = 0;
+    for (let i = 0; i < x.length; i++) sxy += (x[i]! - mx) * (o.measuredDb[i]! - my);
+    const slope = sxy / sxx;
+    num += slope * o.settings.gainDb;
+    den += o.settings.gainDb ** 2;
+  }
+  const value = den > 0 ? num / den : 0.2;
+  // round values are usually exact (e.g. 0.2 dB/octave per dB)
+  return Math.abs(value - Math.round(value * 100) / 100) < 0.002 ? Math.round(value * 100) / 100 : value;
+}
+
+/** dB curves compared down to this floor – below it the measurement is only noise */
+const BRICKWALL_FLOOR_DB = -80;
+
+/**
+ * Brickwall cut: searches order, passband ripple and stopband attenuation of an elliptic filter, then the
+ * position of the passband edge relative to the displayed frequency.
+ */
+function fitBrickwall(observations: Observation[], fit: ShapeFit, sampleRate: number, grid: Float64Array): BrickwallFit {
+  const clip = (v: number) => Math.max(v, BRICKWALL_FLOOR_DB);
+  const error = (brickwall: BrickwallFit) => {
+    let total = 0;
+    for (const o of observations) {
+      const model = cascadeDb(bandSections(o.settings, { ...fit, brickwall }, sampleRate), sampleRate, grid);
+      let sum = 0;
+      for (let i = 0; i < grid.length; i++) sum += (clip(model[i]!) - clip(o.measuredDb[i]!)) ** 2;
+      total += Math.sqrt(sum / grid.length);
+    }
+    return total / observations.length;
+  };
+  const make = (order: number, passbandDb: number, stopbandDb: number, edgeScale: number): BrickwallFit => {
+    const p = ellipticLowpass(order, passbandDb, stopbandDb);
+    return { order, passbandDb, stopbandDb, edgeScale, sections: p.sections.map((s) => ({ b: s.b, a: s.a })) };
+  };
+
+  let best = { fit: make(16, 0.01, 90, 1), error: Infinity };
+  for (let order = 4; order <= 16; order++) {
+    for (const passbandDb of [0.001, 0.003, 0.01, 0.03, 0.1, 0.3]) {
+      for (const stopbandDb of [60, 70, 80, 90, 100]) {
+        const candidate = make(order, passbandDb, stopbandDb, 1);
+        const e = error(candidate);
+        if (e < best.error) best = { fit: candidate, error: e };
+      }
+    }
+  }
+  for (let step = 0.02; step > 0.0002; step /= 2) {
+    for (const direction of [1, -1]) {
+      for (;;) {
+        const candidate = { ...best.fit, edgeScale: best.fit.edgeScale * (1 + direction * step) };
+        const e = error(candidate);
+        if (e >= best.error - 1e-9) break;
+        best = { fit: candidate, error: e };
+      }
+    }
+  }
+  if (Math.abs(best.fit.edgeScale - 1) < 0.002) best.fit.edgeScale = 1;
+  return best.fit;
 }
 
 interface Candidate {
@@ -237,16 +308,30 @@ export function fitEq(profile: Profile, onProgress?: (p: FitProgress) => void): 
     }
 
     let best: { fit: ShapeFit; error: number } | undefined;
-    for (const candidate of candidates(shape.kind)) {
+    const shapeCandidates = shape.kind === "flatTilt"
+      ? [{ design: "matched" as Design, gainScale: flatTiltSlope(train, grid), usesQ: false }]
+      : candidates(shape.kind);
+    for (const candidate of shapeCandidates) {
       const result = fitCandidate(train, candidate, sampleRate, grid);
       if (!best || result.error < best.error) best = result;
     }
 
+    // "Brickwall" cuts: elliptic filter fitted to their own measurements
+    const brickwallObservations = approximate.filter((o) => o.settings.brickwall);
+    if (brickwallObservations.length) {
+      onProgress?.({ shape: `${shape.label} (Brickwall)`, index, total: shapeOptions.length });
+      best!.fit.brickwall = fitBrickwall(brickwallObservations, best!.fit, sampleRate, grid);
+    }
+    const remaining = best!.fit.brickwall ? approximate.filter((o) => !o.settings.brickwall) : approximate;
+
     const trainStats = stats(train, best!.fit, sampleRate, grid);
     const validateStats = stats(validate, best!.fit, sampleRate, grid);
-    const approximateStats = stats(approximate, best!.fit, sampleRate, grid);
+    const approximateStats = stats(remaining, best!.fit, sampleRate, grid);
+    const brickwallStats = best!.fit.brickwall ? stats(brickwallObservations, best!.fit, sampleRate, grid) : undefined;
     shapes.push({ label: shape.label, kind: shape.kind, fit: best!.fit });
-    const approximateSlopes = shape.kind === "lowCut" || shape.kind === "highCut" ? mapping.slopes?.filter((s) => s.approximate).map((s) => s.label) : undefined;
+    const approximateSlopes = shape.kind === "lowCut" || shape.kind === "highCut"
+      ? mapping.slopes?.filter((s) => s.approximate && !(s.brickwall && best!.fit.brickwall)).map((s) => s.label)
+      : undefined;
     reports.push({
       label: shape.label,
       kind: shape.kind,
@@ -254,6 +339,7 @@ export function fitEq(profile: Profile, onProgress?: (p: FitProgress) => void): 
       ...(trainStats ? { train: trainStats } : {}),
       ...(validateStats ? { validate: validateStats } : {}),
       ...(approximateStats ? { approximate: approximateStats } : {}),
+      ...(brickwallStats ? { brickwall: brickwallStats } : {}),
       ...(approximateSlopes?.length ? { note: `angenähert durch die steilste exakte Flanke: ${approximateSlopes.join(", ")}` } : {}),
     });
   });

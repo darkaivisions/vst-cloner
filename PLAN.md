@@ -127,7 +127,10 @@ vst-cloner/
    - Abweichung zur ursprünglichen Planung: EQs nutzen eine feste C++-Engine, die das Modell als
      Daten erhält. Pro Klon generierter Faust-Code war zu langsam zu übersetzen (≈ 11 s pro Band).
      Faust bleibt für Effektklassen, deren DSP-Code der Agent schreibt.
-   - Offen: „Flat Tilt“-artige Formen, linearphasige Flanken, Parameter-Glättung, CLAP
+   - Nachgetragen: „Flat Tilt“ (Kette aus Kuhschwänzen 1. Ordnung, konstante Steigung), „Brickwall“-Flanken
+     (elliptischer Prototyp, Ordnung/Welligkeit/Sperrdämpfung gefittet; Pro-Q 3: Ordnung 12, 0,03 dB, 90 dB),
+     Parameter-Glättung (20 ms) und Ein-/Ausblenden bei Strukturwechseln; Pro-Q 3: alle 149 Messungen exakt, 0,10 dB
+   - Offen: linearphasiger Modus, CLAP
 4. **Desktop-Oberfläche:** Tauri, schlank und übersichtlich: Plugin wählen → Messen → Klonen,
    KI-Einstellungen, gut lesbares Live-Log aller Schritte ✔
    - Architektur: Web-Oberfläche ↔ Rust-Hülle ↔ Node-Bridge (`bridge/`, JSON-Zeilen, Jobs mit

@@ -18,13 +18,14 @@ const cppNumber = (v: number) => {
 
 const KIND: Record<ShapeKind, string> = {
   bell: "bell", lowShelf: "lowShelf", highShelf: "highShelf", lowCut: "lowCut", highCut: "highCut",
-  notch: "notch", bandPass: "bandPass", tiltShelf: "tiltShelf", unsupported: "unsupported",
+  notch: "notch", bandPass: "bandPass", tiltShelf: "tiltShelf", flatTilt: "flatTilt", unsupported: "unsupported",
 };
 
-function shapeFit(kind: ShapeKind, fit: ShapeFit | undefined): string {
-  const f = fit ?? { design: "matched", freqScale: 1, qScale: 1 };
+function shapeFit(kind: ShapeKind, fit: ShapeFit | undefined, index: number): string {
+  const f: ShapeFit = fit ?? { design: "matched", freqScale: 1, qScale: 1 };
+  const brickwall = f.brickwall ? `brickwall${index}, ${f.brickwall.sections.length}, ${cppNumber(f.brickwall.edgeScale)}` : "nullptr, 0, 1.0";
   return `{ vch::Kind::${KIND[kind]}, ${fit ? "true" : "false"}, vch::Design::${f.design}, ${cppNumber(f.freqScale)}, ${cppNumber(f.qScale)}, ` +
-    `${cppNumber(f.qExponent ?? 1)}, ${cppNumber(f.gainScale ?? 1)}, vch::QMode::${f.qMode ?? "scaleAll"}, ${f.tiltOrder ?? 2} }`;
+    `${cppNumber(f.qExponent ?? 1)}, ${cppNumber(f.gainScale ?? 1)}, vch::QMode::${f.qMode ?? "scaleAll"}, ${f.tiltOrder ?? 2}, ${brickwall} }`;
 }
 
 /** Generates CloneModel.h for plugin-template/eq. */
@@ -69,11 +70,18 @@ export function generateModelHeader(model: EqModel, parameters: Parameter[], plu
   lines.push("};", `inline constexpr int numParams = ${params.length};`, "");
 
   const shapes = model.shapes.length > 0 ? model.shapes : [{ label: "bell", kind: (model.defaultKind ?? "bell") as ShapeKind, fit: model.defaultFit }];
+  shapes.forEach((s, i) => {
+    const sections = s.fit?.brickwall?.sections;
+    if (sections) {
+      lines.push(`inline const vch::PrototypeSection brickwall${i}[] = { ${sections.map((p) => `{ ${[...p.b, ...p.a].map(cppNumber).join(", ")} }`).join(", ")} };`);
+    }
+  });
   lines.push("inline const vch::ShapeFit shapes[] =", "{");
-  for (const s of shapes) lines.push(`    ${shapeFit(s.kind, s.fit)}, // ${s.label.replace(/[\r\n]/g, " ")}`);
+  shapes.forEach((s, i) => lines.push(`    ${shapeFit(s.kind, s.fit, i)}, // ${s.label.replace(/[\r\n]/g, " ")}`));
   lines.push("};", `inline constexpr int numShapes = ${shapes.length};`, "");
 
-  const orders = model.mapping.slopes?.map((s) => s.order) ?? [2];
+  // order 0 marks the "Brickwall" slope (elliptic prototype of the cut shapes)
+  const orders = model.mapping.slopes?.map((s) => (s.brickwall ? 0 : s.order)) ?? [2];
   lines.push(`inline const int slopeOrders[] = { ${orders.join(", ")} };`, `inline constexpr int numSlopes = ${orders.length};`, "");
 
   const ref = (id: string) => indexById.get(id) ?? -1;

@@ -11,8 +11,11 @@ namespace vch
 {
 
 enum class Design { bilinear, matched };
-enum class Kind { bell, lowShelf, highShelf, lowCut, highCut, notch, bandPass, tiltShelf, unsupported };
+enum class Kind { bell, lowShelf, highShelf, lowCut, highCut, notch, bandPass, tiltShelf, flatTilt, unsupported };
 enum class QMode { ignore, scaleAll, scaleLast };
+
+/** Section of an analog lowpass prototype (s normalised to the passband edge): (b0 + b1 s + b2 s²) / (a0 + a1 s + a2 s²) */
+struct PrototypeSection { double b0, b1, b2, a0, a1, a2; };
 
 struct ShapeFit
 {
@@ -22,6 +25,10 @@ struct ShapeFit
     double freqScale, qScale, qExponent, gainScale;
     QMode qMode;
     int tiltOrder;
+    /** cuts: elliptic "Brickwall" prototype (used for slope order 0), see clone/src/eq/model.ts */
+    const PrototypeSection* brickwall = nullptr;
+    int brickwallSections = 0;
+    double brickwallEdge = 1.0;
 };
 
 struct BandSettings
@@ -142,6 +149,50 @@ namespace detail
     {
         return design == Design::matched ? matched (s, sampleRate) : bilinear (s, sampleRate);
     }
+
+    /** dB of a cascade at one frequency */
+    inline double cascadeDb (const Coeffs* sections, int count, double frequency, double sampleRate)
+    {
+        const double w = 2.0 * pi * frequency / sampleRate;
+        const double c1 = std::cos (w), s1 = std::sin (w), c2 = std::cos (2 * w), s2 = std::sin (2 * w);
+        double db = 0.0;
+        for (int i = 0; i < count; ++i)
+        {
+            const auto& c = sections[i];
+            const double nr = c.b0 + c.b1 * c1 + c.b2 * c2, ni = -(c.b1 * s1 + c.b2 * s2);
+            const double dr = 1 + c.a1 * c1 + c.a2 * c2, di = -(c.a1 * s1 + c.a2 * s2);
+            db += 10.0 * std::log10 (std::max (nr * nr + ni * ni, 1e-30) / std::max (dr * dr + di * di, 1e-30));
+        }
+        return db;
+    }
+
+    /** Flat tilt (see flatTiltSections in clone/src/eq/model.ts – identical construction). */
+    constexpr int flatTiltStages = 16;
+    constexpr double flatTiltLow = 5.0, flatTiltHigh = 40000.0;
+
+    inline int flatTilt (double f0, double slopeDbPerOctave, double sampleRate, Coeffs* out)
+    {
+        const double spacing = std::pow (flatTiltHigh / flatTiltLow, 1.0 / flatTiltStages);
+        const double r = std::pow (spacing, slopeDbPerOctave / (20.0 * std::log10 (2.0)));
+        Coeffs first[flatTiltStages];
+        for (int k = 0; k < flatTiltStages; ++k)
+        {
+            const double centre = flatTiltLow * std::pow (spacing, k + 0.5);
+            first[k] = matched (Analog { 1, r, 0, 1, 1, 0, centre * std::sqrt (r) }, sampleRate);
+        }
+        const int count = flatTiltStages / 2;
+        for (int k = 0; k < count; ++k)
+        {
+            const auto& x = first[2 * k];
+            const auto& y = first[2 * k + 1];
+            out[k] = { x.b0 * y.b0, x.b0 * y.b1 + x.b1 * y.b0, x.b1 * y.b1, x.a1 + y.a1, x.a1 * y.a1 };
+        }
+        const double scale = std::pow (10.0, -cascadeDb (out, count, std::min (f0, sampleRate * 0.49), sampleRate) / 20.0);
+        out[0].b0 *= scale;
+        out[0].b1 *= scale;
+        out[0].b2 *= scale;
+        return count;
+    }
 }
 
 /** Fills `out` with the sections of one band; returns the number of sections. */
@@ -151,6 +202,28 @@ inline int designBand (const BandSettings& settings, const ShapeFit& fit, double
 
     if (! fit.fitted || fit.kind == Kind::unsupported)
         return 0;
+
+    static_assert (detail::flatTiltStages / 2 <= maxSections, "flat tilt needs more sections");
+
+    // "Brickwall" cut (slope order 0): prototype shifted to the cutoff, bilinear with prewarping at the edge
+    if ((fit.kind == Kind::lowCut || fit.kind == Kind::highCut) && settings.order <= 0 && fit.brickwall != nullptr)
+    {
+        const double edge = settings.frequency * fit.freqScale * fit.brickwallEdge;
+        const int count = std::min (fit.brickwallSections, maxSections);
+        for (int i = 0; i < count; ++i)
+        {
+            const auto& p = fit.brickwall[i];
+            const bool firstOrder = p.a2 == 0.0 && p.b2 == 0.0;
+            detail::Analog section { p.b0, p.b1, p.b2, p.a0, p.a1, p.a2, edge };
+            if (fit.kind == Kind::lowCut) // lowpass → highpass: s → 1/s
+                section = firstOrder ? detail::Analog { p.b1, p.b0, 0, p.a1, p.a0, 0, edge }
+                                     : detail::Analog { p.b2, p.b1, p.b0, p.a2, p.a1, p.a0, edge };
+            out[(size_t) i] = detail::bilinear (section, sampleRate);
+        }
+        return count;
+    }
+    if (fit.kind == Kind::flatTilt)
+        return detail::flatTilt (settings.frequency * fit.freqScale, settings.gainDb * fit.gainScale, sampleRate, out.data());
 
     const double f = settings.frequency * fit.freqScale;
     const double q = std::max (fit.qScale * std::pow (std::max (settings.q, 1e-6), fit.qExponent), 1e-3);
@@ -182,7 +255,8 @@ inline int designBand (const BandSettings& settings, const ShapeFit& fit, double
         case Kind::lowCut:
         case Kind::highCut:
         {
-            const int order = std::clamp (settings.order, 1, 2 * maxSections);
+            // order 0 = "Brickwall" without a fitted prototype: steepest exact slope
+            const int order = settings.order <= 0 ? 2 * maxSections : std::clamp (settings.order, 1, 2 * maxSections);
             const bool odd = order % 2 == 1;
             const int biquads = order / 2;
             const double factor = q / 0.70710678118654752;
@@ -205,6 +279,7 @@ inline int designBand (const BandSettings& settings, const ShapeFit& fit, double
                                                            : Analog { 1, 0, 0, 1, 1, 0, f };
             break;
         }
+        case Kind::flatTilt:
         case Kind::unsupported: break;
     }
 

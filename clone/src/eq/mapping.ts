@@ -2,9 +2,10 @@ import type { CaptureRender, Parameter } from "@vst-cloner/profile";
 
 export type BandRole = "enable" | "frequency" | "gain" | "q" | "shape" | "slope";
 
-export type ShapeKind = "bell" | "lowShelf" | "highShelf" | "lowCut" | "highCut" | "notch" | "bandPass" | "tiltShelf" | "unsupported";
+/** flatTilt: constant slope (dB/octave) over the whole audio range, 0 dB at the band frequency */
+export type ShapeKind = "bell" | "lowShelf" | "highShelf" | "lowCut" | "highCut" | "notch" | "bandPass" | "tiltShelf" | "flatTilt" | "unsupported";
 
-export const GAIN_SHAPES: ShapeKind[] = ["bell", "lowShelf", "highShelf", "tiltShelf"];
+export const GAIN_SHAPES: ShapeKind[] = ["bell", "lowShelf", "highShelf", "tiltShelf", "flatTilt"];
 export const CUT_SHAPES: ShapeKind[] = ["lowCut", "highCut"];
 
 /** Normalized → physical value table of a continuous parameter. */
@@ -32,6 +33,8 @@ export interface SlopeOption {
   order: number;
   /** label could not be represented exactly (e.g. "Brickwall") */
   approximate: boolean;
+  /** "Brickwall": extremely steep cut, modelled as an elliptic filter fitted to the measurements */
+  brickwall?: boolean;
 }
 
 export interface EqMapping {
@@ -70,7 +73,7 @@ export function parseValue(text: string): { value: number; unit: string } | unde
 
 export function classifyShape(label: string): ShapeKind {
   const l = label.toLowerCase();
-  if (/flat\s*tilt/.test(l)) return "unsupported";
+  if (/flat\s*tilt/.test(l)) return "flatTilt";
   if (/tilt/.test(l)) return "tiltShelf";
   if (/low\s*shelf|bass\s*shelf|ls\b/.test(l)) return "lowShelf";
   if (/high\s*shelf|treble\s*shelf|hs\b/.test(l)) return "highShelf";
@@ -88,7 +91,7 @@ export function parseSlope(label: string): SlopeOption {
     const order = Math.round(db.value / 6);
     return { label, order: Math.max(1, Math.min(16, order)), approximate: order * 6 !== db.value || order > 16 };
   }
-  return { label, order: 16, approximate: true };
+  return { label, order: 16, approximate: true, ...(/brick\s*wall/i.test(label) ? { brickwall: true } : {}) };
 }
 
 // ---- tables ------------------------------------------------------------------------------------

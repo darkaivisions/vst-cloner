@@ -75,7 +75,7 @@ test("display values and labels are parsed", () => {
   assert.equal(classifyShape("Low Shelf"), "lowShelf");
   assert.equal(classifyShape("High Cut"), "highCut");
   assert.equal(classifyShape("Peak"), "bell");
-  assert.equal(classifyShape("Flat Tilt"), "unsupported");
+  assert.equal(classifyShape("Flat Tilt"), "flatTilt");
   assert.deepEqual(parseSlope("24 dB/oct"), { label: "24 dB/oct", order: 4, approximate: false });
   assert.equal(parseSlope("Brickwall").approximate, true);
 });
@@ -275,4 +275,32 @@ test("gui text: font size follows the ink height and the letter shapes", async (
   assert.equal(fontSize("GAIN", 10), 14);        // capitals: ink ≈ 0.72 × size
   assert.equal(fontSize("Bypass", 12), 13);      // capitals + descenders ≈ 0.94
   assert.equal(fontSize("x", 2), 7);             // minimum
+});
+
+test("elliptic prototype: exact passband ripple and stopband attenuation", async () => {
+  const { ellipticLowpass, toHighpass } = await import("../src/dsp/elliptic.ts");
+  const { analogMagnitudeSquared } = await import("../src/dsp/biquad.ts");
+  const p = ellipticLowpass(12, 0.03, 90);
+  const db = (sections: typeof p.sections, w: number) => sections.reduce((s, sec) => s + 10 * Math.log10(analogMagnitudeSquared(sec, w)), 0);
+  for (let i = 0; i <= 50; i++) assert.ok(db(p.sections, i / 50) > -0.0301 && db(p.sections, i / 50) < 1e-6);
+  for (let i = 0; i <= 200; i++) assert.ok(db(p.sections, p.stopbandEdge * (1 + i / 20)) < -89.99);
+  // highpass with the same edge: mirror image
+  const hp = p.sections.map(toHighpass);
+  assert.ok(Math.abs(db(hp, 1 / 0.5) - db(p.sections, 0.5)) < 1e-9);
+});
+
+test("flat tilt: constant slope through 0 dB at the band frequency", async () => {
+  const { flatTiltSections } = await import("../src/eq/model.ts");
+  const { cascadeDb } = await import("../src/dsp/biquad.ts");
+  const sections = flatTiltSections(1000, 2.4, 48000);
+  assert.ok(sections.length <= 8);
+  const freqs = new Float64Array([62.5, 125, 250, 500, 1000, 2000, 4000, 8000]);
+  const db = cascadeDb(sections, 48000, freqs);
+  freqs.forEach((f, i) => assert.ok(Math.abs(db[i]! - 2.4 * Math.log2(f / 1000)) < 0.4, `${f} Hz: ${db[i]}`));
+});
+
+test("brickwall slope option is recognised and generated as order 0", async () => {
+  const { parseSlope } = await import("../src/eq/mapping.ts");
+  assert.equal(parseSlope("Brickwall").brickwall, true);
+  assert.equal(parseSlope("24 dB/oct").brickwall, undefined);
 });

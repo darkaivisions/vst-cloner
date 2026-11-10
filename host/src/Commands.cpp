@@ -5,7 +5,10 @@
 
 #include "Protocol.h"
 
+#include <algorithm>
+#include <functional>
 #include <stdexcept>
+#include <tuple>
 
 namespace vch
 {
@@ -152,12 +155,16 @@ namespace
         /** Processes `numSamples` of `source` (or silence if nullptr), starting at `sourceOffset`.
             Output is written to `dest` at `destOffset` when given. */
         void process (const juce::AudioBuffer<float>* source, int sourceOffset, int numSamples,
-                      juce::AudioBuffer<float>* dest, int destOffset)
+                      juce::AudioBuffer<float>* dest, int destOffset,
+                      const std::function<void (int position)>& beforeBlock = {})
         {
             juce::ScopedNoDenormals noDenormals;
 
             for (int done = 0; done < numSamples;)
             {
+                if (beforeBlock)
+                    beforeBlock (done);
+
                 auto n = juce::jmin (blockSize, numSamples - done);
                 work.clear();
 
@@ -370,7 +377,31 @@ int runRender (const juce::StringArray& args)
         auto keep = input.buffer.getNumSamples() + tailSamples;
         juce::AudioBuffer<float> output (juce::jmax (1, renderer.getOutputChannels()), latency + keep);
         output.clear();
-        renderer.process (&input.buffer, 0, latency + keep, &output, 0);
+        // optional automation: { "at": sample (from the start of the input), "index", "value" },
+        // applied at the start of the block that contains "at" (use a small blockSize for precise timing)
+        std::vector<std::tuple<int, int, float>> changes;
+        if (auto* list = render["changes"].getArray())
+        {
+            for (auto& entry : *list)
+            {
+                const int paramIndex = (int) entry["index"];
+                if (! juce::isPositiveAndBelow (paramIndex, parameters.size()))
+                    throw std::runtime_error (("parameter index out of range: " + juce::String (paramIndex)).toStdString());
+                changes.emplace_back ((int) entry["at"], paramIndex, (float) (double) entry["value"]);
+            }
+            std::sort (changes.begin(), changes.end());
+        }
+        size_t nextChange = 0;
+        const auto automate = [&] (int position)
+        {
+            while (nextChange < changes.size() && std::get<0> (changes[nextChange]) < position + blockSize)
+            {
+                parameters[std::get<1> (changes[nextChange])]->setValueNotifyingHost (std::get<2> (changes[nextChange]));
+                ++nextChange;
+            }
+        };
+
+        renderer.process (&input.buffer, 0, latency + keep, &output, 0, changes.empty() ? std::function<void (int)> {} : automate);
 
         juce::AudioBuffer<float> trimmed (output.getNumChannels(), keep);
 

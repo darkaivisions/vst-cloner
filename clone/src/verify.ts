@@ -103,15 +103,17 @@ export async function verifyClone(profile: Profile, model: EqModel, clonePath: s
       const ir = wav.channels[0]!.slice(impulse.start, impulse.start + impulse.length).map((v) => v / amplitude);
       const cloneDb = magnitudeDb(ir, sampleRate, grid);
       const fit = fits.get(o.shapeLabel);
+      // brickwall cuts are exact once the elliptic fit exists
+      const approximate = o.approximate && !(o.settings.brickwall && fit?.brickwall);
       rows.push({
         label: o.label,
         shape: o.shapeLabel,
         rms: rmsDifference(cloneDb, o.measuredDb),
         max: maxDifference(cloneDb, o.measuredDb),
-        limited: !fit || o.approximate,
+        limited: !fit || approximate,
       });
 
-      const predicted = fit && !o.approximate ? cascadeDb(bandSections(o.settings, fit, sampleRate), sampleRate, grid) : undefined;
+      const predicted = fit && !approximate ? cascadeDb(bandSections(o.settings, fit, sampleRate), sampleRate, grid) : undefined;
       const engineDifference = predicted ? maxDifference(predicted, cloneDb) : 0;
       if (engineDifference > engineMaxDb) {
         engineMaxDb = engineDifference;

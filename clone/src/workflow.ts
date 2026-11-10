@@ -53,6 +53,10 @@ export function formatModelReport(model: EqModel): string[] {
     if (f.tiltOrder) parts.push(`order ${f.tiltOrder}`);
     const check = r.validate ?? r.train;
     lines.push(`${r.label.padEnd(14)} ${parts.join(" ").padEnd(33)} ${stat(r.train).padEnd(18)} ${stat(r.validate).padEnd(18)} ${check ? verdict(check.rmsDb) : ""}`);
+    if (f.brickwall && r.brickwall) {
+      const b = f.brickwall;
+      lines.push(`${"".padEnd(14)} Brickwall: elliptisch, Ordnung ${b.order}, ${b.passbandDb} dB Welligkeit, ${b.stopbandDb} dB Sperrdämpfung: ${stat(r.brickwall)} ${verdict(r.brickwall.rmsDb)}`);
+    }
     if (r.approximate) lines.push(`${"".padEnd(14)} ${r.note ?? "angenähert"}: ${stat(r.approximate)}`);
   }
   const flat = model.report.baselineFlatnessDb;
