@@ -13,11 +13,18 @@ export interface DistortionParams {
   preBellFreq: number;
   preBellDb: number;
   preBellQ: number;
+  /** second bell of the pre-filter (drive controls often reshape the input response) */
+  preBell2Freq: number;
+  preBell2Db: number;
+  preBell2Q: number;
   preLp: number;
   /** clipping curve: output limit for positive / negative input, hardness (2 soft … 10 hard) */
   clipPos: number;
   clipNeg: number;
   hardness: number;
+  /** supply rails after the clipper (hard, asymmetric): even harmonics that only appear when clipping hard */
+  railPos: number;
+  railNeg: number;
   /** post-filter (tone): bell (Hz, dB, Q), high shelf (Hz, dB), low-pass and high-pass (Hz) */
   postBellFreq: number;
   postBellDb: number;
@@ -37,6 +44,7 @@ export function preSections(p: DistortionParams, sampleRate: number): DigitalSec
   return [
     digitize(prototypes.highPass1(clampFreq(p.preHp, sampleRate)), "matched", sampleRate),
     digitize(prototypes.bell(clampFreq(p.preBellFreq, sampleRate), p.preBellDb, Math.max(p.preBellQ, 0.1)), "matched", sampleRate),
+    digitize(prototypes.bell(clampFreq(p.preBell2Freq, sampleRate), p.preBell2Db, Math.max(p.preBell2Q, 0.1)), "matched", sampleRate),
     digitize(prototypes.lowPass1(clampFreq(p.preLp, sampleRate)), "matched", sampleRate),
   ];
 }
@@ -50,11 +58,21 @@ export function postSections(p: DistortionParams, sampleRate: number): DigitalSe
   ];
 }
 
-/** Clipping curve with unity slope at zero: v / (1 + |v/limit|^k)^(1/k), separate limits per polarity. */
-export function clip(v: number, p: Pick<DistortionParams, "clipPos" | "clipNeg" | "hardness">): number {
-  const limit = v >= 0 ? p.clipPos : p.clipNeg;
-  const k = Math.max(p.hardness, 0.5);
+/** Hardness of the supply rails */
+export const RAIL_HARDNESS = 8;
+
+function softLimit(v: number, positive: number, negative: number, hardness: number): number {
+  const limit = v >= 0 ? positive : negative;
+  const k = Math.max(hardness, 0.5);
   return v / (1 + Math.abs(v / limit) ** k) ** (1 / k);
+}
+
+/**
+ * Clipping stage with unity slope at zero: v / (1 + |v/limit|^k)^(1/k) with separate limits per polarity,
+ * followed by the (harder, asymmetric) supply rails.
+ */
+export function clip(v: number, p: Pick<DistortionParams, "clipPos" | "clipNeg" | "hardness" | "railPos" | "railNeg">): number {
+  return softLimit(softLimit(v, p.clipPos, p.clipNeg, p.hardness), p.railPos, p.railNeg, RAIL_HARDNESS);
 }
 
 /** Transposed direct form II biquad chain state. */
@@ -94,7 +112,7 @@ export class ClipTable {
   private readonly table: Float64Array;
   private readonly range: number;
   private readonly scale: number;
-  constructor(p: Pick<DistortionParams, "clipPos" | "clipNeg" | "hardness">, size = 4096) {
+  constructor(p: Pick<DistortionParams, "clipPos" | "clipNeg" | "hardness" | "railPos" | "railNeg">, size = 4096) {
     // beyond ±range the curve is flat to well below 0.1 % (limit · 16)
     this.range = 16 * Math.max(p.clipPos, p.clipNeg);
     this.table = new Float64Array(size + 1);

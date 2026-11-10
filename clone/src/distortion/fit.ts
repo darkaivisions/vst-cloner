@@ -10,6 +10,8 @@ import { clip, ClipTable, postSections, preSections, processDistortion, processD
 export const HARMONICS = [2, 3, 4, 5];
 /** below this input level the harmonics are not compared (tiny artefacts of the original, inaudible) */
 const MIN_HARMONIC_INPUT_DB = -24;
+/** harmonics are compared where the fundamental is compressed by at least this much */
+const MIN_COMPRESSION_DB = 0.5;
 /** harmonics below this level are treated as equal */
 const HARMONIC_FLOOR_DB = -70;
 
@@ -182,10 +184,14 @@ export function compareDistortion(model: { smallDb: Float64Array; steps: StepMea
   for (let i = 0; i < o.smallDb.length; i++) s += (model.smallDb[i]! - o.smallDb[i]!) ** 2;
   const smallDb = Math.sqrt(s / o.smallDb.length);
   let g = 0, h = 0, hn = 0;
+  // gain of the quietest step per frequency: reference for the compression
+  const quiet = new Map<number, number>();
+  for (const m of o.steps) if (!quiet.has(m.frequency)) quiet.set(m.frequency, m.gainDb);
   o.steps.forEach((m, k) => {
     const x = model.steps[k]!;
     g += (x.gainDb - m.gainDb) ** 2;
-    if (m.levelDb < MIN_HARMONIC_INPUT_DB) return;
+    // harmonics count where the original really clips (its quiet-signal artefacts are not modelled)
+    if (m.levelDb < MIN_HARMONIC_INPUT_DB || quiet.get(m.frequency)! - m.gainDb < MIN_COMPRESSION_DB) return;
     m.harmonicsDb.forEach((v, j) => {
       const w = x.harmonicsDb[j]!;
       if (Number.isNaN(v) || Number.isNaN(w)) return;
@@ -202,26 +208,32 @@ export function compareDistortion(model: { smallDb: Float64Array; steps: StepMea
 
 export const packDistortion = (p: DistortionParams): number[] => [
   p.inputDb, Math.log(p.preHp), Math.log(p.preBellFreq), p.preBellDb, Math.log(p.preBellQ), Math.log(p.preLp),
-  Math.log(p.clipPos), Math.log(p.clipNeg), Math.log(p.hardness),
+  Math.log(p.clipNeg), Math.log(p.hardness),
+  Math.log(p.preBell2Freq), p.preBell2Db, Math.log(p.preBell2Q), Math.log(p.railPos), Math.log(p.railNeg),
   Math.log(p.postBellFreq), p.postBellDb, Math.log(p.postBellQ), Math.log(p.shelfFreq), p.shelfDb, Math.log(p.postLp), Math.log(p.postHp),
   p.outputDb,
 ];
+// (order above: input, pre-filter, clipper, second pre-bell, rails, post-filter, output)
 
 export const unpackDistortion = (x: number[]): DistortionParams => ({
   inputDb: x[0]!, preHp: Math.exp(x[1]!), preBellFreq: Math.exp(x[2]!), preBellDb: x[3]!, preBellQ: Math.exp(x[4]!), preLp: Math.exp(x[5]!),
-  clipPos: Math.exp(x[6]!), clipNeg: Math.exp(x[7]!), hardness: Math.exp(x[8]!),
-  postBellFreq: Math.exp(x[9]!), postBellDb: x[10]!, postBellQ: Math.exp(x[11]!), shelfFreq: Math.exp(x[12]!), shelfDb: x[13]!,
-  postLp: Math.exp(x[14]!), postHp: Math.exp(x[15]!), outputDb: x[16]!,
+  clipPos: 1, clipNeg: Math.exp(x[6]!), hardness: Math.exp(x[7]!),
+  preBell2Freq: Math.exp(x[8]!), preBell2Db: x[9]!, preBell2Q: Math.exp(x[10]!), railPos: Math.exp(x[11]!), railNeg: Math.exp(x[12]!),
+  postBellFreq: Math.exp(x[13]!), postBellDb: x[14]!, postBellQ: Math.exp(x[15]!), shelfFreq: Math.exp(x[16]!), shelfDb: x[17]!,
+  postLp: Math.exp(x[18]!), postHp: Math.exp(x[19]!), outputDb: x[20]!,
 });
+// The positive clipping limit is fixed at 1: input gain and limits would otherwise trade off exactly
+// (gain × a, limits × a), and the parameter tables would wander along that line.
 
-const STEP = [6, 0.7, 0.7, 4, 0.5, 0.7, 0.7, 0.7, 0.4, 0.7, 4, 0.5, 0.7, 4, 0.7, 0.7, 4];
+export const STEP = [6, 0.7, 0.7, 4, 0.5, 0.7, 0.4, 0.4, 0.7, 4, 0.5, 0.7, 0.7, 0.7, 4, 0.5, 0.7, 4, 0.7, 0.7, 4];
 
 /** Start values from the measurements: level from the small-signal gain, a moderate clipper. */
 export function initialDistortion(o: DistortionObservation, input: DistortionInput): DistortionParams {
   const at1k = o.smallDb[input.grid.findIndex((f) => f >= 1000)] ?? 0;
   return {
     inputDb: 20, preHp: 60, preBellFreq: 800, preBellDb: 0, preBellQ: 0.7, preLp: 12000,
-    clipPos: 0.5, clipNeg: 0.5, hardness: 3,
+    clipPos: 1, clipNeg: 1, hardness: 3,
+    preBell2Freq: 200, preBell2Db: 0, preBell2Q: 0.7, railPos: 8, railNeg: 8,
     postBellFreq: 1000, postBellDb: 0, postBellQ: 0.7, shelfFreq: 3000, shelfDb: 0, postLp: 14000, postHp: 30,
     outputDb: at1k - 20,
   };
@@ -248,7 +260,7 @@ export { clip, processDistortion };
 // ---- complete fit with parameter tables ---------------------------------------------------------
 
 /** Penalty on changes against the base model (per STEP unit²): a control only changes what it must. */
-const CHANGE_PENALTY = 0.05;
+const CHANGE_PENALTY = 0.02;
 
 export interface DistortionRenderReport {
   renderId: string;
@@ -264,7 +276,13 @@ export interface DistortionModel {
   base: DistortionParams;
   baseValues: { index: number; value: number }[];
   tables: ParamTable[];
-  report: { renders: DistortionRenderReport[]; train?: DistortionErrors; validate?: DistortionErrors };
+  report: {
+    renders: DistortionRenderReport[];
+    train?: DistortionErrors;
+    validate?: DistortionErrors;
+    /** which part of the model each control acts on (chosen by the fit) */
+    groups?: { index: number; name: string; groups: GroupName[] }[];
+  };
 }
 
 /** Packed model for a combination of plugin values (base + change of each control on its own). */
@@ -287,52 +305,151 @@ const meanErrors = (rows: DistortionErrors[]): DistortionErrors | undefined => {
   return { smallDb: avg("smallDb"), gainDb: avg("gainDb"), harmonicsDb: avg("harmonicsDb"), total: avg("total") };
 };
 
-/** Base model (full fit), every sweep render (penalised change from the base), tables, predictions. */
-export function fitDistortion(profile: Profile, onProgress?: (done: number, total: number, label: string) => void): DistortionModel {
+/** Groups of packed model values: a control usually acts on one part of the circuit only. */
+export const GROUPS = {
+  input: [0],
+  pre: [1, 2, 3, 4, 5, 8, 9, 10],
+  clip: [6, 7, 11, 12],
+  post: [13, 14, 15, 16, 17, 18, 19],
+  output: [20],
+} as const;
+export type GroupName = keyof typeof GROUPS;
+
+/** Candidate sets, simplest first; the last one leaves everything free. */
+export const GROUP_CANDIDATES: GroupName[][] = [
+  ["output"],
+  ["post", "output"],
+  ["input", "output"],
+  ["input", "pre", "output"],
+  ["input", "clip", "output"],
+  ["input", "pre", "post", "output"],
+  ["input", "pre", "clip", "post", "output"],
+];
+
+/**
+ * Fit of a sweep point: start at the base model, only the values of `groups` may change, and changes are
+ * penalised. Returns the packed model and its error (without penalty).
+ */
+export function fitSweepPoint(o: DistortionObservation, input: DistortionInput, x0: number[], groups: GroupName[] = GROUP_CANDIDATES[GROUP_CANDIDATES.length - 1]!): { x: number[]; error: number } {
+  const free = groups.flatMap((g) => [...GROUPS[g]]).sort((a, b) => a - b);
+  const full = (y: number[]) => {
+    const x = [...x0];
+    free.forEach((k, i) => (x[k] = y[i]!));
+    return x;
+  };
+  const error = (x: number[]) => compareDistortion(modelMeasurements(input, unpackDistortion(x)), o).total;
+  const cost = (y: number[]) => {
+    let change = 0;
+    free.forEach((k, i) => (change += ((y[i]! - x0[k]!) / STEP[k]!) ** 2));
+    return error(full(y)) + CHANGE_PENALTY * change;
+  };
+  let y = free.map((k) => x0[k]!), value = cost(y);
+  for (let round = 0; round < 3; round++) {
+    const r = nelderMead(cost, y, { step: free.map((k) => STEP[k]! * (round === 0 ? 0.5 : 0.25)), maxEvaluations: 120 * free.length + 200 });
+    if (r.value >= value - 1e-4 && round > 0) break;
+    y = r.x;
+    value = r.value;
+  }
+  const x = full(y);
+  return { x, error: error(x) };
+}
+
+/** Start points of the base fit (run in parallel, the best wins). */
+export function baseStarts(o: DistortionObservation, input: DistortionInput): DistortionParams[] {
+  const p = initialDistortion(o, input);
+  return [
+    p,
+    { ...p, inputDb: 10, outputDb: p.outputDb + 10, hardness: 2 },
+    { ...p, inputDb: 30, outputDb: p.outputDb - 10, hardness: 6 },
+    { ...p, clipNeg: 1.6, hardness: 4 },
+  ];
+}
+
+export type DistortionJob =
+  | { kind: "base"; observation: DistortionObservation; start: DistortionParams }
+  | { kind: "sweep"; observation: DistortionObservation; x0: number[]; groups: GroupName[] };
+
+export interface JobResult {
+  x: number[];
+  error: number;
+}
+
+/** Runs jobs on worker threads (one per core, at most `jobs.length`). */
+async function runJobs(input: DistortionInput, jobs: DistortionJob[], onDone: (done: number) => void): Promise<JobResult[]> {
+  const { Worker } = await import("node:worker_threads");
+  const { availableParallelism } = await import("node:os");
+  const count = Math.max(1, Math.min(jobs.length, availableParallelism() - 1));
+  const results: JobResult[] = new Array(jobs.length);
+  let next = 0, done = 0;
+  await Promise.all(Array.from({ length: count }, () => new Promise<void>((resolve, reject) => {
+    const worker = new Worker(new URL("./worker.ts", import.meta.url), { workerData: input });
+    const feed = () => {
+      if (next >= jobs.length) {
+        void worker.terminate();
+        resolve();
+        return;
+      }
+      const k = next++;
+      worker.once("message", (result: JobResult) => {
+        results[k] = result;
+        onDone(++done);
+        feed();
+      });
+      worker.postMessage(jobs[k]);
+    };
+    worker.once("error", reject);
+    feed();
+  })));
+  return results;
+}
+
+/** Base model (best of several starts), every sweep render (penalised change from the base), tables, predictions. */
+export async function fitDistortion(profile: Profile, onProgress?: (done: number, total: number, label: string) => void): Promise<DistortionModel> {
   const input = distortionInput(profile);
   const observations = distortionObservations(profile, input);
   const parameters = profile.parameters.parameters;
   const base = observations.find((o) => o.params.length === 0) ?? observations[0]!;
   const train = observations.filter((o) => o.purpose === "train" && o !== base && o.params.length === 1);
-  const total = train.length + 1;
+  const starts = baseStarts(base, input);
+  const total = starts.length + train.length;
 
   onProgress?.(0, total, "Grundeinstellung");
-  const baseFit = fitDistortionRender(base, input);
-  const x0 = packDistortion(baseFit.params);
+  const baseResults = await runJobs(input, starts.map((start) => ({ kind: "base", observation: base, start })), (d) => onProgress?.(d, total, "Grundeinstellung"));
+  const x0 = baseResults.reduce((best, r) => (r.error < best.error ? r : best)).x;
+  const baseParams = unpackDistortion(x0);
+
+  // every sweep point with every candidate group set (in parallel); per control the simplest set that fits
+  const jobs: { o: DistortionObservation; candidate: number }[] = [];
+  for (const o of train) GROUP_CANDIDATES.forEach((_, candidate) => jobs.push({ o, candidate }));
+  const fits = await runJobs(input, jobs.map((j) => ({ kind: "sweep", observation: j.o, x0, groups: GROUP_CANDIDATES[j.candidate]! })),
+    (d) => onProgress?.(starts.length + Math.round((d / jobs.length) * train.length), total, "Regler"));
 
   const baseValues = new Map(parameters.map((p) => [p.index, p.value ?? p.default]));
   const tables = new Map<number, ParamTable>();
-  train.forEach((o, i) => {
-    onProgress?.(i + 1, total, o.label);
-    const cost = (x: number[]) => {
-      const e = compareDistortion(modelMeasurements(input, unpackDistortion(x)), o).total;
-      let change = 0;
-      for (let k = 0; k < x.length; k++) change += ((x[k]! - x0[k]!) / STEP[k]!) ** 2;
-      return e + CHANGE_PENALTY * change;
-    };
-    let x = x0, value = cost(x0);
-    for (let round = 0; round < 3; round++) {
-      const r = nelderMead(cost, x, { step: STEP.map((s) => s * (round === 0 ? 0.5 : 0.25)), maxEvaluations: 1500 });
-      if (r.value >= value - 1e-4 && round > 0) break;
-      x = r.x;
-      value = r.value;
-    }
-    const p = o.params[0]!;
-    const info = parameters.find((q) => q.index === p.index)!;
-    const table = tables.get(p.index) ?? { index: p.index, name: info.name, discrete: info.discrete, points: [{ value: baseValues.get(p.index)!, packed: x0 }] };
-    table.points.push({ value: p.value, packed: x });
-    tables.set(p.index, table);
-  });
+  const controls = [...new Set(train.map((o) => o.params[0]!.index))];
+  const chosenGroups: { index: number; name: string; groups: GroupName[] }[] = [];
+  for (const index of controls) {
+    const points = train.filter((o) => o.params[0]!.index === index);
+    const errorOf = (candidate: number) =>
+      points.reduce((s, o) => s + fits[jobs.findIndex((j) => j.o === o && j.candidate === candidate)]!.error, 0) / points.length;
+    const best = errorOf(GROUP_CANDIDATES.length - 1);
+    const candidate = GROUP_CANDIDATES.findIndex((_, c) => errorOf(c) <= best * 1.1 + 0.03);
+    const info = parameters.find((q) => q.index === index)!;
+    chosenGroups.push({ index, name: info.name, groups: GROUP_CANDIDATES[candidate]! });
+    const table: ParamTable = { index, name: info.name, discrete: info.discrete, points: [{ value: baseValues.get(index)!, packed: x0 }] };
+    for (const o of points) table.points.push({ value: o.params[0]!.value, packed: fits[jobs.findIndex((j) => j.o === o && j.candidate === candidate)]!.x });
+    tables.set(index, table);
+  }
   for (const table of tables.values()) table.points.sort((a, b) => a.value - b.value);
 
   const model: DistortionModel = {
     type: "distortion",
     version: 1,
     sampleRate: input.sampleRate,
-    base: baseFit.params,
+    base: baseParams,
     baseValues: [...tables.keys()].map((index) => ({ index, value: baseValues.get(index)! })),
     tables: [...tables.values()],
-    report: { renders: [] },
+    report: { renders: [], groups: chosenGroups },
   };
   model.report.renders = observations.map((o) => ({
     renderId: o.renderId,
