@@ -1,5 +1,8 @@
 #include "Protocol.h"
 
+#include <cstring>
+#include <utility>
+
 #include <cstdio>
 
 #if JUCE_WINDOWS
@@ -52,6 +55,25 @@ juce::var makeObject (std::initializer_list<std::pair<const char*, juce::var>> p
         obj->setProperty (key, value);
 
     return juce::var (obj.get());
+}
+
+juce::StringArray pluginPathCandidates (const juce::String& path)
+{
+    juce::StringArray candidates { path };
+    const std::pair<const char*, const char*> twins[] = {
+        { "/usr/lib64/", "/usr/lib/" }, { "/usr/lib/", "/usr/lib64/" },
+        { "/usr/local/lib64/", "/usr/local/lib/" }, { "/usr/local/lib/", "/usr/local/lib64/" },
+    };
+    for (const auto& [from, to] : twins)
+    {
+        if (path.startsWith (from))
+        {
+            const auto other = juce::String (to) + path.substring ((int) std::strlen (from));
+            if (juce::File (other).exists())
+                candidates.addIfNotAlreadyThere (other);
+        }
+    }
+    return candidates;
 }
 
 } // namespace vch

@@ -131,9 +131,14 @@ Each step starts from the plugin's initial parameter values. Results are JSON li
 
         juce::OwnedArray<juce::PluginDescription> types;
         const auto pluginPath = job["plugin"].toString();
-        for (auto* format : formats.getFormats())
-            if (format->fileMightContainThisPluginType (pluginPath))
-                format->findAllTypesForFile (types, pluginPath);
+        for (const auto& candidate : vch::pluginPathCandidates (pluginPath))
+        {
+            for (auto* format : formats.getFormats())
+                if (format->fileMightContainThisPluginType (candidate))
+                    format->findAllTypesForFile (types, candidate);
+            if (! types.isEmpty())
+                break;
+        }
 
         if (types.isEmpty())
             throw std::runtime_error (("no supported plugin found in " + pluginPath).toStdString());

@@ -1,4 +1,5 @@
 #include "PluginLoader.h"
+#include "Protocol.h"
 
 #include <stdexcept>
 
@@ -17,9 +18,14 @@ juce::OwnedArray<juce::PluginDescription> PluginLoader::findTypes (const juce::S
                     ? juce::File (fileOrIdentifier).getFullPathName()
                     : fileOrIdentifier;
 
-    for (auto* format : formatManager.getFormats())
-        if (format->fileMightContainThisPluginType (target))
-            format->findAllTypesForFile (types, target);
+    for (const auto& candidate : pluginPathCandidates (target))
+    {
+        for (auto* format : formatManager.getFormats())
+            if (format->fileMightContainThisPluginType (candidate))
+                format->findAllTypesForFile (types, candidate);
+        if (! types.isEmpty())
+            break;
+    }
 
     return types;
 }

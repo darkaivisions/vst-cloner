@@ -14,4 +14,8 @@ void initialiseProtocolChannel();
 /** {"key": value, ...} */
 juce::var makeObject (std::initializer_list<std::pair<const char*, juce::var>> props);
 
+/** The given plugin path plus equivalent spellings: on many Linux systems /usr/lib64 links to /usr/lib, and the
+    LV2 library registers each bundle under only one of the two names. */
+juce::StringArray pluginPathCandidates (const juce::String& path);
+
 } // namespace vch
