@@ -184,9 +184,13 @@ export interface DistortionErrors {
   total: number;
 }
 
+/** Responses below this level count as silence: a muted original and a muted model agree (no relative errors of noise). */
+export const SILENCE_DB = -80;
+const audible = (db: number) => Math.max(db, SILENCE_DB);
+
 export function compareDistortion(model: { smallDb: Float64Array; steps: StepMeasurement[] }, o: DistortionObservation): DistortionErrors {
   let s = 0;
-  for (let i = 0; i < o.smallDb.length; i++) s += (model.smallDb[i]! - o.smallDb[i]!) ** 2;
+  for (let i = 0; i < o.smallDb.length; i++) s += (audible(model.smallDb[i]!) - audible(o.smallDb[i]!)) ** 2;
   const smallDb = Math.sqrt(s / o.smallDb.length);
   let g = 0, h = 0, hn = 0;
   // gain of the quietest step per frequency: reference for the compression
@@ -194,9 +198,9 @@ export function compareDistortion(model: { smallDb: Float64Array; steps: StepMea
   for (const m of o.steps) if (!quiet.has(m.frequency)) quiet.set(m.frequency, m.gainDb);
   o.steps.forEach((m, k) => {
     const x = model.steps[k]!;
-    g += (x.gainDb - m.gainDb) ** 2;
+    g += (audible(x.gainDb) - audible(m.gainDb)) ** 2;
     // harmonics count where the original really clips (its quiet-signal artefacts are not modelled)
-    if (m.levelDb < MIN_HARMONIC_INPUT_DB || quiet.get(m.frequency)! - m.gainDb < MIN_COMPRESSION_DB) return;
+    if (m.levelDb < MIN_HARMONIC_INPUT_DB || quiet.get(m.frequency)! - m.gainDb < MIN_COMPRESSION_DB || m.gainDb + m.levelDb < SILENCE_DB) return;
     m.harmonicsDb.forEach((v, j) => {
       const w = x.harmonicsDb[j]!;
       if (Number.isNaN(v) || Number.isNaN(w)) return;

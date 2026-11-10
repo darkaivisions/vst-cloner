@@ -99,6 +99,14 @@ function userPluginDirs(): { vst3: string; lv2: string } {
   return { vst3: join(homedir(), ".vst3"), lv2: join(homedir(), ".lv2") };
 }
 
+/**
+ * Name of the plugin files (bundles, libraries): the plugin name without characters that break make or
+ * file systems ("dRowAudio: Distortion" → "dRowAudio Distortion"). The DAW still shows the full name.
+ */
+export function pluginFileName(name: string): string {
+  return name.replace(/[:/\\*?"<>|#$%;=`]/g, " ").replace(/\s+/g, " ").trim() || "vst-cloner clone";
+}
+
 export interface BuildOptions {
   pluginName: string;
   /** contents of CloneModel.h */
@@ -122,6 +130,7 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
   const generated = join(workDir, "generated");
   const buildDir = join(workDir, "build");
   const code = pluginCode(options.pluginName);
+  const fileName = pluginFileName(options.pluginName);
 
   await mkdir(join(workDir, "src"), { recursive: true });
   await mkdir(generated, { recursive: true });
@@ -148,6 +157,7 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
     "-S", workDir, "-B", buildDir,
     "-DCMAKE_BUILD_TYPE=Release",
     `-DCLONE_NAME=${options.pluginName}`,
+    `-DCLONE_FILE_NAME=${fileName}`,
     `-DCLONE_CODE=${code}`,
     `-DCLONE_GENERATED_DIR=${generated}`,
     ...(juceDir ? [`-DVCH_JUCE_DIR=${juceDir}`] : []),
@@ -160,13 +170,13 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
   await run("cmake", ["--build", buildDir, "--config", "Release", "--parallel"], workDir, log, options.signal);
 
   const artefacts = join(buildDir, "vch_clone_artefacts", "Release");
-  const vst3Source = join(artefacts, "VST3", `${options.pluginName}.vst3`);
-  const lv2Source = join(artefacts, "LV2", `${options.pluginName}.lv2`);
+  const vst3Source = join(artefacts, "VST3", `${fileName}.vst3`);
+  const lv2Source = join(artefacts, "LV2", `${fileName}.lv2`);
   for (const path of [vst3Source, lv2Source]) if (!existsSync(path)) throw new Error(`Build fertig, aber ${path} fehlt`);
 
   await mkdir(options.outputDir, { recursive: true });
-  const vst3 = join(options.outputDir, `${options.pluginName}.vst3`);
-  const lv2 = join(options.outputDir, `${options.pluginName}.lv2`);
+  const vst3 = join(options.outputDir, `${fileName}.vst3`);
+  const lv2 = join(options.outputDir, `${fileName}.lv2`);
   for (const [from, to] of [[vst3Source, vst3], [lv2Source, lv2]] as const) {
     await rm(to, { recursive: true, force: true });
     await cp(from, to, { recursive: true });

@@ -6,6 +6,7 @@ import { decodeWav, encodeWav, type Profile } from "@vst-cloner/profile";
 import type { Logger } from "../build.ts";
 import { cloneValue, dynamicsCloneParameters, modelValue } from "../dynamics/params.ts";
 import {
+  SILENCE_DB,
   compareDistortion,
   distortionInput,
   distortionObservations,
@@ -36,7 +37,8 @@ const esrDb = (reference: ArrayLike<number>, other: ArrayLike<number>, from: num
     e += (other[i]! - reference[i]!) ** 2;
     s += reference[i]! ** 2;
   }
-  return 10 * Math.log10(e / (s + 1e-30) + 1e-20);
+  // a silent reference counts with the silence level (otherwise any residual noise is an infinite error)
+  return 10 * Math.log10(e / Math.max(s, (to - from) * 10 ** (SILENCE_DB / 10)) + 1e-20);
 };
 
 const mean = (rows: DistortionErrors[]): DistortionErrors | undefined => {

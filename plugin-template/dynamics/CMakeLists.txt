@@ -10,7 +10,8 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 set(VCH_JUCE_DIR "" CACHE PATH "Path to a local JUCE checkout (otherwise JUCE is downloaded)")
-set(CLONE_NAME "vst-cloner clone" CACHE STRING "Plugin name")
+set(CLONE_NAME "vst-cloner clone" CACHE STRING "Plugin name (shown in the DAW)")
+set(CLONE_FILE_NAME "${CLONE_NAME}" CACHE STRING "Name of the plugin files (no characters that break make or file systems)")
 set(CLONE_CODE "Vc00" CACHE STRING "Four-character plugin code")
 set(CLONE_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/generated" CACHE PATH "Directory containing CloneModel.h and CloneGui.h")
 
@@ -26,7 +27,8 @@ else()
 endif()
 
 juce_add_plugin(vch_clone
-    PRODUCT_NAME "${CLONE_NAME}"
+    PRODUCT_NAME "${CLONE_FILE_NAME}"
+    PLUGIN_NAME "${CLONE_NAME}"
     COMPANY_NAME "vst-cloner"
     BUNDLE_ID "org.vstcloner.${CLONE_CODE}"
     PLUGIN_MANUFACTURER_CODE Vcln
