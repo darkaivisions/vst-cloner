@@ -255,3 +255,26 @@ input:focus, select:focus { border-color: var(--accent); }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #2a2f39; border-radius: 99px; border: 2px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* profile details */
+.overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; justify-content: center; align-items: flex-start; padding: 40px 20px; z-index: 50; overflow-y: auto; }
+.dialog { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; width: min(960px, 100%); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
+.dialog-header { display: flex; align-items: center; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.dialog-header h2 { margin: 0; font-size: 16px; }
+.dialog-body { padding: 16px 18px 20px; display: flex; flex-direction: column; gap: 18px; }
+.detail-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.detail-name { font-size: 20px; font-weight: 700; }
+.detail-section h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.fact-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 18px; }
+.fact { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.fact-label { font-size: 11px; color: var(--muted); }
+.fact-value { font-size: 13px; overflow-wrap: anywhere; }
+.signal-bar { display: flex; height: 26px; border-radius: 6px; overflow: hidden; gap: 2px; margin-bottom: 6px; }
+.signal-part { background: color-mix(in srgb, var(--accent) 35%, transparent); display: flex; align-items: center; justify-content: center; min-width: 4px; overflow: hidden; }
+.signal-part span { font-size: 10px; white-space: nowrap; opacity: 0.9; padding: 0 3px; }
+.signal-part:nth-child(even) { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.small { font-size: 12px; }
+.preview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.preview { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.preview img { width: 100%; height: auto; max-height: 420px; object-fit: contain; border-radius: 8px; border: 1px solid var(--line); background: #000; cursor: zoom-in; }
+.preview figcaption { font-size: 12px; color: var(--muted); }

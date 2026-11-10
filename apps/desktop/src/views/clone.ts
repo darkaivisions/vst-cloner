@@ -290,7 +290,13 @@ export class CloneView {
         h("div.result-gui", {},
           h("strong", {}, "Oberfläche nachgebaut"),
           h("span.muted", {}, ` · ${g.controls} Bedienelemente${g.similarity !== undefined ? ` · ${Math.round(g.similarity * 100)} % Struktur-, ${Math.round((g.colorSimilarity ?? 0) * 100)} % Farbähnlichkeit` : ""}`),
-          g.comparePng ? h("button.link", { onclick: () => openPath(g.comparePng!) }, " Vergleichsbild öffnen") : ""),
+          g.comparePng ? h("span.muted", {}, " · ") : "",
+          g.comparePng ? h("button.link", { onclick: () => openPath(g.comparePng!) }, "Vergleichsbild öffnen") : ""),
+        g.preview
+          ? h("figure.preview", {},
+            h("img", { src: g.preview, alt: "Original und Klon", onclick: () => g.comparePng && openPath(g.comparePng) }),
+            h("figcaption", {}, "So sieht der Klon aus: Original (links), Klon (rechts)"))
+          : "",
       );
     }
     const folder = result.vst3.replace(/[\\/][^\\/]+$/, "");

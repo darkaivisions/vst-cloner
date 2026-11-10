@@ -22,6 +22,11 @@ import {
   dynamicsVerdict,
   eqPlanner,
   formatDynamicsModel,
+  formatDistortionModel,
+  formatModelReport,
+  distortionVerdict,
+  guiCacheRoot,
+  renderSvg,
   planDynamics,
   planEq,
   slugify,
@@ -140,6 +145,121 @@ interface ProfileSummary {
   pluginName?: string;
 }
 
+/** PNG from the local cache as data URL (the app shows it without file access). */
+async function imageDataUrl(path: string | undefined): Promise<string | undefined> {
+  if (!path || !existsSync(path)) return undefined;
+  return `data:image/png;base64,${(await readFile(path)).toString("base64")}`;
+}
+
+const svgDataUrl = (svg: string) => `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+
+const SEGMENT_NAMES: Record<string, string> = {
+  silence: "Pause", impulse: "Impuls", logSweep: "Sweep", noise: "Rauschen", levelSteps: "Pegeltreppe", toneBurst: "Ton-Burst",
+};
+const PLANNER_NAMES: Record<string, string> = { eq: "EQ-Messung", dynamics: "Kompressor-Messung", distortion: "Distortion-Messung", generic: "Allgemeine Messung" };
+
+/** Everything the library shows about a profile: plugin, capture, signal, model, editor layout. */
+async function profileDetails(path: string) {
+  const entries = unzipSync(await readFile(path), { filter: (f) => f.name.endsWith(".json") && !f.name.startsWith("captures/") });
+  const json = (name: string) => (entries[name] ? JSON.parse(strFromU8(entries[name]!)) : undefined);
+  const manifest = json("manifest.json");
+  const parameters = (json("parameters.json")?.parameters ?? []) as { index: number; name: string; default: number; value?: number; texts?: { value: number; text: string }[]; discrete: boolean; label?: string }[];
+  const captures = (json("captures.json")?.renders ?? []) as { kind: string; purpose?: string; params: { index: number }[] }[];
+  const signals = json("test-signals.json");
+  const report = json("report.json");
+  const planner = manifest?.capture?.plan?.planner ?? "generic";
+
+  const measured = new Set<number>(manifest?.capture?.plan?.selectedParameters ?? captures.flatMap((r) => r.params.map((p) => p.index)));
+  // value text: interpolated between numeric texts (with their decimals), otherwise the nearest text
+  const textAt = (p: (typeof parameters)[number], value: number) => {
+    const texts = [...(p.texts ?? [])].sort((a, b) => a.value - b.value);
+    if (!texts.length) return value.toFixed(2);
+    const number = (t: string) => /^\s*[+-]?\d+(?:[.,]\d+)?/.exec(t)?.[0];
+    const upper = texts.findIndex((t) => t.value >= value);
+    const a = texts[Math.max(0, upper - 1)]!, b = texts[upper < 0 ? texts.length - 1 : upper]!;
+    const na = number(a.text), nb = number(b.text);
+    if (p.discrete || na === undefined || nb === undefined || b.value === a.value) {
+      return (Math.abs(a.value - value) <= Math.abs(b.value - value) ? a : b).text;
+    }
+    const decimals = (na.split(/[.,]/)[1] ?? "").length;
+    const v = Number(na.replace(",", ".")) + ((value - a.value) / (b.value - a.value)) * (Number(nb.replace(",", ".")) - Number(na.replace(",", ".")));
+    const unit = a.text.slice(na.length);
+    return `${v.toFixed(decimals)}${unit}`;
+  };
+  const count = (f: (r: (typeof captures)[number]) => boolean) => captures.filter(f).length;
+
+  let model: { kind: string; summary: string[] } | undefined;
+  try {
+    const eq = json("model/eq.json"), dyn = json("model/dynamics.json"), dist = json("model/distortion.json");
+    if (dist) model = { kind: "distortion", summary: formatDistortionModel(dist) };
+    else if (dyn) model = { kind: "dynamics", summary: formatDynamicsModel(dyn) };
+    else if (eq) model = { kind: "eq", summary: formatModelReport(eq) };
+  } catch {
+    model = undefined;
+  }
+  const gui = json("model/gui.json");
+  const cache = manifest?.id ? join(guiCacheRoot(), manifest.id) : undefined;
+  const rms = report?.verify?.overall?.rmsDb ?? report?.verify?.overall?.total;
+
+  return {
+    path,
+    file: basename(path),
+    bytes: await fileSize(path),
+    plugin: {
+      name: manifest?.plugin?.name ?? basename(path),
+      manufacturer: manifest?.plugin?.manufacturer ?? "",
+      version: manifest?.plugin?.version ?? "",
+      format: manifest?.plugin?.format ?? "",
+      category: manifest?.plugin?.category ?? "",
+      file: manifest?.plugin?.file?.name ?? "",
+      channels: `${manifest?.plugin?.mainInputChannels ?? "?"} → ${manifest?.plugin?.mainOutputChannels ?? "?"}`,
+      latency: manifest?.plugin?.latencySamples ?? 0,
+      parameters: parameters.length,
+    },
+    capture: {
+      createdAt: manifest?.createdAt ?? "",
+      planner,
+      plannerName: PLANNER_NAMES[planner] ?? planner,
+      sampleRate: manifest?.capture?.sampleRate ?? 0,
+      blockSize: manifest?.capture?.blockSize ?? 0,
+      host: `${manifest?.capture?.host?.name ?? ""} ${manifest?.capture?.host?.version ?? ""}`.trim(),
+      os: manifest?.capture?.os ?? "",
+      renders: captures.length,
+      sweeps: count((r) => r.kind === "sweep"),
+      random: count((r) => r.kind === "random"),
+      train: count((r) => r.purpose === "train"),
+      validate: count((r) => r.purpose === "validate"),
+      notes: manifest?.notes ?? "",
+    },
+    signal: signals
+      ? {
+          seconds: signals.length / signals.sampleRate,
+          segments: (signals.segments as { id: string; kind: string; length: number }[])
+            .filter((s) => s.kind !== "silence")
+            .map((s) => ({ id: s.id, kind: SEGMENT_NAMES[s.kind] ?? s.kind, seconds: s.length / signals.sampleRate })),
+        }
+      : undefined,
+    parameters: parameters.filter((p) => measured.has(p.index)).map((p) => ({
+      name: p.name,
+      from: textAt(p, 0),
+      to: textAt(p, 1),
+      initial: textAt(p, p.value ?? p.default),
+      discrete: p.discrete,
+    })),
+    model,
+    verdict: rms !== undefined ? { value: rms, text: planner === "dynamics" ? dynamicsVerdict(rms) : planner === "distortion" ? distortionVerdict(rms) : verdict(rms), pluginName: report?.pluginName } : undefined,
+    gui: gui
+      ? {
+          layout: svgDataUrl(renderSvg(gui)),
+          controls: gui.controls?.length ?? 0,
+          width: gui.width,
+          height: gui.height,
+          compare: cache ? await imageDataUrl(join(cache, "compare.png")) : undefined,
+        }
+      : undefined,
+  };
+}
+
 /** Reads only the small JSON documents of a profile (fast, no checksum verification). */
 async function summarizeProfile(path: string): Promise<ProfileSummary> {
   const entries = unzipSync(await readFile(path), { filter: (f) => f.name.endsWith(".json") && !f.name.startsWith("captures/") });
@@ -147,7 +267,8 @@ async function summarizeProfile(path: string): Promise<ProfileSummary> {
   const manifest = json("manifest.json");
   const captures = json("captures.json");
   const report = json("report.json");
-  const rms = report?.verify?.overall?.rmsDb as number | undefined;
+  // EQ/compressor: rms deviation (dB); distortion: combined error of its characteristics
+  const rms = (report?.verify?.overall?.rmsDb ?? report?.verify?.overall?.total) as number | undefined;
   return {
     path,
     file: basename(path),
@@ -158,8 +279,10 @@ async function summarizeProfile(path: string): Promise<ProfileSummary> {
     createdAt: manifest?.createdAt ?? "",
     renders: captures?.renders?.length ?? 0,
     planner: manifest?.capture?.plan?.planner ?? "generic",
-    hasModel: Boolean(entries["model/eq.json"] || entries["model/dynamics.json"]),
-    ...(rms !== undefined ? { rmsDb: rms, verdict: (manifest?.capture?.plan?.planner === "dynamics" ? dynamicsVerdict : verdict)(rms) } : {}),
+    hasModel: Boolean(entries["model/eq.json"] || entries["model/dynamics.json"] || entries["model/distortion.json"]),
+    ...(rms !== undefined
+      ? { rmsDb: rms, verdict: ({ dynamics: dynamicsVerdict, distortion: distortionVerdict }[manifest?.capture?.plan?.planner as string] ?? verdict)(rms) }
+      : {}),
     ...(report?.pluginName ? { pluginName: report.pluginName } : {}),
   };
 }
@@ -308,6 +431,8 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
 
   "profiles.summary": (params) => summarizeProfile(str(params, "path")),
 
+  "profiles.details": (params) => profileDetails(str(params, "path")),
+
   async "profiles.import"(params) {
     const source = str(params, "path");
     await mkdir(profilesDir(), { recursive: true });
@@ -377,7 +502,8 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
             ? {
                 controls: result.gui.controls,
                 ...(result.gui.comparison
-                  ? { similarity: result.gui.comparison.similarity, colorSimilarity: result.gui.comparison.colorSimilarity, comparePng: result.gui.comparison.comparePng }
+                  ? { similarity: result.gui.comparison.similarity, colorSimilarity: result.gui.comparison.colorSimilarity, comparePng: result.gui.comparison.comparePng,
+                    preview: await imageDataUrl(result.gui.comparison.comparePng) }
                   : {}),
               }
             : undefined,
@@ -419,6 +545,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
                     similarity: result.gui.comparison.similarity,
                     colorSimilarity: result.gui.comparison.colorSimilarity,
                     comparePng: result.gui.comparison.comparePng,
+                    preview: await imageDataUrl(result.gui.comparison.comparePng),
                   }
                 : {}),
             }

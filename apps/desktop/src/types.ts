@@ -75,11 +75,40 @@ export interface CloneResult {
     renders: number;
   };
   /** rebuilt editor: number of controls, similarity with the original editor (0…1) */
-  gui?: { controls: number; similarity?: number; colorSimilarity?: number; comparePng?: string };
+  gui?: { controls: number; similarity?: number; colorSimilarity?: number; comparePng?: string; preview?: string };
   verify?: {
     overall: { renders: number; rmsDb: number; maxDb: number };
     limited?: { renders: number; rmsDb: number; maxDb: number; labels: string[] };
     shapes: { label: string; renders: number; rmsDb: number; maxDb: number; verdict: string }[];
     verdict: string;
   };
+}
+
+/** Everything the library shows about a saved profile (bridge: profiles.details). */
+export interface ProfileDetails {
+  path: string;
+  file: string;
+  bytes: number;
+  plugin: { name: string; manufacturer: string; version: string; format: string; category: string; file: string; channels: string; latency: number; parameters: number };
+  capture: {
+    createdAt: string;
+    planner: string;
+    plannerName: string;
+    sampleRate: number;
+    blockSize: number;
+    host: string;
+    os: string;
+    renders: number;
+    sweeps: number;
+    random: number;
+    train: number;
+    validate: number;
+    notes: string;
+  };
+  signal?: { seconds: number; segments: { id: string; kind: string; seconds: number }[] };
+  parameters: { name: string; from: string; to: string; initial: string; discrete: boolean }[];
+  model?: { kind: string; summary: string[] };
+  verdict?: { value: number; text: string; pluginName?: string };
+  /** editor layout as SVG data URL; comparison original | clone (PNG data URL) if it is in the local cache */
+  gui?: { layout: string; controls: number; width: number; height: number; compare?: string };
 }

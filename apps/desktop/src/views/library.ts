@@ -3,12 +3,14 @@ import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { call } from "../bridge.ts";
 import { clear, formatBytes, formatDate, formatDb, h, toast, verdictClass } from "../dom.ts";
 import type { ProfileSummary } from "../types.ts";
+import { ProfileDetailsDialog } from "./details.ts";
 
 /** Saved profiles: rebuild clones without the original, export, import, delete. */
 export class LibraryView {
   readonly element: HTMLElement;
   private readonly list = h("div.profile-list");
   private profilesDir = "";
+  private readonly details = new ProfileDetailsDialog();
 
   constructor(private readonly onBuild: (profile: ProfileSummary) => void) {
     this.element = h("div.view.library-view", {},
@@ -45,12 +47,13 @@ export class LibraryView {
             h("div.profile-meta", {},
               h("span", {}, formatDate(p.createdAt)),
               h("span", {}, `${p.renders} Messungen`),
-              h("span", {}, p.planner === "eq" ? "EQ-Messung" : p.planner === "dynamics" ? "Kompressor-Messung" : "allgemein"),
+              h("span", {}, { eq: "EQ-Messung", dynamics: "Kompressor-Messung", distortion: "Distortion-Messung" }[p.planner] ?? "allgemein"),
               h("span", {}, formatBytes(p.bytes)))),
           p.verdict
             ? h("span.pill", { class: verdictClass(p.verdict), title: `Abweichung ${formatDb(p.rmsDb ?? 0)}` }, `Klon: ${p.verdict}`)
             : h("span.pill.neutral", {}, "noch kein Klon"),
           h("div.profile-actions", {},
+            h("button.ghost.small", { onclick: () => this.details.show(p.path) }, "Details"),
             h("button.primary.small", {
               disabled: p.planner !== "eq" && p.planner !== "dynamics",
               title: p.planner !== "eq" && p.planner !== "dynamics" ? "Klone sind bisher nur für EQ- und Kompressor-Messungen möglich" : "",

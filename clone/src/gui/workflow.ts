@@ -21,6 +21,8 @@ function cacheRoot(): string {
 
 /** Screenshots of the original editor stay in the local cache – they are never written into profiles. */
 export const guiCacheDir = (profile: Profile) => join(cacheRoot(), "gui", profile.manifest.id);
+/** Folder of all editor captures (one subfolder per profile id). */
+export const guiCacheRoot = () => join(cacheRoot(), "gui");
 
 function pluginDirs(): string[] {
   const home = homedir();
