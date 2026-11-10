@@ -57,9 +57,14 @@ export interface ShapeReport {
   note?: string;
 }
 
+/** Raised whenever the fit learns something new; older stored models are fitted again. 2: Flat Tilt, Brickwall */
+export const FIT_REVISION = 2;
+
 export interface EqModel {
   type: "parametric-eq";
   version: 1;
+  /** FIT_REVISION of the code that produced the model (missing = 1) */
+  fitRevision?: number;
   /** sample rate of the measurements */
   sampleRate: number;
   mapping: EqMapping;

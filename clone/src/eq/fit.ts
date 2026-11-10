@@ -10,7 +10,7 @@ import {
   type EqMapping,
   type ShapeKind,
 } from "./mapping.ts";
-import { bandSections, type BandSettings, type BrickwallFit, type CutQMode, type EqModel, type FitStats, type ShapeFit, type ShapeReport } from "./model.ts";
+import { bandSections, FIT_REVISION, type BandSettings, type BrickwallFit, type CutQMode, type EqModel, type FitStats, type ShapeFit, type ShapeReport } from "./model.ts";
 import { ellipticLowpass } from "../dsp/elliptic.ts";
 
 export interface Observation {
@@ -366,6 +366,7 @@ export function fitEq(profile: Profile, onProgress?: (p: FitProgress) => void): 
   return {
     type: "parametric-eq",
     version: 1,
+    fitRevision: FIT_REVISION,
     sampleRate,
     mapping,
     shapes,

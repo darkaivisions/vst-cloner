@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { buildPlugin, slugify, type BuildResult, type Logger } from "./build.ts";
 import { generateModelHeader } from "./eq/codegen.ts";
 import { fitEq } from "./eq/fit.ts";
-import type { EqModel, FitStats } from "./eq/model.ts";
+import { FIT_REVISION, type EqModel, type FitStats } from "./eq/model.ts";
 import { verifyClone, type VerifyReport } from "./verify.ts";
 import { generateGuiHeader } from "./gui/codegen.ts";
 import type { GuiModel } from "./gui/model.ts";
@@ -122,6 +122,10 @@ export async function cloneProfile(options: CloneOptions): Promise<CloneResult> 
   const stage = options.onStage ?? (() => {});
   stage("analyse");
   let model = options.refit ? undefined : storedModel(profile);
+  if (model && (model.fitRevision ?? 1) < FIT_REVISION) {
+    log("info", "Das gespeicherte Modell stammt von einer älteren Version – es wird neu berechnet");
+    model = undefined;
+  }
   if (model) log("info", "Im Profil gespeichertes Modell wird verwendet");
   else {
     model = analyze(profile, log);
