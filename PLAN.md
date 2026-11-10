@@ -149,7 +149,15 @@ vst-cloner/
      statt aus Parameternamen geraten; Schriftgröße aus Tintenhöhe und Buchstabenformen
    - Offen: Zeigerinstrumente;
      Analyzer-Skala/Pegelmesser; Bänder direkt in der Kurve bedienen (Pro-Q-Stil) im Klon-Editor prüfen
-5. **Kompressor + Distortion** (inkl. lokalem NAM-Training, CPU/GPU) ← als Nächstes
+5. **Kompressor + Distortion** (inkl. lokalem NAM-Training, CPU/GPU) ← in Arbeit
+   - Messfolge `dynamics` (`--class dynamics`): lange Ruhephasen, steigende Pegeltreppe, Bursts (lang/kurz/klein),
+     100-Hz-Stufen für Sättigung, Rauschen, leiser Sweep; Erkennung von Kompressoren an Parameternamen
+   - Modell im Steuertakt (32 Samples, kausal): RMS/Peak-Detektor, Feed-forward/Feedback, Kennlinie mit Knick,
+     Attack, schnelles Release, programmabhängiger Speicher (lädt bei anhaltender Kompression, baut dB-linear ab)
+   - Fit: Struktur + Grundeinstellung voll, Sweeps statisch (Zeitwerte nur bei genug Kompression), Tabellen pro
+     Plugin-Parameter, additiv kombiniert; Open Optical: Training 0,51 dB, Vorhersage unbekannter Kombinationen 0,96 dB
+   - Offen: programmabhängige Attack, Sättigung (Oberwellen), C++-Engine + Codegen + Vergleich, Desktop-Modus,
+     danach Distortion/Amp (NAM)
 6. **Delay + Reverb**
 7. **REA-Integration** (Analyst-Agent, `spec.md`, Clean-Room-Trennung) + **yabridge-Check**
 8. **Distribution:** Installer, Updates, Profilbibliothek

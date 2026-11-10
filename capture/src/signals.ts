@@ -12,9 +12,9 @@ interface SegmentSpec {
   params?: Record<string, number>;
 }
 
-export type SignalPreset = "full" | "eq";
+export type SignalPreset = "full" | "eq" | "dynamics";
 
-export const SIGNAL_PRESETS: SignalPreset[] = ["full", "eq"];
+export const SIGNAL_PRESETS: SignalPreset[] = ["full", "eq", "dynamics"];
 
 /** Short sequence for linear, time-invariant effects (EQs, filters): impulse response + sweep as cross-check. */
 export function eqSegmentSpecs(sampleRate: number): SegmentSpec[] {
@@ -31,8 +31,50 @@ export function eqSegmentSpecs(sampleRate: number): SegmentSpec[] {
   ];
 }
 
+/**
+ * Sequence for compressors, limiters, gates (time-variant, level-dependent effects). Long silences let slow
+ * (e.g. optical) release stages recover completely before each part:
+ * static curve (rising 1 kHz steps), attack + full release (long burst), program-dependent release (short burst),
+ * level-dependent timing (smaller burst), harmonics of the saturation (100 Hz steps), noise as cross-check,
+ * quiet sweep for the linear colouration.
+ */
+export function dynamicsSegmentSpecs(sampleRate: number, seed = 1): SegmentSpec[] {
+  const levels = { frequency: 1000, fromDb: -60, toDb: 0, stepDb: 3, stepSeconds: 0.3 };
+  const levelCount = Math.floor((levels.toDb - levels.fromDb) / levels.stepDb) + 1;
+  const harmonics = { frequency: 100, fromDb: -30, toDb: 0, stepDb: 6, stepSeconds: 0.4 };
+  const harmonicCount = Math.floor((harmonics.toDb - harmonics.fromDb) / harmonics.stepDb) + 1;
+  const burst = (lowDb: number, highDb: number, highSeconds: number, releaseSeconds: number) =>
+    ({ frequency: 1000, lowDb, highDb, lowSeconds: 0.5, highSeconds, releaseSeconds });
+  const long = burst(-40, -10, 1, 2.5);
+  const short = burst(-40, -10, 0.05, 2);
+  const mid = burst(-40, -25, 1, 2);
+  const seconds = (b: ReturnType<typeof burst>) => b.lowSeconds + b.highSeconds + b.releaseSeconds;
+
+  return [
+    { id: "lead", kind: "silence", seconds: 2 },
+    { id: "levels", kind: "levelSteps", seconds: levelCount * levels.stepSeconds, params: levels },
+    { id: "gap-1", kind: "silence", seconds: 3 },
+    { id: "burst", kind: "toneBurst", seconds: seconds(long), params: long },
+    { id: "burst-short", kind: "toneBurst", seconds: seconds(short), params: short },
+    { id: "burst-mid", kind: "toneBurst", seconds: seconds(mid), params: mid },
+    { id: "harmonics", kind: "levelSteps", seconds: harmonicCount * harmonics.stepSeconds, params: harmonics },
+    { id: "gap-2", kind: "silence", seconds: 2 },
+    { id: "noise", kind: "noise", seconds: 1.5, params: { seed, rmsDb: -18 } },
+    { id: "gap-3", kind: "silence", seconds: 1.5 },
+    {
+      id: "sweep",
+      kind: "logSweep",
+      seconds: 1.5,
+      params: { f1: 20, f2: Math.min(20000, 0.45 * sampleRate), amplitude: 0.01, fadeSeconds: 0.01 },
+    },
+    { id: "gap-4", kind: "silence", seconds: 0.25 },
+  ];
+}
+
 export function segmentSpecs(preset: SignalPreset, sampleRate: number, seed = 1): SegmentSpec[] {
-  return preset === "eq" ? eqSegmentSpecs(sampleRate) : defaultSegmentSpecs(sampleRate, seed);
+  if (preset === "eq") return eqSegmentSpecs(sampleRate);
+  if (preset === "dynamics") return dynamicsSegmentSpecs(sampleRate, seed);
+  return defaultSegmentSpecs(sampleRate, seed);
 }
 
 /** Default measurement sequence: covers linear (impulse, sweep), nonlinear (noise) and dynamic (levels, bursts) behavior. */

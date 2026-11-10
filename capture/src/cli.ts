@@ -35,7 +35,8 @@ Capture options:
   --preroll <seconds>       Silence before each render, default 0.5
   --tail <seconds>          Recorded tail after the signal, default 2
   --class <name>            Effect-class specific plan: 'eq' (replaces the generic sweep plan;
-                            --points/--random/--include/--exclude are then ignored)
+                            --points/--random/--include/--exclude are then ignored) or 'dynamics'
+                            (compressors/limiters: dynamics test signal, sweeps + random validation)
   --notes <text>            Free text stored in the manifest
   --keep-work               Keep the temporary working directory
 
@@ -203,7 +204,8 @@ async function commandPlan(positionals: string[], values: Values): Promise<void>
 async function loadPlanner(name: string | undefined): Promise<CapturePlanner | undefined> {
   if (name === undefined || name === "generic") return undefined;
   if (name === "eq") return (await import("@vst-cloner/clone")).eqPlanner;
-  throw new UsageError(`unknown --class '${name}' (available: eq)`);
+  if (name === "dynamics") return (await import("@vst-cloner/clone")).dynamicsPlanner;
+  throw new UsageError(`unknown --class '${name}' (available: eq, dynamics)`);
 }
 
 async function commandCapture(positionals: string[], values: Values): Promise<void> {
