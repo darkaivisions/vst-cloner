@@ -33,7 +33,7 @@ export interface DynamicsInput {
   windowDb: Float64Array;
 }
 
-const windowRmsDb = (signal: Float32Array, windows: number) => {
+export const windowRmsDb = (signal: Float32Array, windows: number) => {
   const size = BLOCK * WINDOW_BLOCKS;
   const out = new Float64Array(windows);
   for (let w = 0; w < windows; w++) {

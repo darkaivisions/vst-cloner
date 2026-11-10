@@ -10,7 +10,7 @@ export function cppString(text: string): string {
     .join("")}"`;
 }
 
-const cppNumber = (v: number) => {
+export const cppNumber = (v: number) => {
   if (!Number.isFinite(v)) throw new Error(`non-finite value in model: ${v}`);
   const text = Number(v.toPrecision(15)).toString();
   return /[.e]/.test(text) ? text : `${text}.0`;
@@ -28,6 +28,36 @@ function shapeFit(kind: ShapeKind, fit: ShapeFit | undefined, index: number): st
     `${cppNumber(f.qExponent ?? 1)}, ${cppNumber(f.gainScale ?? 1)}, vch::QMode::${f.qMode ?? "scaleAll"}, ${f.tiltOrder ?? 2}, ${brickwall} }`;
 }
 
+/** Parameter declarations shared by all plugin templates (see plugin-template/common/CloneParameters.h). */
+export function parameterLines(params: CloneParam[]): string[] {
+  const lines = [
+    "struct ParamPoint { float norm, value; };",
+    "enum class ParamKind { continuous, choice, toggle };",
+    "struct ParamInfo",
+    "{",
+    "    const char* id; const char* name; ParamKind kind; float defaultValue;",
+    "    const ParamPoint* points; int numPoints; bool log; const char* unit;",
+    "    const char* const* choices; int numChoices;",
+    "};",
+    "",
+  ];
+  params.forEach((p, i) => {
+    if (p.points) lines.push(`inline const ParamPoint points${i}[] = { ${p.points.map(([n, v]) => `{ ${cppNumber(n)}f, ${cppNumber(v)}f }`).join(", ")} };`);
+    if (p.choices) lines.push(`inline const char* const choices${i}[] = { ${p.choices.map(cppString).join(", ")} };`);
+  });
+  lines.push("", "inline const ParamInfo params[] =", "{");
+  params.forEach((p, i) => {
+    const kind = p.kind === "continuous" ? "continuous" : p.kind === "choice" ? "choice" : "toggle";
+    lines.push(
+      `    { ${cppString(p.id)}, ${cppString(p.name)}, ParamKind::${kind}, ${cppNumber(p.defaultValue)}f, ` +
+        `${p.points ? `points${i}` : "nullptr"}, ${p.points?.length ?? 0}, ${p.log ? "true" : "false"}, ${cppString(p.unit ?? "")}, ` +
+        `${p.choices ? `choices${i}` : "nullptr"}, ${p.choices?.length ?? 0} },`,
+    );
+  });
+  lines.push("};", `inline constexpr int numParams = ${params.length};`, "");
+  return lines;
+}
+
 /** Generates CloneModel.h for plugin-template/eq. */
 export function generateModelHeader(model: EqModel, parameters: Parameter[], pluginName: string): { header: string; params: CloneParam[] } {
   const params = cloneParameters(model, parameters);
@@ -41,33 +71,10 @@ export function generateModelHeader(model: EqModel, parameters: Parameter[], plu
     "{",
     `inline constexpr const char* pluginName = ${cppString(pluginName)};`,
     "",
-    "struct ParamPoint { float norm, value; };",
-    "enum class ParamKind { continuous, choice, toggle };",
-    "struct ParamInfo",
-    "{",
-    "    const char* id; const char* name; ParamKind kind; float defaultValue;",
-    "    const ParamPoint* points; int numPoints; bool log; const char* unit;",
-    "    const char* const* choices; int numChoices;",
-    "};",
     "struct BandInfo { int enable, frequency, gain, q, shape, slope; };",
     "",
+    ...parameterLines(params),
   ];
-
-  params.forEach((p, i) => {
-    if (p.points) lines.push(`inline const ParamPoint points${i}[] = { ${p.points.map(([n, v]) => `{ ${cppNumber(n)}f, ${cppNumber(v)}f }`).join(", ")} };`);
-    if (p.choices) lines.push(`inline const char* const choices${i}[] = { ${p.choices.map(cppString).join(", ")} };`);
-  });
-
-  lines.push("", "inline const ParamInfo params[] =", "{");
-  params.forEach((p, i) => {
-    const kind = p.kind === "continuous" ? "continuous" : p.kind === "choice" ? "choice" : "toggle";
-    lines.push(
-      `    { ${cppString(p.id)}, ${cppString(p.name)}, ParamKind::${kind}, ${cppNumber(p.defaultValue)}f, ` +
-        `${p.points ? `points${i}` : "nullptr"}, ${p.points?.length ?? 0}, ${p.log ? "true" : "false"}, ${cppString(p.unit ?? "")}, ` +
-        `${p.choices ? `choices${i}` : "nullptr"}, ${p.choices?.length ?? 0} },`,
-    );
-  });
-  lines.push("};", `inline constexpr int numParams = ${params.length};`, "");
 
   const shapes = model.shapes.length > 0 ? model.shapes : [{ label: "bell", kind: (model.defaultKind ?? "bell") as ShapeKind, fit: model.defaultFit }];
   shapes.forEach((s, i) => {

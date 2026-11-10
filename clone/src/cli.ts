@@ -5,6 +5,7 @@ import { strToU8 } from "fflate";
 import type { Logger } from "./build.ts";
 import { verifyClone } from "./verify.ts";
 import { analyze, cloneProfile, formatModelReport, formatVerifyReport, MODEL_FILE, storedModel } from "./workflow.ts";
+import { cloneDynamicsProfile, isDynamicsProfile } from "./dynamics/workflow.ts";
 
 export const USAGE = `Cloning:
   vch clone   <profile> [-o <dir>] [--name <text>] [--install] [--refit] [--no-verify]
@@ -59,6 +60,20 @@ export async function main(command: string, argv: string[]): Promise<number> {
   try {
     switch (command) {
       case "clone": {
+        if (isDynamicsProfile(await readProfile(profilePath))) {
+          const result = await cloneDynamicsProfile({
+            profilePath,
+            ...(values.output ? { outputDir: resolve(values.output) } : {}),
+            ...(values.name ? { pluginName: values.name } : {}),
+            ...(values.install ? { install: true } : {}),
+            ...(values.refit ? { refit: true } : {}),
+            ...(values["no-verify"] ? { skipVerify: true } : {}),
+            log,
+          });
+          console.log(`VST3: ${result.build.vst3}\nLV2:  ${result.build.lv2}`);
+          for (const path of result.build.installed) console.log(`Installed: ${path}`);
+          return 0;
+        }
         const result = await cloneProfile({
           profilePath,
           ...(values.output ? { outputDir: resolve(values.output) } : {}),

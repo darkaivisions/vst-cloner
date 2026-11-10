@@ -82,7 +82,7 @@ export function simulateGain(levels: Float64Array, p: CompressorParams, s: Compr
     if (p.charge > 0) {
       if (fast > slow) slow = charge * slow + (1 - charge) * fast;
       // constant dB/s far above the knee, exponential close to zero: ds = −rate · s / (s + knee)
-      else slow = Math.max(fast, slow - (slowStep * slow) / (slow + p.slowKneeDb));
+      else slow = Math.max(fast, slow - (slowStep * slow) / Math.max(slow + p.slowKneeDb, 1e-9));
     }
     reduction = Math.max(fast, slow);
     gains[b] = -reduction;

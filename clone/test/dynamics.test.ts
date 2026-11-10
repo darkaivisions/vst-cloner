@@ -61,3 +61,28 @@ test("parameter tables: base values reproduce the base model, changes add up", (
   const both = predictParams(params, baseValues, tables, new Map([[0, 1], [1, 1]]));
   assert.ok(Math.abs(both.thresholdDb + 40) < 1e-9 && Math.abs(both.makeupDb - 10) < 1e-9);
 });
+
+test("dynamics header: parameters with the original's names, tables in clone indices", async () => {
+  const { generateDynamicsHeader } = await import("../src/dynamics/codegen.ts");
+  const base = { ...params, charge: 1, slowKneeDb: 1 };
+  const model = {
+    type: "compressor" as const, version: 1 as const, sampleRate: 48000,
+    structure: { detector: "rms" as const, topology: "feedforward" as const },
+    base, baseValues: [{ index: 3, value: 0.5 }, { index: 7, value: 0 }],
+    tables: [
+      { index: 3, name: "Peak Reduction", discrete: false, points: [{ value: 0, packed: pack(base) }, { value: 1, packed: pack({ ...base, thresholdDb: -40 }) }] },
+      { index: 7, name: "Limit", discrete: true, points: [{ value: 0, packed: pack(base) }, { value: 1, packed: pack({ ...base, ratio: 12 }) }] },
+    ],
+    report: { structures: [], renders: [] },
+  };
+  const parameters = [
+    { ...parameter(3, "Peak Reduction"), texts: [{ value: 0, text: "0.00" }, { value: 1, text: "100.00" }] },
+    { ...parameter(7, "Limit", true), texts: [{ value: 0, text: "Off" }, { value: 1, text: "On" }] },
+  ];
+  const { header, params: cloneParams } = generateDynamicsHeader(model, parameters, "Test Clone");
+  assert.deepEqual(cloneParams.map((p) => [p.name, p.kind]), [["Peak Reduction", "continuous"], ["Limit", "toggle"]]);
+  assert.match(header, /vch::Detector::rms/);
+  assert.match(header, /\{ 0, false, 2, tableValues0, tablePacked0, 0\.5 \}/);
+  assert.match(header, /\{ 1, true, 2, tableValues1, tablePacked1, 0\.0 \}/);
+  assert.match(header, /numTables = 2/);
+});

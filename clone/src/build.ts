@@ -17,7 +17,10 @@ export interface BuildResult {
   installed: string[];
 }
 
-const TEMPLATE_DIR = fileURLToPath(new URL("../../plugin-template/eq/", import.meta.url));
+const TEMPLATES_DIR = fileURLToPath(new URL("../../plugin-template/", import.meta.url));
+
+/** Plugin templates: parametric EQ engine, compressor engine. */
+export type PluginTemplate = "eq" | "dynamics";
 const REPO_DIR = fileURLToPath(new URL("../../", import.meta.url));
 
 function cacheRoot(): string {
@@ -103,6 +106,8 @@ export interface BuildOptions {
   /** contents of CloneGui.h (layout of the editor); omitted → generic editor */
   guiHeader?: string;
   outputDir: string;
+  /** plugin template (default: eq) */
+  template?: PluginTemplate;
   install?: boolean;
   log: Logger;
   signal?: AbortSignal;
@@ -111,7 +116,9 @@ export interface BuildOptions {
 /** Builds the EQ plugin template with a generated model header into VST3 and LV2 bundles. */
 export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
   const { log } = options;
-  const workDir = join(cacheRoot(), "builds", slugify(options.pluginName));
+  const template = options.template ?? "eq";
+  const templateDir = join(TEMPLATES_DIR, template);
+  const workDir = join(cacheRoot(), "builds", template === "eq" ? slugify(options.pluginName) : `${slugify(options.pluginName)}-${template}`);
   const generated = join(workDir, "generated");
   const buildDir = join(workDir, "build");
   const code = pluginCode(options.pluginName);
@@ -124,10 +131,13 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
     const previous = existsSync(path) ? await readFile(path, "utf8") : undefined;
     if (previous !== content) await writeFile(path, content);
   };
-  await writeIfChanged(join(workDir, "CMakeLists.txt"), await readFile(join(TEMPLATE_DIR, "CMakeLists.txt"), "utf8"));
-  for (const file of await readdir(join(TEMPLATE_DIR, "src"))) {
-    await writeIfChanged(join(workDir, "src", file), await readFile(join(TEMPLATE_DIR, "src", file), "utf8"));
-  }
+  await writeIfChanged(join(workDir, "CMakeLists.txt"), await readFile(join(templateDir, "CMakeLists.txt"), "utf8"));
+  // template sources plus the files shared by all templates
+  const sources = new Map<string, string>();
+  for (const file of await readdir(join(TEMPLATES_DIR, "common"))) sources.set(file, join(TEMPLATES_DIR, "common", file));
+  for (const file of await readdir(join(templateDir, "src"))) sources.set(file, join(templateDir, "src", file));
+  for (const [file, source] of sources) await writeIfChanged(join(workDir, "src", file), await readFile(source, "utf8"));
+  for (const file of await readdir(join(workDir, "src"))) if (!sources.has(file)) await rm(join(workDir, "src", file), { force: true });
   await writeIfChanged(join(generated, "CloneModel.h"), options.modelHeader);
   await writeIfChanged(join(generated, "CloneGui.h"), options.guiHeader ?? generateGuiHeader(undefined, []));
 
