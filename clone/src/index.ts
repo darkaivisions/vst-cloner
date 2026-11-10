@@ -11,6 +11,7 @@ export * from "./build.ts";
 export * from "./verify.ts";
 export * from "./workflow.ts";
 export * from "./dynamics/plan.ts";
+export * from "./distortion/plan.ts";
 export * from "./dynamics/model.ts";
 export * from "./dynamics/fit.ts";
 export * from "./dynamics/params.ts";

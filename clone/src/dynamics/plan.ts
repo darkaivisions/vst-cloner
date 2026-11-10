@@ -34,7 +34,7 @@ const ROLE_PATTERNS: [DynamicsRole, RegExp][] = [
 ];
 
 /** Parameters that are never measured (they do not change the sound or only switch the plugin off). */
-const IGNORED = /bypass|meter|display|^program$|preset|oversampl|quality/i;
+export const IGNORED = /bypass|meter|display|^program$|preset|oversampl|quality/i;
 
 export interface DynamicsMapping {
   roles: Partial<Record<DynamicsRole, number>>;
@@ -75,10 +75,12 @@ const percent = (p: Parameter, value: number) => {
 /** Sweep points of continuous parameters: denser towards the ends, where control curves usually bend most. */
 export const DYNAMICS_SWEEP = [0, 0.05, 0.15, 0.3, 0.5, 0.7, 0.85, 0.95, 1];
 
-/** Single-parameter sweeps (training) plus random combinations (validation). */
-export function planDynamics(parameters: Parameter[], options: PlanOptions): CapturePlan & { mapping: DynamicsMapping } {
-  const mapping = detectDynamics(parameters);
-  const exclude = options.exclude ? new RegExp(`${options.exclude.source}|${IGNORED.source}`, "i") : IGNORED;
+/**
+ * Single-parameter sweeps (training) plus random combinations (validation) of all selected parameters.
+ * Shared by the dynamics and distortion planners.
+ */
+export function planSweeps(parameters: Parameter[], options: PlanOptions, ignored: RegExp): CapturePlan {
+  const exclude = options.exclude ? new RegExp(`${options.exclude.source}|${ignored.source}`, "i") : ignored;
   const selected = selectParameters(parameters, { ...(options.include ? { include: options.include } : {}), exclude });
   const stepped = (p: Parameter) => p.discrete && p.numSteps >= 2 && p.numSteps <= 64;
   const base = (p: Parameter) => p.value ?? p.default;
@@ -103,7 +105,13 @@ export function planDynamics(parameters: Parameter[], options: PlanOptions): Cap
   }
   if (renders.length > options.maxRenders) throw new PlanTooLargeError(renders.length, options.maxRenders);
   const width = Math.max(4, String(renders.length - 1).length);
-  return { selected, mapping, renders: renders.map((r, i) => ({ id: `r${String(i).padStart(width, "0")}`, ...r })) };
+  return { selected, renders: renders.map((r, i) => ({ id: `r${String(i).padStart(width, "0")}`, ...r })) };
+}
+
+/** Single-parameter sweeps (training) plus random combinations (validation). */
+export function planDynamics(parameters: Parameter[], options: PlanOptions): CapturePlan & { mapping: DynamicsMapping } {
+  const mapping = detectDynamics(parameters);
+  return { ...planSweeps(parameters, options, IGNORED), mapping };
 }
 
 export const dynamicsPlanner: CapturePlanner = {

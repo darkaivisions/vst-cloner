@@ -37,6 +37,7 @@ Capture options:
   --class <name>            Effect-class specific plan: 'eq' (replaces the generic sweep plan;
                             --points/--random/--include/--exclude are then ignored) or 'dynamics'
                             (compressors/limiters: dynamics test signal, sweeps + random validation)
+                            or 'distortion' (overdrive/distortion/amps: quiet sweep, level steps, noise)
   --notes <text>            Free text stored in the manifest
   --keep-work               Keep the temporary working directory
 
@@ -205,7 +206,8 @@ async function loadPlanner(name: string | undefined): Promise<CapturePlanner | u
   if (name === undefined || name === "generic") return undefined;
   if (name === "eq") return (await import("@vst-cloner/clone")).eqPlanner;
   if (name === "dynamics") return (await import("@vst-cloner/clone")).dynamicsPlanner;
-  throw new UsageError(`unknown --class '${name}' (available: eq, dynamics)`);
+  if (name === "distortion") return (await import("@vst-cloner/clone")).distortionPlanner;
+  throw new UsageError(`unknown --class '${name}' (available: eq, dynamics, distortion)`);
 }
 
 async function commandCapture(positionals: string[], values: Values): Promise<void> {

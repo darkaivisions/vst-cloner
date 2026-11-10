@@ -12,9 +12,9 @@ interface SegmentSpec {
   params?: Record<string, number>;
 }
 
-export type SignalPreset = "full" | "eq" | "dynamics";
+export type SignalPreset = "full" | "eq" | "dynamics" | "distortion";
 
-export const SIGNAL_PRESETS: SignalPreset[] = ["full", "eq", "dynamics"];
+export const SIGNAL_PRESETS: SignalPreset[] = ["full", "eq", "dynamics", "distortion"];
 
 /** Short sequence for linear, time-invariant effects (EQs, filters): impulse response + sweep as cross-check. */
 export function eqSegmentSpecs(sampleRate: number): SegmentSpec[] {
@@ -71,8 +71,33 @@ export function dynamicsSegmentSpecs(sampleRate: number, seed = 1): SegmentSpec[
   ];
 }
 
+/**
+ * Sequence for distortion, overdrive, amps (static nonlinear effects): very quiet sweep for the small-signal
+ * response, rising level steps at several frequencies (how the distortion grows with level and frequency),
+ * noise at three levels (broadband, closer to real material) and a loud sweep.
+ */
+export function distortionSegmentSpecs(sampleRate: number, seed = 1): SegmentSpec[] {
+  const nyquistSafe = Math.min(20000, 0.45 * sampleRate);
+  const steps = (frequency: number) => ({ frequency, fromDb: -42, toDb: 0, stepDb: 6, stepSeconds: 0.15 });
+  const stepCount = 8;
+  return [
+    { id: "lead", kind: "silence", seconds: 0.1 },
+    { id: "sweep-quiet", kind: "logSweep", seconds: 2, params: { f1: 20, f2: nyquistSafe, amplitude: 0.003, fadeSeconds: 0.01 } },
+    { id: "gap-1", kind: "silence", seconds: 0.2 },
+    ...[100, 300, 1000, 3000].map((f) => ({ id: `steps-${f}`, kind: "levelSteps" as const, seconds: stepCount * 0.15, params: steps(f) })),
+    { id: "gap-2", kind: "silence", seconds: 0.2 },
+    { id: "noise-quiet", kind: "noise", seconds: 1, params: { seed, rmsDb: -30 } },
+    { id: "noise-mid", kind: "noise", seconds: 1, params: { seed: seed + 1, rmsDb: -18 } },
+    { id: "noise-loud", kind: "noise", seconds: 1, params: { seed: seed + 2, rmsDb: -8 } },
+    { id: "gap-3", kind: "silence", seconds: 0.2 },
+    { id: "sweep-loud", kind: "logSweep", seconds: 2, params: { f1: 20, f2: nyquistSafe, amplitude: 0.5, fadeSeconds: 0.01 } },
+    { id: "gap-4", kind: "silence", seconds: 0.2 },
+  ];
+}
+
 export function segmentSpecs(preset: SignalPreset, sampleRate: number, seed = 1): SegmentSpec[] {
   if (preset === "eq") return eqSegmentSpecs(sampleRate);
+  if (preset === "distortion") return distortionSegmentSpecs(sampleRate, seed);
   if (preset === "dynamics") return dynamicsSegmentSpecs(sampleRate, seed);
   return defaultSegmentSpecs(sampleRate, seed);
 }
