@@ -16,6 +16,16 @@ export interface Panel {
   border?: string;
 }
 
+/** Round area (disc) with a radial colour profile: stops from the centre (0) to the edge (1). */
+export interface Circle {
+  cx: number;
+  cy: number;
+  r: number;
+  stops: { at: number; color: string }[];
+  /** straight lines from the centre to the edge (angle 0 = up, clockwise) */
+  spokes?: { angles: number[]; color: string; width: number };
+}
+
 export interface Line {
   x1: number;
   y1: number;
@@ -134,8 +144,8 @@ export interface Needle {
 }
 
 export interface Display {
-  /** meter: gain reduction needle (see `needle`) */
-  kind: "eq" | "generic" | "meter";
+  /** meter: gain reduction needle (see `needle`); bar: level bar (see `bar`) */
+  kind: "eq" | "generic" | "meter" | "bar";
   x: number;
   y: number;
   w: number;
@@ -159,6 +169,16 @@ export interface Display {
   /** x of the right edge of the dB labels (default: right edge of the plot) */
   dbLabelRight?: number;
   needle?: Needle;
+  bar?: LevelBar;
+}
+
+/** Vertical level bar: filled from the bottom of the display box (`fromDb`) to the level, the top is `toDb`. */
+export interface LevelBar {
+  /** what the bar shows: input peak level (dBFS) */
+  source: "input";
+  fromDb: number;
+  toDb: number;
+  color: string;
 }
 
 export interface GuiModel {
@@ -168,6 +188,8 @@ export interface GuiModel {
   height: number;
   background: Fill;
   panels: Panel[];
+  /** discs drawn after the panels (older models have none) */
+  circles?: Circle[];
   lines: Line[];
   texts: TextItem[];
   controls: Control[];

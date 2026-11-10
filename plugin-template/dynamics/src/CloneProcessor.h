@@ -41,6 +41,8 @@ public:
 
     /** Current gain reduction (dB, ≥ 0), for meters. */
     float getGainReduction() const { return gainReduction.load(); }
+    /** Highest input peak (linear) since the last call, for level bars. */
+    float takeInputPeak() { return inputPeak.exchange (0.0f); }
 
     // interface used by the rebuilt editor (plugin-template/common/CloneEditor.cpp)
     juce::RangedAudioParameter* parameter (int index) const { return index >= 0 && index < (int) parameters.size() ? parameters[(size_t) index] : nullptr; }
@@ -68,6 +70,7 @@ private:
     double makeupDb = 0.0;
     bool initialised = false;
     std::atomic<float> gainReduction { 0.0f };
+    std::atomic<float> inputPeak { 0.0f };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CloneProcessor)
 };

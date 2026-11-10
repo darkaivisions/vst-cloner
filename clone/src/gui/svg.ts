@@ -19,10 +19,18 @@ export function renderSvg(model: GuiModel, values: Map<number, number> = new Map
   const out: string[] = [];
   out.push(`<rect width="${model.width}" height="${model.height}" fill="${fill(model.background)}"/>`);
   for (const p of model.panels) out.push(`<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="${p.radius}" fill="${fill(p.fill)}"/>`);
+  (model.circles ?? []).forEach((c, i) => {
+    out.push(`<defs><radialGradient id="disc${i}" cx="0.5" cy="0.5" r="0.5">${c.stops.map((st) => `<stop offset="${st.at.toFixed(4)}" stop-color="${st.color}"/>`).join("")}</radialGradient></defs>`);
+    out.push(`<circle cx="${c.cx}" cy="${c.cy}" r="${c.r}" fill="url(#disc${i})"/>`);
+    for (const a of c.spokes?.angles ?? []) {
+      out.push(`<line x1="${c.cx}" y1="${c.cy}" x2="${(c.cx + Math.sin(a) * c.r * 0.97).toFixed(2)}" y2="${(c.cy - Math.cos(a) * c.r * 0.97).toFixed(2)}" stroke="${c.spokes!.color}" stroke-width="${c.spokes!.width}"/>`);
+    }
+  });
   for (const l of model.lines) out.push(`<line x1="${l.x1}" y1="${l.y1}" x2="${l.x2}" y2="${l.y2}" stroke="${l.color}" stroke-width="${l.thickness}"/>`);
 
   for (const d of model.displays) {
     if (d.kind === "meter") continue; // drawn after the texts (needle only)
+    if (d.kind === "bar") continue; // empty without audio: the unlit bar is part of the static layout
     out.push(`<rect x="${d.x}" y="${d.y}" width="${d.w}" height="${d.h}" fill="${fill(d.backgroundTop && d.backgroundBottom ? { color: d.backgroundTop, gradient: d.backgroundBottom } : { color: d.background })}"/>`);
     const fMin = d.fMin ?? 10, fMax = d.fMax ?? 30000, top = d.dbTop ?? 13.3, bottom = d.dbBottom ?? -13.3;
     const plotH = d.h - (d.labelBand ?? 0);

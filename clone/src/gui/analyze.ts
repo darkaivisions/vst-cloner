@@ -17,7 +17,7 @@ import {
   type Image,
   type Rgb,
 } from "./image.ts";
-import type { Control, Display, Fill, GuiModel, Line, Needle, Panel, Readout, RotaryStyle, TextItem } from "./model.ts";
+import type { Circle, Control, Display, Fill, GuiModel, Line, Needle, Panel, Readout, RotaryStyle, TextItem } from "./model.ts";
 import type { GuiProbe, ProbedParameter } from "./probe.ts";
 import { plausibleText, recognizeBlocks } from "./ocr.ts";
 
@@ -91,6 +91,14 @@ function sampleRing(img: Image, cx: number, cy: number, r: number, samples = 72)
   return out;
 }
 
+function bilinear(img: Image, x: number, y: number): Rgb {
+  const x0 = Math.max(0, Math.min(img.width - 2, Math.floor(x))), y0 = Math.max(0, Math.min(img.height - 2, Math.floor(y)));
+  const tx = Math.min(1, Math.max(0, x - x0)), ty = Math.min(1, Math.max(0, y - y0));
+  const a = pixel(img, x0, y0), b = pixel(img, x0 + 1, y0), c = pixel(img, x0, y0 + 1), d = pixel(img, x0 + 1, y0 + 1);
+  const mix = (i: 0 | 1 | 2) => Math.round((a[i] * (1 - tx) + b[i] * tx) * (1 - ty) + (c[i] * (1 - tx) + d[i] * tx) * ty);
+  return [mix(0), mix(1), mix(2)];
+}
+
 function ringMedian(img: Image, cx: number, cy: number, r: number): Rgb {
   const ring = sampleRing(img, cx, cy, r);
   const median = (i: 0 | 1 | 2) => percentile(ring.map((c) => c[i]), 0.5);
@@ -139,6 +147,54 @@ function fitCircle(points: [number, number][]): { cx: number; cy: number; r: num
   const uc = (a * svv - b * suv) / det;
   const vc = (b * suu - a * suv) / det;
   return { cx: uc + mx, cy: vc + my, r: Math.sqrt(uc * uc + vc * vc + (suu + svv) / points.length) };
+}
+
+function editDistance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let diagonal = row[0]!;
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const next = Math.min(row[j]! + 1, row[j - 1]! + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diagonal = row[j]!;
+      row[j] = next;
+    }
+  }
+  return row[b.length]!;
+}
+
+/** Words common on plugin editors; uncertain readings one letter away are corrected ("RISHT" → "RIGHT"). */
+const COMMON_WORDS = ["LEFT", "RIGHT", "FRONT", "BACK", "TOP", "BOTTOM", "MID", "SIDE", "INPUT", "OUTPUT", "GAIN", "LEVEL", "MIX", "DRY", "WET", "LOW", "HIGH", "BASS", "TREBLE", "ON", "OFF", "BYPASS", "STEREO", "MONO"];
+
+function commonWord(word: string, confidence: number): string {
+  if (confidence >= 85 || word.length < 3) return word;
+  const upper = word.toUpperCase();
+  const match = COMMON_WORDS.find((w) => w.length === upper.length && editDistance(w, upper) === 1);
+  if (!match) return word;
+  // keep the case of the reading
+  return word === upper ? match : word === word.toLowerCase() ? match.toLowerCase() : match[0] + match.slice(1).toLowerCase();
+}
+
+/**
+ * An uncertain OCR reading that is nearly a part of the parameter name ("Makelp" for "MakeUp Gain 1"):
+ * that part of the name, spelled as in the name.
+ */
+export function nameLike(read: string | undefined, name: string): string | undefined {
+  const text = read?.trim();
+  if (!text || text.length < 3) return undefined;
+  const words = name.split(/\s+/).filter(Boolean);
+  let best: { part: string; distance: number } | undefined;
+  for (let i = 0; i < words.length; i++) for (let j = i + 1; j <= words.length; j++) {
+    // with and without spaces ("Make Up" is shown as "MakeUp")
+    for (const part of new Set([words.slice(i, j).join(" "), words.slice(i, j).join("")])) {
+      const distance = editDistance(text.toLowerCase(), part.toLowerCase()) / Math.max(part.length, text.length);
+      if (!best || distance < best.distance) best = { part, distance };
+    }
+  }
+  if (!best || best.distance > 0.25) return undefined;
+  // capitals as read ("OUTPUT" stays upper case)
+  const letters = text.replace(/[^\p{L}]/gu, "");
+  return letters.length >= 2 && letters === letters.toUpperCase() ? best.part.toUpperCase() : best.part;
 }
 
 /** Picks the variant of a parameter name whose estimated width fits the measured text block best. */
@@ -933,6 +989,127 @@ function cornerRadius(r: Region, width: number): number {
   return Math.min(40, Math.round(steps * 2.4));
 }
 
+/**
+ * Discs in the static layout: round areas that stand out from the background (spheres, round displays).
+ * The colour profile from the centre to the edge keeps concentric rings and radial gradients.
+ */
+function findCircles(img: Image, exclude: Uint8Array, background: Rgb): Circle[] {
+  const { width, height } = img;
+  const mask = new Uint8Array(width * height);
+  for (let p = 0; p < mask.length; p++) {
+    if (exclude[p]) continue;
+    const i = p * 4;
+    const c: Rgb = [img.data[i]!, img.data[i + 1]!, img.data[i + 2]!];
+    if (colorDistance(c, background) > 25) mask[p] = 1;
+  }
+  const circles: Circle[] = [];
+  for (const comp of components(mask, width, height, 400)) {
+    const size = (comp.w + comp.h) / 2;
+    if (size < 30 || Math.abs(comp.w - comp.h) > size * 0.08) continue;
+    // circle through the edge pixels (robust: knobs or dots on the edge are dropped in a second fit)
+    const edge: [number, number][] = [];
+    for (let y = comp.y; y < comp.y + comp.h; y++) for (let x = comp.x; x < comp.x + comp.w; x++) {
+      const p = y * width + x;
+      if (!mask[p]) continue;
+      const open = (q: number, ok: boolean) => ok && !mask[q] && !exclude[q];
+      if (open(p - 1, x > 0) || open(p + 1, x < width - 1) || open(p - width, y > 0) || open(p + width, y < height - 1)) edge.push([x, y]);
+    }
+    // outer edge only (holes inside – grid lines, dark marks – are not the outline): outermost point per angle
+    const bx = comp.x + comp.w / 2, by = comp.y + comp.h / 2;
+    const outer = new Map<number, [number, number]>();
+    for (const pt of edge) {
+      const bin = Math.round(((Math.atan2(pt[1] - by, pt[0] - bx) + Math.PI) / TAU) * 180);
+      const best = outer.get(bin);
+      if (!best || Math.hypot(pt[0] - bx, pt[1] - by) > Math.hypot(best[0] - bx, best[1] - by)) outer.set(bin, pt);
+    }
+    edge.length = 0;
+    edge.push(...outer.values());
+    let fit = fitCircle(edge);
+    for (let pass = 0; pass < 2 && fit; pass++) {
+      const f = fit;
+      const near = edge.filter(([x, y]) => Math.abs(Math.hypot(x - f.cx, y - f.cy) - f.r) < 2);
+      if (near.length < edge.length * 0.6) { fit = undefined; break; }
+      fit = fitCircle(near);
+    }
+    if (!fit) continue;
+    const { cx, cy } = fit;
+    // edge pixel centres lie half a pixel inside the edge
+    const r = fit.r + 0.5;
+    // inside the circle nearly everything belongs to it (or is covered by texts and controls), outside nothing
+    let inside = 0, insideHit = 0, outside = 0, outsideHit = 0;
+    for (let y = comp.y; y < comp.y + comp.h; y++) for (let x = comp.x; x < comp.x + comp.w; x++) {
+      const p = y * width + x;
+      const d = Math.hypot(x - cx, y - cy);
+      if (d < r - 1.5) { if (!exclude[p]) { inside++; if (mask[p]) insideHit++; } }
+      else if (d > r + 1.5 && !exclude[p]) { outside++; if (mask[p]) outsideHit++; }
+    }
+    if (inside < 300 || insideHit / inside < 0.9 || (outside > 0 && outsideHit / outside > 0.15)) continue;
+    // radial profile in half pixels (bilinear): median colour of every ring, stops where the colour changes
+    const ringAt = (radius: number): Rgb => {
+      const ring: Rgb[] = [];
+      const samples = Math.max(16, Math.round(TAU * radius * 1.5));
+      for (let k = 0; k < samples; k++) {
+        const a = (k / samples) * TAU;
+        ring.push(bilinear(img, cx + Math.sin(a) * radius, cy - Math.cos(a) * radius));
+      }
+      const median = (i: 0 | 1 | 2) => percentile(ring.map((c) => c[i]), 0.5);
+      return [median(0), median(1), median(2)];
+    };
+    const radii: number[] = [];
+    for (let k = 0; k <= r + 0.25; k += 0.5) radii.push(k);
+    const profile = radii.map(ringAt);
+    const stops: Circle["stops"] = [];
+    profile.forEach((c, k) => {
+      const prev = profile[k - 1], next = profile[k + 1];
+      const keep = k === 0 || k === profile.length - 1 || (prev && colorDistance(c, prev) > 3) || (next && colorDistance(c, next) > 3);
+      if (keep) stops.push({ at: Math.min(1, radii[k]! / r), color: hex(c) });
+    });
+    // spokes: straight lines through the centre (cross hairs), darker or lighter than their ring
+    const spokes: number[] = [];
+    const steps = 360;
+    const deviation = new Float64Array(steps);
+    for (let s = 0; s < steps; s++) {
+      const a = (s / steps) * TAU;
+      let sum = 0, n = 0;
+      for (let k = Math.round(profile.length * 0.25); k < Math.round(profile.length * 0.85); k++) {
+        const c = bilinear(img, cx + Math.sin(a) * radii[k]!, cy - Math.cos(a) * radii[k]!);
+        sum += luminance(c) - luminance(profile[k]!);
+        n++;
+      }
+      deviation[s] = n ? sum / n : 0;
+    }
+    let spokeLum = 0;
+    for (let s = 0; s < steps; s++) {
+      const d = deviation[s]!;
+      const isPeak = Math.abs(d) > 6 && Math.abs(d) >= Math.abs(deviation[(s + steps - 1) % steps]!) && Math.abs(d) > Math.abs(deviation[(s + 1) % steps]!);
+      if (isPeak) { spokes.push((s / steps) * TAU); spokeLum += d; }
+    }
+    const spokeColor = (() => {
+      if (!spokes.length) return undefined;
+      // core of each line: the most extreme pixel across it (the line is ~1 px, sampling blurs it)
+      const darker = spokeLum < 0;
+      const cores: Rgb[] = [];
+      for (const a of spokes) for (let f = 0.3; f <= 0.8; f += 0.05) {
+        const x = cx + Math.sin(a) * r * f, y = cy - Math.cos(a) * r * f;
+        let best: Rgb | undefined;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const c = pixel(img, Math.round(x) + dx, Math.round(y) + dy);
+          if (!best || (darker ? luminance(c) < luminance(best) : luminance(c) > luminance(best))) best = c;
+        }
+        cores.push(best!);
+      }
+      const median = (i: 0 | 1 | 2) => percentile(cores.map((c) => c[i]), 0.5);
+      return hex([median(0), median(1), median(2)]);
+    })();
+    circles.push({
+      // continuous coordinates: pixel x covers [x, x + 1]
+      cx: cx + 0.5, cy: cy + 0.5, r, stops: stops.slice(0, 160),
+      ...(spokes.length >= 2 && spokes.length <= 16 && spokeColor ? { spokes: { angles: spokes, color: spokeColor, width: 1 } } : {}),
+    });
+  }
+  return circles.slice(0, 8);
+}
+
 /** Text blocks: high local contrast, merged horizontally. */
 /** Median colour of the 1-px ring just outside a box (the background around a text). */
 function ringColor(img: Image, box: Box): Rgb {
@@ -1132,6 +1309,55 @@ async function analyzeMeter(probe: GuiProbe, noise: Uint8Array, reduction: (leve
   };
 }
 
+/**
+ * Level bars from editor shots with audio of rising levels: tall narrow areas that light up from a fixed bottom
+ * edge, higher with every level. The top of the lit area is calibrated linearly in dB of the input peak level.
+ */
+async function analyzeBars(probe: GuiProbe, noise: Uint8Array, exclude: Box[]): Promise<Display[]> {
+  const { width, height } = probe;
+  if (!probe.meter || probe.meter.length < 3) return [];
+  const shots = await Promise.all(probe.meter.map((m) => loadRaw(m.file, width, height)));
+  const rest = shots[0]!;
+  const changes = shots.slice(1).map((s) => diffMask(s, rest, 40, noise));
+  const all = new Uint8Array(width * height);
+  for (const c of changes) for (let p = 0; p < all.length; p++) if (c[p]) all[p] = 1;
+  // LED segments: close the gaps between them
+  const joined = dilate(all, width, height, 0, 3);
+  const bars: Display[] = [];
+  for (const comp of components(joined, width, height, 30)) {
+    if (comp.h < 15 || comp.w < 2 || comp.h < comp.w * 3) continue;
+    if (exclude.some((b) => overlaps(b, comp))) continue;
+    // top of the lit area per level, the bottom edge is shared
+    const points: [number, number][] = [];
+    let bottom = 0;
+    changes.forEach((c, k) => {
+      let top = height, count = 0;
+      for (let y = comp.y; y < comp.y + comp.h; y++) for (let x = comp.x; x < comp.x + comp.w; x++) {
+        if (!c[y * width + x]) continue;
+        count++;
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+      }
+      if (count >= comp.w * 2) points.push([probe.meter![k + 1]!.levelDb, top]);
+    });
+    if (points.length < 2) continue;
+    // rising level must raise the bar
+    if (points.some((p, i) => i > 0 && p[1] > points[i - 1]![1])) continue;
+    const fit = linearFit(points);
+    if (!fit || fit.b > -0.2) continue;
+    const top = Math.max(0, Math.round(fit.a));
+    const fromDb = (bottom + 1 - fit.a) / fit.b;
+    const lit = maskPoints(changes[changes.length - 1]!, width, comp);
+    const color = hex(dominantAt(shots[shots.length - 1]!, lit));
+    bars.push({
+      kind: "bar", x: comp.x, y: top, w: comp.w, h: bottom + 1 - top,
+      background: hex(dominantColor(rest, comp)), grid: color, curve: color, text: color,
+      bar: { source: "input", fromDb, toDb: (top - fit.a) / fit.b, color },
+    });
+  }
+  return bars;
+}
+
 export interface AnalyzeOptions {
   /** gain reduction (dB) the clone will show for a sine of this peak level – calibrates meters */
   meterReduction?: (levelDb: number) => number;
@@ -1170,6 +1396,8 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   const bandFootprints: { param: ProbedParameter; frames: Image[] }[] = [];
   const pending: { param: ProbedParameter; frames: Image[]; parts: ReturnType<typeof components>; changed: Uint8Array }[] = [];
   const hiddenSwitches: number[] = [];
+  /** pixels each parameter changes, with its frames (texts hidden by moving parts are read there) */
+  const changeSets: { changed: Uint8Array; frames: Image[] }[] = [];
   const contains = (outer: Box, inner: Box) =>
     inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
   for (const param of probe.visible) {
@@ -1183,6 +1411,7 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
       const m = diffMask(f, base, 24, noise);
       for (let p = 0; p < m.length; p++) if (m[p]) changed[p] = 1;
     }
+    changeSets.push({ changed, frames });
     const allParts = components(dilate(changed, width, height, 4), width, height, 10);
     if (!allParts.length) continue;
     const changedPixels = changed.reduce((n, v) => n + v, 0);
@@ -1272,6 +1501,7 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   if (options.meterReduction) {
     const meter = await analyzeMeter(probe, noise, options.meterReduction);
     if (meter) displays.push(meter);
+    displays.push(...(await analyzeBars(probe, noise, [...displays, ...controls])));
   }
 
   // exclusion mask for static analysis
@@ -1285,12 +1515,32 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     if (c.readout) mark(c.readout, 2);
   }
   // meters only add a needle: their scale, texts and background belong to the static layout
-  for (const d of displays) if (d.kind !== "meter") mark(d, 1);
+  for (const d of displays) if (d.kind !== "meter" && d.kind !== "bar") mark(d, 1);
+
+  // discs first: their rims would merge with texts next to them
+  const circles = findCircles(base, occupied, dominantColor(base, { x: 0, y: 0, w: width, h: height }));
+  const textExclude = occupied.slice();
+  for (const c of circles) {
+    const box = clampBox(grow({ x: Math.floor(c.cx - c.r), y: Math.floor(c.cy - c.r), w: Math.ceil(2 * c.r) + 1, h: Math.ceil(2 * c.r) + 1 }, 2), base);
+    for (let y = box.y; y < box.y + box.h; y++) for (let x = box.x; x < box.x + box.w; x++) if (Math.hypot(x + 0.5 - c.cx, y + 0.5 - c.cy) <= c.r + 2.5) textExclude[y * width + x] = 1;
+  }
 
   // texts and labels
-  const blocks = textBlocks(base, occupied);
+  const blocks = textBlocks(base, textExclude);
   // read the texts (tesseract, optional); without it labels are derived from parameter names
   const ocr = await recognizeBlocks(base, blocks.map((b) => ({ box: clampBox(grow(b.box, 1), base), color: b.color, background: b.background })));
+  // texts covered by something that moves (a dot on a sphere): read them where it has moved away
+  for (let i = 0; i < blocks.length; i++) {
+    if (plausibleText(ocr[i], 70)) continue;
+    const box = blocks[i]!.box;
+    for (const set of changeSets) {
+      let hits = 0;
+      for (let y = box.y; y < box.y + box.h; y++) for (let x = box.x; x < box.x + box.w; x++) hits += set.changed[y * width + x]!;
+      if (hits < area(box) * 0.05) continue;
+      const reads = await Promise.all(set.frames.map((f) => recognizeBlocks(f, [{ box: clampBox(grow(box, 1), base), color: blocks[i]!.color, background: blocks[i]!.background }])));
+      for (const [read] of reads) if (read && read.confidence > (ocr[i]?.confidence ?? 0) && plausibleText(read, 70)) ocr[i] = read;
+    }
+  }
   const readText = (i: number, minConfidence = 70) => (plausibleText(ocr[i], minConfidence) ? ocr[i]!.text : undefined);
   /** box of the recognised words (icons next to the text are left out) */
   const readBox = (i: number) => (plausibleText(ocr[i]) && ocr[i]!.box ? ocr[i]!.box! : blocks[i]!.box);
@@ -1298,6 +1548,62 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   for (const c of controls) for (const w of new Set(c.name.toLowerCase().split(/\s+/))) wordCounts.set(w, (wordCounts.get(w) ?? 0) + 1);
   const texts: TextItem[] = [];
   const used = new Set<number>();
+
+  // vertical words: letters stacked in a column ("L E F T" beside a sphere) – split into letters by ink rows,
+  // read side by side, drawn letter by letter
+  const narrow = blocks.map((b, i) => ({ ...b, i })).filter((b) => b.box.w <= 20 && b.box.h <= 60 && !plausibleText(ocr[b.i], 92));
+  const taken = new Set<number>();
+  for (const first of [...narrow].sort((a, b) => a.box.y - b.box.y)) {
+    if (taken.has(first.i)) continue;
+    const column = [first];
+    for (;;) {
+      const region = union(column.map((b) => b.box));
+      const next = narrow
+        .filter((b) => !taken.has(b.i) && !column.includes(b) && b.box.y >= region.y + region.h - 2 && b.box.y - (region.y + region.h) < 12)
+        .filter((b) => Math.abs(b.box.x + b.box.w / 2 - (first.box.x + first.box.w / 2)) < 4)
+        .sort((a, b) => a.box.y - b.box.y)[0];
+      if (!next) break;
+      column.push(next);
+    }
+    if (column.length < 2) continue;
+    const region = union(column.map((b) => b.box));
+    const bg = first.background;
+    const ink = (x: number, y: number) => !textExclude[y * width + x] && colorDistance(pixel(base, x, y), bg) > 60;
+    const glyphs: Box[] = [];
+    let open: { y0: number; x0: number; x1: number } | undefined;
+    for (let y = region.y; y <= region.y + region.h; y++) {
+      let x0 = Infinity, x1 = -Infinity;
+      if (y < region.y + region.h) for (let x = region.x; x < region.x + region.w; x++) if (ink(x, y)) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); }
+      if (x1 >= x0) open = open ? { y0: open.y0, x0: Math.min(open.x0, x0), x1: Math.max(open.x1, x1) } : { y0: y, x0, x1 };
+      else if (open) { glyphs.push({ x: open.x0, y: open.y0, w: open.x1 - open.x0 + 1, h: y - open.y0 }); open = undefined; }
+    }
+    const letterH = percentile(glyphs.map((g) => g.h), 0.5);
+    const letterBoxes = glyphs.filter((g) => g.h >= letterH * 0.6 && g.h <= letterH * 1.4);
+    if (letterBoxes.length < 3 || letterBoxes.length !== glyphs.length) continue;
+    const h = letterH + 8;
+    const gap = Math.round(h * 0.3);
+    const w = letterBoxes.reduce((sum, g) => sum + g.w + gap, gap);
+    const strip: Image = { width: w, height: h, data: new Uint8Array(w * h * 4) };
+    for (let p = 0; p < w * h; p++) strip.data.set([bg[0], bg[1], bg[2], 255], p * 4);
+    let x0 = gap;
+    for (const g of letterBoxes) {
+      for (let y = 0; y < g.h; y++) for (let x = 0; x < g.w; x++) {
+        if (!ink(g.x + x, g.y + y) && colorDistance(pixel(base, g.x + x, g.y + y), bg) > 60) continue;
+        const from = ((g.y + y) * width + g.x + x) * 4, to = ((4 + y) * w + x0 + x) * 4;
+        strip.data.set(base.data.subarray(from, from + 4), to);
+      }
+      x0 += g.w + gap;
+    }
+    const [read] = await recognizeBlocks(strip, [{ box: { x: 0, y: 0, w, h }, color: first.color, background: bg }]);
+    const word = commonWord(read?.text.replace(/[^\p{L}\p{N}]/gu, "") ?? "", read?.confidence ?? 0);
+    // a word of letters (dashed borders read as "1111" or "||||" are not)
+    if (!read || read.confidence < 60 || word.length !== letterBoxes.length || !/^\p{L}+$/u.test(word) || new Set(word.toUpperCase()).size < 2) continue;
+    for (const b of column) { taken.add(b.i); used.add(b.i); }
+    letterBoxes.forEach((g, k) => {
+      texts.push({ ...g, text: word[k]!, color: hex(first.color), size: fontSize(word[k]!, g.h), bold: first.bold, align: "left", role: "text" });
+    });
+  }
+
   for (const c of controls) {
     const bottom = c.readout && c.readout.y > c.y + c.h * 0.5 ? c.readout.y + c.readout.h : c.y + c.h;
     const candidates = blocks
@@ -1315,7 +1621,7 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
         return { ...b, score, align: (side === score ? "left" : "center") as "left" | "center" };
       })
       .filter((b) => Number.isFinite(b.score))
-      .map((b) => ({ ...b, text: readText(b.i) ?? fitLabel(c.name, b.box.w, b.box.h, b.uppercase, wordCounts) }))
+      .map((b) => ({ ...b, text: readText(b.i) ?? nameLike(ocr[b.i]?.text, c.name) ?? fitLabel(c.name, b.box.w, b.box.h, b.uppercase, wordCounts) }))
       .filter((b): b is typeof b & { text: string } => b.text !== undefined);
     const best = candidates.sort((a, b) => a.score - b.score)[0];
     if (!best) continue;
@@ -1327,7 +1633,8 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   const titleCandidate = blocks
     .map((b, i) => ({ ...b, i }))
     .filter(({ box, i }) => !used.has(i) && box.y < height * 0.35 && box.h >= 14 && box.h <= 60)
-    .sort((a, b) => b.box.h - a.box.h)[0];
+    // readable blocks first (a large icon is not the title), then the tallest
+    .sort((a, b) => Number(plausibleText(ocr[b.i], 60)) - Number(plausibleText(ocr[a.i], 60)) || b.box.h - a.box.h)[0];
   if (titleCandidate) {
     // multi-coloured titles ("Tone" + "Recast") consist of several blocks on one line
     let box = titleCandidate.box;
@@ -1366,6 +1673,7 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
 
   // background, panels and lines
   for (const b of blocks) mark(b.box, 2);
+  for (let p = 0; p < occupied.length; p++) if (textExclude[p]) occupied[p] = 1;
   const regions = segment(base, occupied);
   const background = regions[0];
   const panels: Panel[] = [];
@@ -1389,7 +1697,15 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     }
   }
 
-  const insideDisplay = (b: Box) => displays.filter((d) => d.kind !== "meter").some((d) => {
+  // panels and lines inside a disc are pieces of it
+  const insideCircle = (b: Box) => circles.some((c) => Math.hypot(b.x + b.w / 2 - c.cx, b.y + b.h / 2 - c.cy) < c.r && Math.max(b.w, b.h) < c.r * 2 + 2);
+  for (const list of [panels, lines] as const) {
+    const kept = (list as (Panel | Line)[]).filter((item) => !insideCircle("x1" in item ? { x: Math.min(item.x1, item.x2), y: Math.min(item.y1, item.y2), w: Math.abs(item.x2 - item.x1) + 1, h: Math.abs(item.y2 - item.y1) + 1 } : item));
+    list.length = 0;
+    (list as (Panel | Line)[]).push(...kept);
+  }
+
+  const insideDisplay = (b: Box) => displays.filter((d) => d.kind !== "meter" && d.kind !== "bar").some((d) => {
     const ix = Math.max(0, Math.min(b.x + b.w, d.x + d.w) - Math.max(b.x, d.x));
     const iy = Math.max(0, Math.min(b.y + b.h, d.y + d.h) - Math.max(b.y, d.y));
     return ix * iy > area(b) * 0.5;
@@ -1412,6 +1728,7 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     height,
     background: background ? regionFill(base, background) : { color: hex(dominantColor(base, { x: 0, y: 0, w: width, h: height })) },
     panels: panels.slice(0, 60),
+    ...(circles.length ? { circles } : {}),
     lines: lines.slice(0, 80),
     texts,
     controls,

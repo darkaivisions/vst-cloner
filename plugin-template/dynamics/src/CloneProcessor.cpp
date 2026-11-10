@@ -84,6 +84,8 @@ void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
             fromDb = toDb;
             toDb = computer.step (level, clonemodel::topology);
             gainReduction.store ((float) -toDb);
+            if ((float) peak > inputPeak.load())
+                inputPeak.store ((float) peak);
             makeupDb += makeupStep * (params.makeupDb - makeupDb);
             position = 0;
             sumSquares = peak = 0.0;

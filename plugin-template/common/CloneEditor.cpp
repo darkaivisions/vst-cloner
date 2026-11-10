@@ -718,6 +718,44 @@ namespace
         const Needle& needle;
         float shown = 0.0f;
     };
+
+    /** Level bar: filled from the bottom (`dbBottom`) up to the input peak level, the top edge is `dbTop`. */
+    class LevelBar final : public juce::Component, private juce::Timer
+    {
+    public:
+        LevelBar (CloneProcessor& p, const Display& d) : processor (p), display (d)
+        {
+            setInterceptsMouseClicks (false, false);
+            startTimerHz (30);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto b = getLocalBounds().toFloat();
+            const float t = juce::jlimit (0.0f, 1.0f, (shownDb - display.dbBottom) / (display.dbTop - display.dbBottom));
+            if (t <= 0.0f)
+                return;
+            g.setColour (colour (display.curve));
+            g.fillRect (b.withTop (b.getBottom() - t * b.getHeight()));
+        }
+
+    private:
+        void timerCallback() override
+        {
+            const float peakDb = 20.0f * std::log10 (processor.takeInputPeak() + 1e-9f);
+            // instant rise, falls about 20 dB per second
+            const float next = std::max (peakDb, shownDb - 20.0f / 30.0f);
+            if (std::abs (next - shownDb) > 0.01f)
+            {
+                shownDb = next;
+                repaint();
+            }
+        }
+
+        CloneProcessor& processor;
+        const Display& display;
+        float shownDb = -120.0f;
+    };
 #endif // VCH_GAIN_REDUCTION_METER
 }
 
@@ -740,6 +778,14 @@ public:
                 component = std::make_unique<EqDisplay> (processor, d);
 #endif
 #if VCH_GAIN_REDUCTION_METER
+            if (d.kind == 3)
+            {
+                auto bar = std::make_unique<LevelBar> (processor, d);
+                bar->setBounds (juce::Rectangle<float> (d.x, d.y, d.w, d.h).toNearestInt());
+                addAndMakeVisible (*bar);
+                children.push_back (std::move (bar));
+                continue;
+            }
             if (d.kind == 2)
             {
                 // the needle may swing outside the measured area: the component covers the whole editor
@@ -825,6 +871,21 @@ public:
                 g.setColour (colour (p.border));
                 g.drawRoundedRectangle (r, p.radius, 1.0f);
             }
+        }
+
+        for (int i = 0; i < clonegui::numCircles; ++i)
+        {
+            const auto& c = clonegui::circles[i];
+            if (c.numStops == 0)
+                continue;
+            juce::ColourGradient gradient (colour (c.stopColor[0]), c.cx, c.cy, colour (c.stopColor[c.numStops - 1]), c.cx + c.r, c.cy, true);
+            for (int k = 1; k < c.numStops - 1; ++k)
+                gradient.addColour (juce::jlimit (0.0, 1.0, (double) c.stopAt[k]), colour (c.stopColor[k]));
+            g.setGradientFill (gradient);
+            g.fillEllipse (c.cx - c.r, c.cy - c.r, 2 * c.r, 2 * c.r);
+            g.setColour (colour (c.spokeColor));
+            for (int k = 0; k < c.numSpokes; ++k)
+                g.drawLine ({ { c.cx, c.cy }, polar (c.cx, c.cy, c.r * 0.97f, c.spokes[k]) }, c.spokeWidth);
         }
 
         for (int i = 0; i < clonegui::numLines; ++i)

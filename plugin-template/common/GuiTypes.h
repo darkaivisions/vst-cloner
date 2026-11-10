@@ -9,6 +9,8 @@ namespace clonegui
 
 struct Fill { uint32_t color; uint32_t gradient; bool hasGradient; };
 struct Panel { float x, y, w, h, radius; Fill fill; uint32_t border; bool hasBorder; };
+/** Disc with a radial colour profile (stops from the centre 0 to the edge 1) and optional spokes from the centre. */
+struct Circle { float cx, cy, r; int numStops; const float* stopAt; const uint32_t* stopColor; int numSpokes; const float* spokes; uint32_t spokeColor; float spokeWidth; };
 struct Line { float x1, y1, x2, y2, thickness; uint32_t color; };
 /** align: 0 left, 1 centre, 2 right; size: font size in px (0 = derived from the box height) */
 struct Text { float x, y, w, h; const char* text; uint32_t color; bool bold; int align; float size; };

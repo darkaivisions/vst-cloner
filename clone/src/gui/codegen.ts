@@ -30,6 +30,7 @@ export function generateGuiHeader(gui: GuiModel | undefined, params: CloneParam[
       "inline constexpr int width = 0, height = 0;",
       "inline const Fill background { 0u, 0u, false };",
       "inline const Panel* const panels = nullptr; inline constexpr int numPanels = 0;",
+      "inline const Circle* const circles = nullptr; inline constexpr int numCircles = 0;",
       "inline const Line* const lines = nullptr; inline constexpr int numLines = 0;",
       "inline const Text* const texts = nullptr; inline constexpr int numTexts = 0;",
       "inline const Control* const controls = nullptr; inline constexpr int numControls = 0;",
@@ -57,6 +58,15 @@ export function generateGuiHeader(gui: GuiModel | undefined, params: CloneParam[
   };
 
   array("panels", "Panel", gui.panels.map((p) => `{ ${f(p.x)}, ${f(p.y)}, ${f(p.w)}, ${f(p.h)}, ${f(p.radius)}, ${fill(p.fill)}, ${argb(p.border)}, ${p.border ? "true" : "false"} }`));
+  const circles = gui.circles ?? [];
+  circles.forEach((c, i) => {
+    lines.push(`inline const float circleStopAt${i}[] = { ${c.stops.map((st) => f(st.at)).join(", ")} };`);
+    lines.push(`inline const uint32_t circleStopColor${i}[] = { ${c.stops.map((st) => argb(st.color)).join(", ")} };`);
+    if (c.spokes?.angles.length) lines.push(`inline const float circleSpokes${i}[] = { ${c.spokes.angles.map(f).join(", ")} };`);
+  });
+  array("circles", "Circle", circles.map((c, i) =>
+    `{ ${f(c.cx)}, ${f(c.cy)}, ${f(c.r)}, ${c.stops.length}, circleStopAt${i}, circleStopColor${i}, ` +
+    `${c.spokes?.angles.length ?? 0}, ${c.spokes?.angles.length ? `circleSpokes${i}` : "nullptr"}, ${argb(c.spokes?.color)}, ${f(c.spokes?.width ?? 1)} }`));
   array("lines", "Line", gui.lines.map((l) => `{ ${f(l.x1)}, ${f(l.y1)}, ${f(l.x2)}, ${f(l.y2)}, ${f(l.thickness)}, ${argb(l.color)} }`));
   array("texts", "Text", gui.texts.map((t) => `{ ${f(t.x)}, ${f(t.y)}, ${f(t.w)}, ${f(t.h)}, ${cppString(t.text)}, ${argb(t.color)}, ${t.bold}, ${t.align === "left" ? 0 : t.align === "right" ? 2 : 1}, ${f(t.size)} }`));
 
@@ -90,8 +100,8 @@ export function generateGuiHeader(gui: GuiModel | undefined, params: CloneParam[
     if (d.needle?.ticks) lines.push(`inline const float needleTicks${i}[] = { ${d.needle.ticks.angles.map(f).join(", ")} };`);
   });
   array("displays", "Display", gui.displays.map((d, i) =>
-    `{ ${d.kind === "eq" ? 0 : d.kind === "meter" ? 2 : 1}, ${f(d.x)}, ${f(d.y)}, ${f(d.w)}, ${f(d.h)}, ${argb(d.backgroundTop ?? d.background)}, ${argb(d.backgroundBottom ?? d.background)}, ${argb(d.grid)}, ${argb(d.curve)}, ${argb(d.text)}, ` +
-    `${f(d.fMin ?? 10)}, ${f(d.fMax ?? 30000)}, ${f(d.dbTop ?? 13.3)}, ${f(d.dbBottom ?? -13.3)}, ${f(d.dbStep ?? 0)}, ${f(d.labelBand ?? 0)}, ${f(d.dbLabelRight !== undefined ? d.dbLabelRight - d.x : 0)}, ` +
+    `{ ${d.kind === "eq" ? 0 : d.kind === "meter" ? 2 : d.kind === "bar" ? 3 : 1}, ${f(d.x)}, ${f(d.y)}, ${f(d.w)}, ${f(d.h)}, ${argb(d.backgroundTop ?? d.background)}, ${argb(d.backgroundBottom ?? d.background)}, ${argb(d.grid)}, ${argb(d.bar?.color ?? d.curve)}, ${argb(d.text)}, ` +
+    `${f(d.fMin ?? 10)}, ${f(d.fMax ?? 30000)}, ${f(d.bar?.toDb ?? d.dbTop ?? 13.3)}, ${f(d.bar?.fromDb ?? d.dbBottom ?? -13.3)}, ${f(d.dbStep ?? 0)}, ${f(d.labelBand ?? 0)}, ${f(d.dbLabelRight !== undefined ? d.dbLabelRight - d.x : 0)}, ` +
     `{ ${f(d.needle?.pivotX ?? 0)}, ${f(d.needle?.pivotY ?? 0)}, ${f(d.needle?.length ?? 0)}, ${f(d.needle?.width ?? 0)}, ${argb(d.needle?.color)}, ${f(d.needle?.angleZero ?? 0)}, ${f(d.needle?.radiansPerDb ?? 0)}, ` +
     `${f(d.needle?.cap?.radius ?? 0)}, ${argb(d.needle?.cap?.color)}, ` +
     `{ ${d.needle?.ticks?.angles.length ?? 0}, ${d.needle?.ticks ? `needleTicks${i}` : "nullptr"}, ${f(d.needle?.ticks?.inner ?? 0)}, ${f(d.needle?.ticks?.outer ?? 0)}, ${f(d.needle?.ticks?.width ?? 1)}, ${argb(d.needle?.ticks?.color)} } } }`));

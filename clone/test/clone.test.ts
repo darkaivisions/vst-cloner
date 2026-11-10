@@ -304,3 +304,20 @@ test("brickwall slope option is recognised and generated as order 0", async () =
   assert.equal(parseSlope("Brickwall").brickwall, true);
   assert.equal(parseSlope("24 dB/oct").brickwall, undefined);
 });
+
+test("GUI labels: uncertain OCR readings are matched to the parameter name", async () => {
+  const { nameLike } = await import("../src/gui/analyze.ts");
+  assert.equal(nameLike("Makelp", "Make Up Gain 1"), "MakeUp");
+  assert.equal(nameLike("OUTPUT", "Output dB"), "OUTPUT");
+  assert.equal(nameLike("Treble", "Make Up Gain 1"), undefined);
+});
+
+test("stepped parameters from value-text plateaus map back to the original's values", async () => {
+  const { parameterSteps, stepIndex } = await import("../src/eq/mapping.ts");
+  const texts = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1].map((value) => ({ value, text: value < 0.25 ? "Full" : value < 0.75 ? "Masked" : "Unmasked" }));
+  const p = { index: 0, id: "0", name: "Mode", default: 0, numSteps: 2147483647, discrete: false, boolean: false, automatable: true, meta: false, texts } as unknown as Parameter;
+  const steps = parameterSteps(p)!;
+  assert.deepEqual(steps.labels, ["Full", "Masked", "Unmasked"]);
+  assert.equal(stepIndex(steps, 0.27), 1);
+  assert.equal(stepIndex(steps, 0.95), 2);
+});
