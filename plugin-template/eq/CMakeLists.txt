@@ -12,7 +12,7 @@ endif()
 set(VCH_JUCE_DIR "" CACHE PATH "Path to a local JUCE checkout (otherwise JUCE is downloaded)")
 set(CLONE_NAME "vst-cloner clone" CACHE STRING "Plugin name")
 set(CLONE_CODE "Vc00" CACHE STRING "Four-character plugin code")
-set(CLONE_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/generated" CACHE PATH "Directory containing CloneModel.h")
+set(CLONE_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/generated" CACHE PATH "Directory containing CloneModel.h and CloneGui.h")
 
 if(VCH_JUCE_DIR)
     add_subdirectory(${VCH_JUCE_DIR} JUCE)
@@ -40,7 +40,7 @@ juce_add_plugin(vch_clone
     VST3_CATEGORIES Fx EQ
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
-target_sources(vch_clone PRIVATE src/CloneProcessor.cpp)
+target_sources(vch_clone PRIVATE src/CloneProcessor.cpp src/CloneEditor.cpp)
 target_include_directories(vch_clone PRIVATE src ${CLONE_GENERATED_DIR})
 
 target_compile_definitions(vch_clone PUBLIC

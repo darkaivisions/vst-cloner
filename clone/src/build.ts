@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CancelledError, throwIfCancelled } from "@vst-cloner/capture";
+import { generateGuiHeader } from "./gui/codegen.ts";
 
 export type LogLevel = "info" | "detail" | "warn";
 export type Logger = (level: LogLevel, message: string) => void;
@@ -99,6 +100,8 @@ export interface BuildOptions {
   pluginName: string;
   /** contents of CloneModel.h */
   modelHeader: string;
+  /** contents of CloneGui.h (layout of the editor); omitted → generic editor */
+  guiHeader?: string;
   outputDir: string;
   install?: boolean;
   log: Logger;
@@ -126,6 +129,7 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
     await writeIfChanged(join(workDir, "src", file), await readFile(join(TEMPLATE_DIR, "src", file), "utf8"));
   }
   await writeIfChanged(join(generated, "CloneModel.h"), options.modelHeader);
+  await writeIfChanged(join(generated, "CloneGui.h"), options.guiHeader ?? generateGuiHeader(undefined, []));
 
   const juceDir = await findJuceDir();
   log("detail", juceDir ? `JUCE: ${juceDir}` : "JUCE 9.0.5 wird heruntergeladen (nur beim ersten Build)");

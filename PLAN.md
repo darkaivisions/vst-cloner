@@ -132,6 +132,18 @@ vst-cloner/
    KI-Einstellungen, gut lesbares Live-Log aller Schritte ✔
    - Architektur: Web-Oberfläche ↔ Rust-Hülle ↔ Node-Bridge (`bridge/`, JSON-Zeilen, Jobs mit
      Fortschritt/Protokoll/Abbruch); Bibliothek mit Import/Export der Profile
+4b. **Oberflächen-Nachbau** (in Arbeit)
+   - `vch-gui` öffnet den Original-Editor unsichtbar (Xvfb), „Wiggle-Test“: jeden Parameter verstellen,
+     Aufnahmen vergleichen → Regler/Schalter/Anzeigen, Farben, Flächen, Beschriftungen → `model/gui.json`
+     (nur Layout-Daten, keine Grafiken des Originals im Profil); Klon-Editor zeichnet daraus, Vergleich per SSIM
+   - Erledigt: Erkennung Drehregler/Schalter/Anzeigen, Parameter mit Anzeige + Regler, Schalter, die Regler
+     abdunkeln, Ausgangswerte der Regler, plausibilitätsgeprüfte Beschriftungen, mehrfarbige Titel,
+     fremde Fenster werden aus dem Aufnahmebereich geschoben, Testversions-Hinweis von FabFilter wird per
+     Klick auf „Evaluate“ geschlossen; EQ-Anzeige: Frequenzachse an Rasterlinien eingerastet, Plotgrenzen aus
+     den Rasterlinien, dB-Schrittweite, Lage/Farbe der dB-Beschriftung, Kurvenfarbe; Wertanzeigen (Typ „value“)
+   - Pro-Q 3: Klon-Editor 75 % Struktur-, 98 % Farbähnlichkeit
+   - Offen: freie Texte (Untertitel, Skalen, Kopf-/Fußleiste) brauchen OCR (tesseract); Zeigerinstrumente;
+     Analyzer-Skala/Pegelmesser; Bänder direkt in der Kurve bedienen (Pro-Q-Stil) im Klon-Editor prüfen
 5. **Kompressor + Distortion** (inkl. lokalem NAM-Training, CPU/GPU) ← als Nächstes
 6. **Delay + Reverb**
 7. **REA-Integration** (Analyst-Agent, `spec.md`, Clean-Room-Trennung) + **yabridge-Check**
@@ -140,7 +152,7 @@ vst-cloner/
 ## Risiken / Erwartungen
 - Sehr gut klonbar: lineare Effekte, Kompressoren, Amps/Verzerrer.
 - Nur angenähert: stark zeitvariante/zufällige Effekte, komplexe Multieffekte.
-- GUI wird nicht geklont (generische UI).
+- GUI wird als Layout nachgebaut (Formen, Farben, Regler), nicht pixelgenau; Grafiken des Originals werden nicht übernommen.
 - NAM-Training ohne GPU langsam (Minuten bis Stunden pro Modell).
 - yabridge löst viele Fälle ohne Klon; App soll das zuerst anbieten.
 - Tests zunächst mit freien/Open-Source-Plugins, bei denen das Ergebnis überprüfbar ist.

@@ -28,6 +28,7 @@ target_sources(vch-host PRIVATE
     src/Main.cpp
     src/PluginLoader.cpp
     src/Commands.cpp
+    src/Protocol.cpp
     src/Wav.cpp)
 
 target_compile_definitions(vch-host PRIVATE
@@ -43,3 +44,31 @@ target_link_libraries(vch-host PRIVATE
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
+
+# vch-gui: opens plugin editors and captures them (GUI reconstruction)
+juce_add_console_app(vch-gui PRODUCT_NAME "vch-gui")
+
+target_sources(vch-gui PRIVATE
+    src/GuiMain.cpp
+    src/Protocol.cpp
+    src/ScreenCapture.cpp)
+
+target_compile_definitions(vch-gui PRIVATE
+    VCH_HOST_VERSION="${PROJECT_VERSION}"
+    JUCE_PLUGINHOST_VST3=1
+    JUCE_PLUGINHOST_LV2=1
+    JUCE_USE_CURL=0
+    JUCE_WEB_BROWSER=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_MODAL_LOOPS_PERMITTED=1)
+
+target_link_libraries(vch-gui PRIVATE
+    juce::juce_audio_processors
+    juce::juce_gui_extra
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_warning_flags)
+
+if(UNIX AND NOT APPLE)
+    find_package(X11 REQUIRED)
+    target_link_libraries(vch-gui PRIVATE X11::X11 X11::Xtst)
+endif()

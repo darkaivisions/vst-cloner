@@ -1,0 +1,553 @@
+#include "CloneEditor.h"
+
+#include "CloneProcessor.h"
+
+#include <cmath>
+
+namespace
+{
+    using namespace clonegui;
+
+    juce::Colour colour (uint32_t argb) { return juce::Colour (argb); }
+
+    void fillArea (juce::Graphics& g, const Fill& fill, juce::Rectangle<float> area)
+    {
+        if (fill.hasGradient)
+            g.setGradientFill (juce::ColourGradient (colour (fill.color), area.getX(), area.getY(), colour (fill.gradient), area.getX(), area.getBottom(), false));
+        else
+            g.setColour (colour (fill.color));
+    }
+
+    juce::Font makeFont (float height, bool bold)
+    {
+        return juce::Font (juce::FontOptions().withHeight (height).withStyle (bold ? "Bold" : "Regular"));
+    }
+
+    /** Draws text squeezed or stretched to the measured width of the original text block. */
+    void drawFitted (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> box, float capHeight, bool bold, int align)
+    {
+        auto font = makeFont (capHeight / 0.72f, bold);
+        const float natural = juce::GlyphArrangement::getStringWidth (font, text);
+        if (natural > 0.0f && box.getWidth() > 0.0f)
+            font = font.withHorizontalScale (juce::jlimit (0.55f, 1.6f, box.getWidth() / natural));
+        g.setFont (font);
+        const auto justification = align == 0 ? juce::Justification::centredLeft : align == 2 ? juce::Justification::centredRight : juce::Justification::centred;
+        g.drawText (text, box.expanded (box.getWidth() * 0.2f, capHeight), justification, false);
+    }
+
+    juce::Point<float> polar (float cx, float cy, float r, float angle)
+    {
+        return { cx + std::sin (angle) * r, cy - std::cos (angle) * r };
+    }
+
+    // ---- knob ------------------------------------------------------------------------------
+
+    class Knob final : public juce::Slider
+    {
+    public:
+        explicit Knob (const Control& c) : control (c)
+        {
+            setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+            setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+            const auto& r = control.rotary;
+            const float offset = r.start < 0 ? juce::MathConstants<float>::twoPi : 0.0f;
+            setRotaryParameters (r.start + offset, std::max (r.end + offset, r.start + offset + 0.1f), true);
+            setVelocityBasedMode (false);
+            setMouseDragSensitivity (220);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto& r = control.rotary;
+            // local coordinates: control box origin
+            const float cx = r.cx - control.x, cy = r.cy - control.y;
+            const float value = (float) valueToProportionOfLength (getValue());
+            const float angle = r.start + value * (r.end - r.start);
+
+            if (r.ticks.count > 0)
+            {
+                g.setColour (colour (r.ticks.color));
+                for (int i = 0; i < r.ticks.count; ++i)
+                    g.drawLine ({ polar (cx, cy, r.radius * r.ticks.inner, r.ticks.angles[i]), polar (cx, cy, r.radius * r.ticks.outer, r.ticks.angles[i]) }, r.ticks.width);
+            }
+
+            if (r.hasArc)
+            {
+                auto arc = [&] (float from, float to, juce::Colour c)
+                {
+                    juce::Path p;
+                    p.addCentredArc (cx, cy, r.arcRadius, r.arcRadius, 0.0f, from, to, true);
+                    g.setColour (c);
+                    g.strokePath (p, juce::PathStrokeType (r.arcWidth, juce::PathStrokeType::curved, juce::PathStrokeType::butt));
+                };
+                if (r.hasTrack)
+                    arc (r.start, r.end, colour (r.track));
+                if (value > 0.001f)
+                    arc (r.start, angle, colour (r.arcColor));
+            }
+
+            const auto body = juce::Rectangle<float> (cx - r.radius, cy - r.radius, r.radius * 2, r.radius * 2);
+            fillArea (g, r.body, body);
+            g.fillEllipse (body);
+            if (r.hasOutline)
+            {
+                g.setColour (colour (r.outline));
+                g.drawEllipse (body, 1.5f);
+            }
+
+            g.setColour (colour (r.pointer));
+            if (r.dot)
+            {
+                const auto p = polar (cx, cy, r.radius * (r.pointerInner + r.pointerOuter) * 0.5f, angle);
+                const float d = std::max (3.0f, r.pointerWidth + 2.0f);
+                g.fillEllipse (p.x - d / 2, p.y - d / 2, d, d);
+            }
+            else
+            {
+                juce::Path p;
+                p.startNewSubPath (polar (cx, cy, r.radius * r.pointerInner, angle));
+                p.lineTo (polar (cx, cy, r.radius * r.pointerOuter, angle));
+                g.strokePath (p, juce::PathStrokeType (r.pointerWidth, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            }
+        }
+
+        bool hitTest (int x, int y) override
+        {
+            const auto& r = control.rotary;
+            return juce::Point<float> ((float) x, (float) y).getDistanceFrom ({ r.cx - control.x, r.cy - control.y }) <= r.radius * 1.3f;
+        }
+
+    private:
+        const Control& control;
+    };
+
+    // ---- linear slider -----------------------------------------------------------------------
+
+    class Fader final : public juce::Slider
+    {
+    public:
+        explicit Fader (const Control& c) : control (c)
+        {
+            setSliderStyle (c.kind == 2 ? juce::Slider::LinearVertical : juce::Slider::LinearHorizontal);
+            setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto b = getLocalBounds().toFloat();
+            const float value = (float) valueToProportionOfLength (getValue());
+            const float thumb = control.f1;
+            g.setColour (colour (control.c1));
+            g.fillRoundedRectangle (b, std::min (b.getWidth(), b.getHeight()) / 2);
+            g.setColour (colour (control.c2));
+            if (control.kind == 1)
+                g.fillRoundedRectangle (b.getX() + value * (b.getWidth() - thumb), b.getY(), thumb, b.getHeight(), 2.0f);
+            else
+                g.fillRoundedRectangle (b.getX(), b.getY() + (1 - value) * (b.getHeight() - thumb), b.getWidth(), thumb, 2.0f);
+        }
+
+    private:
+        const Control& control;
+    };
+
+    // ---- value text (drag up/down to change) -------------------------------------------------
+
+    class ValueText final : public juce::Slider
+    {
+    public:
+        ValueText (const Control& c, juce::RangedAudioParameter& p) : control (c), parameter (p)
+        {
+            setSliderStyle (juce::Slider::LinearBarVertical);
+            setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+            setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            g.setColour (colour (control.c2));
+            g.setFont (makeFont (control.f1, false));
+            // narrow fields: squeeze the text horizontally instead of cutting it off
+            auto text = parameter.getText (parameter.getValue(), 32);
+            if (const auto unit = parameter.getLabel(); unit.isNotEmpty() && ! text.endsWithIgnoreCase (unit))
+                text << " " << unit;
+            g.drawFittedText (text, getLocalBounds(), juce::Justification::centred, 1, 0.6f);
+        }
+
+    private:
+        const Control& control;
+        juce::RangedAudioParameter& parameter;
+    };
+
+    // ---- toggle ------------------------------------------------------------------------------
+
+    class Toggle final : public juce::Button
+    {
+    public:
+        explicit Toggle (const Control& c) : juce::Button ({}), control (c)
+        {
+            setClickingTogglesState (true);
+        }
+
+        void paintButton (juce::Graphics& g, bool highlighted, bool) override
+        {
+            auto colourOf = colour (getToggleState() ? control.c1 : control.c2);
+            if (highlighted)
+                colourOf = colourOf.brighter (0.08f);
+            g.setColour (colourOf);
+            g.fillRoundedRectangle (getLocalBounds().toFloat(), control.f1);
+        }
+
+    private:
+        const Control& control;
+    };
+
+    // ---- EQ display ----------------------------------------------------------------------------
+
+    class EqDisplay final : public juce::Component
+    {
+    public:
+        EqDisplay (CloneProcessor& p, const Display& d) : processor (p), display (d) {}
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto b = getLocalBounds().toFloat();
+            g.setGradientFill (juce::ColourGradient (colour (display.background), 0, 0, colour (display.backgroundBottom), 0, b.getBottom(), false));
+            g.fillRect (b);
+
+            // grid: decades and 2/5 steps, dB lines in steps that fit the range
+            g.setColour (colour (display.grid));
+            for (double decade = 1.0; decade < 1e6; decade *= 10.0)
+                for (double m : { 1.0, 2.0, 5.0 })
+                    if (const double f = decade * m; f > display.fMin && f < display.fMax)
+                        g.drawVerticalLine ((int) xOf (f), b.getY(), b.getY() + plotHeight());
+
+            const double range = std::abs (display.dbTop - display.dbBottom);
+            const double step = display.dbStep > 0 ? (double) display.dbStep : range <= 16 ? 3.0 : range <= 40 ? 6.0 : 12.0;
+            const double lowest = std::ceil (std::min (display.dbTop, display.dbBottom) / step) * step;
+            for (double db = lowest; db <= std::max (display.dbTop, display.dbBottom); db += step)
+                g.drawHorizontalLine ((int) yOf (db), b.getX(), b.getRight());
+
+            g.setColour (colour (display.text));
+            g.setFont (makeFont (11.0f, false));
+            for (double db = lowest; db <= std::max (display.dbTop, display.dbBottom); db += step)
+            {
+                const auto label = db > 0 ? "+" + juce::String ((int) db) : juce::String ((int) db);
+                const float right = display.dbLabelRight > 0 ? b.getX() + display.dbLabelRight : b.getRight() - 4;
+                g.drawText (label, juce::Rectangle<float> (right - 30, yOf (db) - 7, 30, 14), juce::Justification::centredRight);
+            }
+            for (auto [f, label] : { std::pair { 20.0, "20" }, { 50.0, "50" }, { 100.0, "100" }, { 200.0, "200" }, { 500.0, "500" },
+                                     { 1000.0, "1k" }, { 2000.0, "2k" }, { 5000.0, "5k" }, { 10000.0, "10k" }, { 20000.0, "20k" } })
+                if (f > display.fMin && f < display.fMax)
+                    g.drawText (label, display.labelBand > 0 ? juce::Rectangle<float> (xOf (f) - 20, b.getY() + plotHeight() + 2, 40, display.labelBand - 4)
+                                                             : juce::Rectangle<float> (xOf (f) - 20, b.getBottom() - 16, 40, 14), juce::Justification::centred);
+
+            juce::Path curve;
+            for (int x = 0; x <= getWidth(); x += 2)
+            {
+                const float y = juce::jlimit (-4.0f, plotHeight() + 4.0f, yOf (processor.responseDb (frequencyOf ((float) x))));
+                if (x == 0) curve.startNewSubPath ((float) x, y);
+                else curve.lineTo ((float) x, y);
+            }
+            g.setColour (colour (display.curve));
+            g.strokePath (curve, juce::PathStrokeType (2.0f));
+
+            for (int band = 0; band < clonemodel::numBands; ++band)
+            {
+                if (! isActive (band))
+                    continue;
+                const auto p = nodePosition (band);
+                g.setColour (colour (display.curve).withAlpha (band == dragging ? 1.0f : 0.85f));
+                g.fillEllipse (p.x - 6, p.y - 6, 12, 12);
+                g.setColour (colour (display.background));
+                g.setFont (makeFont (9.0f, true));
+                g.drawText (juce::String (band + 1), juce::Rectangle<float> (p.x - 6, p.y - 6, 12, 12), juce::Justification::centred);
+            }
+        }
+
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            dragging = nodeAt (e.position);
+            if (dragging >= 0 && e.mods.isPopupMenu())
+            {
+                setParam (clonemodel::bands[dragging].enable, 0.0f, true);
+                dragging = -1;
+                repaint();
+                return;
+            }
+            if (dragging >= 0)
+                for (int index : { clonemodel::bands[dragging].frequency, clonemodel::bands[dragging].gain })
+                    if (auto* p = processor.parameter (index)) p->beginChangeGesture();
+        }
+
+        void mouseDrag (const juce::MouseEvent& e) override
+        {
+            if (dragging < 0)
+                return;
+            const auto& band = clonemodel::bands[dragging];
+            setParam (band.frequency, (float) frequencyOf (e.position.x), false);
+            if (band.gain >= 0)
+                setParam (band.gain, dbOf (e.position.y), false);
+            repaint();
+        }
+
+        void mouseUp (const juce::MouseEvent&) override
+        {
+            if (dragging >= 0)
+                for (int index : { clonemodel::bands[dragging].frequency, clonemodel::bands[dragging].gain })
+                    if (auto* p = processor.parameter (index)) p->endChangeGesture();
+            dragging = -1;
+        }
+
+        void mouseDoubleClick (const juce::MouseEvent& e) override
+        {
+            if (nodeAt (e.position) >= 0)
+                return;
+            for (int band = 0; band < clonemodel::numBands; ++band)
+            {
+                if (isActive (band) || clonemodel::bands[band].enable < 0)
+                    continue;
+                const auto& info = clonemodel::bands[band];
+                setParam (info.frequency, (float) frequencyOf (e.position.x), true);
+                if (info.gain >= 0) setParam (info.gain, dbOf (e.position.y), true);
+                setParam (info.enable, 1.0f, true);
+                repaint();
+                return;
+            }
+        }
+
+        void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override
+        {
+            const int band = nodeAt (e.position);
+            if (band < 0 || clonemodel::bands[band].q < 0)
+                return;
+            auto* p = processor.parameter (clonemodel::bands[band].q);
+            p->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, p->getValue() + wheel.deltaY * 0.05f));
+            repaint();
+        }
+
+    private:
+        float xOf (double f) const { return (float) (std::log (f / display.fMin) / std::log ((double) display.fMax / display.fMin) * getWidth()); }
+        double frequencyOf (float x) const { return display.fMin * std::pow ((double) display.fMax / display.fMin, juce::jlimit (0.0, 1.0, (double) x / std::max (1, getWidth()))); }
+        /** height of the plot (without the frequency label strip below it) */
+        float plotHeight() const { return std::max (1.0f, (float) getHeight() - display.labelBand); }
+        float yOf (double db) const { return (float) ((display.dbTop - db) / (display.dbTop - display.dbBottom) * plotHeight()); }
+        float dbOf (float y) const { return (float) (display.dbTop - y / plotHeight() * (display.dbTop - display.dbBottom)); }
+
+        bool isActive (int band) const
+        {
+            const auto& info = clonemodel::bands[band];
+            return info.enable < 0 || processor.physicalValue (info.enable) > 0.5f;
+        }
+
+        juce::Point<float> nodePosition (int band) const
+        {
+            const auto& info = clonemodel::bands[band];
+            const double f = info.frequency >= 0 ? processor.physicalValue (info.frequency) : 1000.0;
+            const double db = info.gain >= 0 ? processor.physicalValue (info.gain) : 0.0;
+            return { xOf (f), juce::jlimit (6.0f, plotHeight() - 6.0f, yOf (db)) };
+        }
+
+        int nodeAt (juce::Point<float> position) const
+        {
+            for (int band = clonemodel::numBands - 1; band >= 0; --band)
+                if (isActive (band) && nodePosition (band).getDistanceFrom (position) < 10.0f)
+                    return band;
+            return -1;
+        }
+
+        void setParam (int index, float physical, bool gesture)
+        {
+            auto* p = processor.parameter (index);
+            if (p == nullptr)
+                return;
+            if (gesture) p->beginChangeGesture();
+            p->setValueNotifyingHost (p->convertTo0to1 (physical));
+            if (gesture) p->endChangeGesture();
+        }
+
+        CloneProcessor& processor;
+        const Display& display;
+        int dragging = -1;
+    };
+}
+
+// ---- content: everything at the original size -------------------------------------------------
+
+class CloneEditor::Content final : public juce::Component
+{
+public:
+    explicit Content (CloneProcessor& p) : processor (p)
+    {
+        setSize (clonegui::width, clonegui::height);
+        setOpaque (true);
+
+        for (int i = 0; i < clonegui::numDisplays; ++i)
+        {
+            const auto& d = clonegui::displays[i];
+            std::unique_ptr<juce::Component> component;
+            if (d.kind == 0 && clonemodel::numBands > 0)
+                component = std::make_unique<EqDisplay> (processor, d);
+            if (component != nullptr)
+            {
+                component->setBounds (juce::Rectangle<float> (d.x, d.y, d.w, d.h).toNearestInt());
+                addAndMakeVisible (*component);
+                children.push_back (std::move (component));
+            }
+        }
+
+        for (int i = 0; i < clonegui::numControls; ++i)
+        {
+            const auto& c = clonegui::controls[i];
+            auto* parameter = processor.parameter (c.param);
+            if (parameter == nullptr)
+                continue;
+
+            std::unique_ptr<juce::Component> component;
+            if (c.kind == 0)
+            {
+                auto knob = std::make_unique<Knob> (c);
+                attachments.push_back (std::make_unique<juce::SliderParameterAttachment> (*parameter, *knob));
+                component = std::move (knob);
+            }
+            else if (c.kind == 1 || c.kind == 2)
+            {
+                auto fader = std::make_unique<Fader> (c);
+                attachments.push_back (std::make_unique<juce::SliderParameterAttachment> (*parameter, *fader));
+                component = std::move (fader);
+            }
+            else if (c.kind == 3)
+            {
+                auto toggle = std::make_unique<Toggle> (c);
+                attachments.push_back (std::make_unique<juce::ButtonParameterAttachment> (*parameter, *toggle));
+                component = std::move (toggle);
+            }
+            else if (c.kind == 5)
+            {
+                auto text = std::make_unique<ValueText> (c, *parameter);
+                attachments.push_back (std::make_unique<juce::SliderParameterAttachment> (*parameter, *text));
+                component = std::move (text);
+            }
+            else if (c.kind == 4)
+            {
+                auto box = std::make_unique<juce::ComboBox>();
+                if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (parameter))
+                    box->addItemList (choice->choices, 1);
+                box->setColour (juce::ComboBox::backgroundColourId, colour (c.c1));
+                box->setColour (juce::ComboBox::textColourId, colour (c.c2));
+                box->setColour (juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
+                box->setColour (juce::ComboBox::arrowColourId, colour (c.c2));
+                attachments.push_back (std::make_unique<juce::ComboBoxParameterAttachment> (*parameter, *box));
+                component = std::move (box);
+            }
+
+            if (component != nullptr)
+            {
+                // value texts get some room: the clone's text may be a little longer than the original's
+                const auto bounds = juce::Rectangle<float> (c.x, c.y, c.w, c.h);
+                component->setBounds ((c.kind == 5 ? bounds.expanded (6.0f, 2.0f) : bounds).toNearestInt());
+                addAndMakeVisible (*component);
+                children.push_back (std::move (component));
+            }
+        }
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto all = getLocalBounds().toFloat();
+        fillArea (g, clonegui::background, all);
+        g.fillRect (all);
+
+        for (int i = 0; i < clonegui::numPanels; ++i)
+        {
+            const auto& p = clonegui::panels[i];
+            const juce::Rectangle<float> r (p.x, p.y, p.w, p.h);
+            fillArea (g, p.fill, r);
+            g.fillRoundedRectangle (r, p.radius);
+            if (p.hasBorder)
+            {
+                g.setColour (colour (p.border));
+                g.drawRoundedRectangle (r, p.radius, 1.0f);
+            }
+        }
+
+        for (int i = 0; i < clonegui::numLines; ++i)
+        {
+            const auto& l = clonegui::lines[i];
+            g.setColour (colour (l.color));
+            g.drawLine (l.x1, l.y1, l.x2, l.y2, l.thickness);
+        }
+
+        for (int i = 0; i < clonegui::numTexts; ++i)
+        {
+            const auto& t = clonegui::texts[i];
+            g.setColour (colour (t.color));
+            drawFitted (g, juce::String::fromUTF8 (t.text), { t.x, t.y, t.w, t.h }, t.h, t.bold, t.align);
+        }
+
+        for (int i = 0; i < clonegui::numControls; ++i)
+        {
+            const auto& c = clonegui::controls[i];
+            const auto& r = c.readout;
+            auto* parameter = processor.parameter (c.param);
+            if (! r.present || parameter == nullptr)
+                continue;
+            const juce::Rectangle<float> box (r.x, r.y, r.w, r.h);
+            if (r.hasBackground)
+            {
+                g.setColour (colour (r.background));
+                g.fillRect (box);
+            }
+            if (r.hasBorder)
+            {
+                g.setColour (colour (r.border));
+                g.drawRect (box, 1.0f);
+            }
+            g.setColour (colour (r.color));
+            g.setFont (makeFont (r.size, false));
+            g.drawText (parameter->getCurrentValueAsText(), box, juce::Justification::centred, false);
+        }
+    }
+
+private:
+    CloneProcessor& processor;
+    std::vector<std::unique_ptr<juce::Component>> children;
+    std::vector<std::shared_ptr<void>> attachments; // destroyed before the components they observe
+};
+
+CloneEditor::CloneEditor (CloneProcessor& p) : AudioProcessorEditor (p), processor (p)
+{
+    content = std::make_unique<Content> (p);
+    addAndMakeVisible (*content);
+    setResizable (true, true);
+    setResizeLimits (clonegui::width / 2, clonegui::height / 2, clonegui::width * 3, clonegui::height * 3);
+    if (auto* constrainer = getConstrainer())
+        constrainer->setFixedAspectRatio ((double) clonegui::width / clonegui::height);
+    setSize (clonegui::width, clonegui::height);
+
+    lastValues.resize ((size_t) clonemodel::numParams, -1.0f);
+    startTimerHz (30);
+}
+
+CloneEditor::~CloneEditor() = default;
+
+void CloneEditor::resized()
+{
+    const float scale = (float) getWidth() / (float) clonegui::width;
+    content->setTransform (juce::AffineTransform::scale (scale));
+}
+
+void CloneEditor::timerCallback()
+{
+    bool changed = false;
+    for (int i = 0; i < clonemodel::numParams; ++i)
+    {
+        const float v = processor.parameter (i)->getValue();
+        if (v != lastValues[(size_t) i])
+        {
+            lastValues[(size_t) i] = v;
+            changed = true;
+        }
+    }
+    if (changed)
+        content->repaint();
+}

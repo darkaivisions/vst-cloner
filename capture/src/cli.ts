@@ -20,7 +20,7 @@ Usage:
                                         Write the test signal (e.g. for capturing in a DAW)
   vch llm …                             Language model providers (see 'vch llm --help')
 
-  vch clone   <profile> [-o <dir>] [--name <text>] [--install] [--refit] [--no-verify] [-v]
+  vch clone   <profile> [-o <dir>] [--name <text>] [--install] [--refit] [--no-verify] [--gui] [-v]
                                         Analyse, build the clone (VST3 + LV2), compare it with the original
   vch analyze <profile> [--save] [--json]
                                         Fit the EQ model and show how well it matches

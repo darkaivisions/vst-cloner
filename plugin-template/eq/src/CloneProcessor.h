@@ -36,6 +36,12 @@ public:
     void getStateInformation (juce::MemoryBlock&) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    /** Magnitude response (dB) of all active bands at `frequency`, for the editor's curve display. */
+    double responseDb (double frequency);
+
+    juce::RangedAudioParameter* parameter (int index) const { return index >= 0 && index < (int) parameters.size() ? parameters[(size_t) index] : nullptr; }
+    float physicalValue (int index) const { return valueOf (index); }
+
 private:
     struct BandState
     {

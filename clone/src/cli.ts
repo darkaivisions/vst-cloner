@@ -8,7 +8,9 @@ import { analyze, cloneProfile, formatModelReport, formatVerifyReport, MODEL_FIL
 
 export const USAGE = `Cloning:
   vch clone   <profile> [-o <dir>] [--name <text>] [--install] [--refit] [--no-verify]
-                                        Analyse, build the clone (VST3 + LV2) and compare it with the original
+              [--gui] [--refit-gui] [--plugin <original>]
+                                        Analyse, build the clone (VST3 + LV2) and compare it with the original;
+                                        --gui also rebuilds the editor of the original (Linux: needs Xvfb)
   vch analyze <profile> [--save] [--json]
                                         Fit the model and show how well it matches
   vch verify  <profile> <clone.vst3>    Compare a built clone with the original measurements
@@ -20,6 +22,9 @@ const OPTIONS = {
   install: { type: "boolean" },
   refit: { type: "boolean" },
   "no-verify": { type: "boolean" },
+  gui: { type: "boolean" },
+  "refit-gui": { type: "boolean" },
+  plugin: { type: "string" },
   save: { type: "boolean" },
   json: { type: "boolean" },
   verbose: { type: "boolean", short: "v" },
@@ -61,6 +66,9 @@ export async function main(command: string, argv: string[]): Promise<number> {
           ...(values.install ? { install: true } : {}),
           ...(values.refit ? { refit: true } : {}),
           ...(values["no-verify"] ? { skipVerify: true } : {}),
+          ...(values.gui ? { gui: true } : {}),
+          ...(values["refit-gui"] ? { gui: true, refitGui: true } : {}),
+          ...(values.plugin ? { pluginPath: resolve(values.plugin) } : {}),
           log,
         });
         console.log(`VST3: ${result.build.vst3}\nLV2:  ${result.build.lv2}`);

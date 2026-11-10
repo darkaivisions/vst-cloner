@@ -241,3 +241,15 @@ test("built clone matches the model", { skip: process.env.VCH_TEST_BUILD ? false
   }
 });
 
+
+test("gui labels: parameter names are prettified and fitted to the measured text width", async () => {
+  const { prettifyName, fitLabel } = await import("../src/gui/analyze.ts");
+  assert.equal(prettifyName("Output dB"), "Output dB");
+  assert.equal(prettifyName("SpreadEnabled"), "Spread Enabled");
+  assert.equal(prettifyName("Band 3 Frequency"), "Frequency");
+  const counts = new Map([["tone", 3], ["bass", 1], ["input", 1], ["level", 2]]);
+  assert.equal(fitLabel("Tone Bass", 26, 10, false, counts), "Bass");
+  assert.equal(fitLabel("Input Level", 32, 10, false, counts), "Input");
+  assert.equal(fitLabel("Limit", 127, 56, false), "Limit");
+  assert.equal(fitLabel("Limit", 300, 12, false), undefined);
+});

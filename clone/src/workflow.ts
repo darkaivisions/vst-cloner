@@ -6,6 +6,11 @@ import { generateModelHeader } from "./eq/codegen.ts";
 import { fitEq } from "./eq/fit.ts";
 import type { EqModel, FitStats } from "./eq/model.ts";
 import { verifyClone, type VerifyReport } from "./verify.ts";
+import { generateGuiHeader } from "./gui/codegen.ts";
+import type { GuiModel } from "./gui/model.ts";
+import { captureGuiLayout, compareGui, GUI_MODEL_FILE, guiCacheDir, locatePlugin, type GuiComparison } from "./gui/workflow.ts";
+import { virtualDisplayAvailable } from "./gui/capture.ts";
+import { existsSync } from "node:fs";
 
 export const MODEL_FILE = "model/eq.json";
 export const REPORT_FILE = "report.json";
@@ -81,14 +86,27 @@ export interface CloneOptions {
   signal?: AbortSignal;
   /** called when a new phase starts */
   onStage?: (stage: CloneStage) => void;
+  /** capture and rebuild the editor of the original (needs the original plugin once) */
+  gui?: boolean;
+  /** capture the editor again even if the profile already has a layout */
+  refitGui?: boolean;
+  /** path of the original plugin (otherwise searched in the standard plugin folders) */
+  pluginPath?: string;
+  onProgress?: (done: number, total: number, label: string) => void;
 }
 
-export type CloneStage = "analyse" | "build" | "verify" | "save";
+export type CloneStage = "analyse" | "gui" | "build" | "verify" | "gui-verify" | "save";
 
 export interface CloneResult {
   model: EqModel;
   build: BuildResult;
   verify?: VerifyReport;
+  gui?: { controls: number; comparison?: GuiComparison };
+}
+
+export function storedGuiModel(profile: Profile): GuiModel | undefined {
+  const data = profile.files.get(GUI_MODEL_FILE);
+  return data ? (JSON.parse(strFromU8(data)) as GuiModel) : undefined;
 }
 
 /** Complete workflow: analyse → build → verify → store model and report in the profile. */
@@ -106,11 +124,36 @@ export async function cloneProfile(options: CloneOptions): Promise<CloneResult> 
     for (const line of formatModelReport(model)) log("info", line);
   }
 
-  const { header } = generateModelHeader(model, profile.parameters.parameters, pluginName);
+  // editor layout: stored in the profile, captured on request
+  let guiModel = options.refitGui ? undefined : storedGuiModel(profile);
+  let originalRaw: string | undefined = join(guiCacheDir(profile), "pass2", "base.rgba");
+  if (guiModel) log("info", "Im Profil gespeicherte Oberfläche wird verwendet");
+  else if (options.gui) {
+    stage("gui");
+    if (!virtualDisplayAvailable()) {
+      log("warn", "Oberfläche wird nicht nachgebaut: Xvfb fehlt (sudo pacman -S xorg-server-xvfb)");
+    } else {
+      const pluginPath = options.pluginPath ?? (await locatePlugin(profile));
+      if (!pluginPath) log("warn", "Oberfläche wird nicht nachgebaut: Original-Plugin nicht gefunden");
+      else {
+        const captured = await captureGuiLayout(profile, pluginPath, {
+          log,
+          ...(options.signal ? { signal: options.signal } : {}),
+          ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+        });
+        guiModel = captured.model;
+        originalRaw = captured.originalRaw;
+        profile.files.set(GUI_MODEL_FILE, strToU8(JSON.stringify(guiModel)));
+      }
+    }
+  }
+
+  const { header, params } = generateModelHeader(model, profile.parameters.parameters, pluginName);
   stage("build");
   const build = await buildPlugin({
     pluginName,
     modelHeader: header,
+    guiHeader: generateGuiHeader(guiModel, params),
     outputDir: options.outputDir ?? join(process.cwd(), `${slugify(pluginName)}`),
     ...(options.install ? { install: true } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
@@ -124,6 +167,23 @@ export async function cloneProfile(options: CloneOptions): Promise<CloneResult> 
     for (const line of formatVerifyReport(verify)) log("info", line);
   }
 
+  let gui: CloneResult["gui"];
+  if (guiModel) {
+    gui = { controls: guiModel.controls.length };
+    if (virtualDisplayAvailable()) {
+      stage("gui-verify");
+      try {
+        const comparison = await compareGui(profile, build.vst3, existsSync(originalRaw) ? originalRaw : undefined, guiModel, {
+          log,
+          ...(options.signal ? { signal: options.signal } : {}),
+        });
+        if (comparison) gui.comparison = comparison;
+      } catch (error) {
+        log("warn", `Oberflächen-Vergleich nicht möglich: ${(error as Error).message}`);
+      }
+    }
+  }
+
   stage("save");
   profile.files.set(MODEL_FILE, strToU8(JSON.stringify(model, null, 1)));
   profile.files.set(
@@ -133,5 +193,5 @@ export async function cloneProfile(options: CloneOptions): Promise<CloneResult> 
   await writeProfile(options.profilePath, profile);
   log("info", `Modell und Bericht im Profil gespeichert: ${options.profilePath}`);
 
-  return { model, build, ...(verify ? { verify } : {}) };
+  return { model, build, ...(verify ? { verify } : {}), ...(gui ? { gui } : {}) };
 }

@@ -160,8 +160,10 @@ function captureMessage(event: CaptureProgress): string | undefined {
 
 const STAGE_TITLES: Record<CloneStage, string> = {
   analyse: "Analyse",
+  gui: "Oberfläche erfassen",
   build: "Plugin-Build",
   verify: "Vergleich mit dem Original",
+  "gui-verify": "Oberflächen-Vergleich",
   save: "Speichern",
 };
 

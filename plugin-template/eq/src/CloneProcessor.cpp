@@ -1,4 +1,5 @@
 #include "CloneProcessor.h"
+#include "CloneEditor.h"
 
 #include <cmath>
 
@@ -233,7 +234,49 @@ void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
 
 juce::AudioProcessorEditor* CloneProcessor::createEditor()
 {
+    if (clonegui::present)
+        return new CloneEditor (*this);
+
     return new juce::GenericAudioProcessorEditor (*this);
+}
+
+double CloneProcessor::responseDb (double frequency)
+{
+    // computed from the parameters only – never touches the audio thread's filter state
+    const double sampleRate = currentSampleRate > 0 ? currentSampleRate : 48000.0;
+    const double w = 2.0 * juce::MathConstants<double>::pi * frequency / sampleRate;
+    const double c1 = std::cos (w), s1 = std::sin (w), c2 = std::cos (2 * w), s2 = std::sin (2 * w);
+    double db = 0.0;
+
+    for (int b = 0; b < clonemodel::numBands; ++b)
+    {
+        const auto& info = clonemodel::bands[b];
+        if (info.enable >= 0 && valueOf (info.enable) < 0.5f)
+            continue;
+
+        vch::BandSettings settings;
+        if (info.frequency >= 0) settings.frequency = valueOf (info.frequency);
+        if (info.gain >= 0)      settings.gainDb = valueOf (info.gain);
+        settings.q = info.q >= 0 ? valueOf (info.q) : clonemodel::defaultQ;
+        settings.order = info.slope >= 0 ? clonemodel::slopeOrders[juce::jlimit (0, clonemodel::numSlopes - 1, (int) valueOf (info.slope))] : 2;
+        const int shape = info.shape >= 0 ? juce::jlimit (0, clonemodel::numShapes - 1, (int) valueOf (info.shape)) : 0;
+
+        std::array<vch::Coeffs, vch::maxSections> coeffs {};
+        const int count = vch::designBand (settings, clonemodel::shapes[shape], sampleRate, coeffs);
+
+        for (int i = 0; i < count; ++i)
+        {
+            const auto& c = coeffs[(size_t) i];
+            const double nr = c.b0 + c.b1 * c1 + c.b2 * c2, ni = -(c.b1 * s1 + c.b2 * s2);
+            const double dr = 1 + c.a1 * c1 + c.a2 * c2, di = -(c.a1 * s1 + c.a2 * s2);
+            db += 10.0 * std::log10 (std::max (nr * nr + ni * ni, 1e-30) / std::max (dr * dr + di * di, 1e-30));
+        }
+    }
+
+    if (clonemodel::outputGainParam >= 0)
+        db += valueOf (clonemodel::outputGainParam);
+
+    return db;
 }
 
 void CloneProcessor::getStateInformation (juce::MemoryBlock& destination)
