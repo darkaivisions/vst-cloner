@@ -207,12 +207,153 @@ namespace
         const Control& control;
     };
 
-    // ---- EQ display ----------------------------------------------------------------------------
+    // ---- band panel (settings of the selected EQ band) -----------------------------------------
 
-    class EqDisplay final : public juce::Component
+    class BandPanel final : public juce::Component
     {
     public:
-        EqDisplay (CloneProcessor& p, const Display& d) : processor (p), display (d) {}
+        BandPanel (CloneProcessor& p, const Display& d) : processor (p), display (d)
+        {
+            for (auto* c : std::initializer_list<juce::Component*> { &shape, &slope, &frequency, &gain, &q, &remove, &title })
+                addChildComponent (c);
+            title.setJustificationType (juce::Justification::centred);
+            title.setFont (makeFont (13.0f, true));
+            remove.setButtonText (juce::String::fromUTF8 ("\xc3\x97"));
+            remove.setTooltip ("Band entfernen");
+            for (auto* slider : { &frequency, &gain, &q })
+            {
+                slider->setSliderStyle (juce::Slider::LinearBar);
+                slider->setTextBoxIsEditable (true);
+            }
+            styleWith (colour (d.background), colour (d.text), colour (d.curve));
+        }
+
+        std::function<void()> onRemove;
+
+        /** Shows the controls of `band` (or hides everything for -1). */
+        void setBand (int band)
+        {
+            if (band == current)
+                return;
+            current = band;
+            attachments.clear();
+            if (band < 0)
+                return;
+            const auto& info = clonemodel::bands[band];
+            title.setText (juce::String (band + 1), juce::dontSendNotification);
+            title.setVisible (true);
+            remove.setVisible (info.enable >= 0);
+            attachCombo (shape, info.shape);
+            attachCombo (slope, info.slope);
+            attachSlider (frequency, info.frequency);
+            attachSlider (gain, info.gain);
+            attachSlider (q, info.q);
+            remove.onClick = [this] { if (onRemove) onRemove(); };
+            resized();
+        }
+
+        int band() const { return current; }
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto b = getLocalBounds().toFloat().reduced (0.5f);
+            g.setColour (colour (display.background).brighter (0.18f).withAlpha (0.94f));
+            g.fillRoundedRectangle (b, 6.0f);
+            g.setColour (colour (display.curve).withAlpha (0.6f));
+            g.drawRoundedRectangle (b, 6.0f, 1.0f);
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced (6, 6);
+            title.setBounds (area.removeFromLeft (24));
+            remove.setBounds (area.removeFromRight (24));
+            juce::Array<juce::Component*> visible;
+            for (auto* c : std::initializer_list<juce::Component*> { &shape, &frequency, &gain, &q, &slope })
+                if (c->isVisible()) visible.add (c);
+            const int width = visible.isEmpty() ? 0 : area.getWidth() / visible.size();
+            for (auto* c : visible)
+                c->setBounds (area.removeFromLeft (width).reduced (3, 0));
+        }
+
+    private:
+        void styleWith (juce::Colour background, juce::Colour text, juce::Colour accent)
+        {
+            for (auto* box : { &shape, &slope })
+            {
+                box->setColour (juce::ComboBox::backgroundColourId, background.brighter (0.08f));
+                box->setColour (juce::ComboBox::textColourId, text.brighter (0.4f));
+                box->setColour (juce::ComboBox::outlineColourId, accent.withAlpha (0.4f));
+                box->setColour (juce::ComboBox::arrowColourId, accent);
+            }
+            for (auto* slider : { &frequency, &gain, &q })
+            {
+                slider->setColour (juce::Slider::trackColourId, accent.withAlpha (0.35f));
+                slider->setColour (juce::Slider::backgroundColourId, background.brighter (0.08f));
+                slider->setColour (juce::Slider::textBoxTextColourId, text.brighter (0.4f));
+                slider->setColour (juce::Slider::textBoxOutlineColourId, accent.withAlpha (0.4f));
+            }
+            title.setColour (juce::Label::textColourId, accent);
+            remove.setColour (juce::TextButton::buttonColourId, background.brighter (0.08f));
+            remove.setColour (juce::TextButton::textColourOffId, text.brighter (0.4f));
+        }
+
+        void attachCombo (juce::ComboBox& box, int index)
+        {
+            box.clear (juce::dontSendNotification);
+            auto* parameter = index >= 0 ? processor.parameter (index) : nullptr;
+            auto* choice = dynamic_cast<juce::AudioParameterChoice*> (parameter);
+            box.setVisible (choice != nullptr);
+            if (choice == nullptr)
+                return;
+            box.addItemList (choice->choices, 1);
+            box.setTooltip (choice->getName (64));
+            attachments.push_back (std::make_shared<juce::ComboBoxParameterAttachment> (*choice, box));
+        }
+
+        void attachSlider (juce::Slider& slider, int index)
+        {
+            auto* parameter = index >= 0 ? processor.parameter (index) : nullptr;
+            slider.setVisible (parameter != nullptr);
+            if (parameter == nullptr)
+                return;
+            slider.setTooltip (parameter->getName (64));
+            attachments.push_back (std::make_shared<juce::SliderParameterAttachment> (*parameter, slider));
+        }
+
+        CloneProcessor& processor;
+        const Display& display;
+        juce::ComboBox shape, slope;
+        juce::Slider frequency, gain, q;
+        juce::TextButton remove;
+        juce::Label title;
+        int current = -1;
+        std::vector<std::shared_ptr<void>> attachments; // released before the controls they observe
+    };
+
+    // ---- EQ display ----------------------------------------------------------------------------
+
+    class EqDisplay final : public juce::Component, private juce::Timer
+    {
+    public:
+        EqDisplay (CloneProcessor& p, const Display& d) : processor (p), display (d), panel (p, d)
+        {
+            addChildComponent (panel);
+            panel.onRemove = [this]
+            {
+                if (selected >= 0)
+                    setParam (clonemodel::bands[selected].enable, 0.0f, true);
+                select (-1);
+                repaint();
+            };
+            startTimerHz (10);
+        }
+
+        void resized() override
+        {
+            const int width = std::min (getWidth() - 20, 560), height = 34;
+            panel.setBounds ((getWidth() - width) / 2, (int) plotHeight() - height - 10, width, height);
+        }
 
         void paint (juce::Graphics& g) override
         {
@@ -257,16 +398,31 @@ namespace
             g.setColour (colour (display.curve));
             g.strokePath (curve, juce::PathStrokeType (2.0f));
 
+            bool anyActive = false;
             for (int band = 0; band < clonemodel::numBands; ++band)
             {
                 if (! isActive (band))
                     continue;
+                anyActive = true;
                 const auto p = nodePosition (band);
-                g.setColour (colour (display.curve).withAlpha (band == dragging ? 1.0f : 0.85f));
+                if (band == selected)
+                {
+                    g.setColour (colour (display.curve).withAlpha (0.35f));
+                    g.fillEllipse (p.x - 11, p.y - 11, 22, 22);
+                }
+                g.setColour (colour (display.curve).withAlpha (band == dragging || band == selected ? 1.0f : 0.85f));
                 g.fillEllipse (p.x - 6, p.y - 6, 12, 12);
                 g.setColour (colour (display.background));
                 g.setFont (makeFont (9.0f, true));
                 g.drawText (juce::String (band + 1), juce::Rectangle<float> (p.x - 6, p.y - 6, 12, 12), juce::Justification::centred);
+            }
+
+            if (! anyActive)
+            {
+                g.setColour (colour (display.text).withAlpha (0.8f));
+                g.setFont (makeFont (13.0f, false));
+                g.drawText (juce::String::fromUTF8 ("Klicken: Band anlegen  \xc2\xb7  Ziehen: Frequenz/Gain  \xc2\xb7  Mausrad: G\xc3\xbcte  \xc2\xb7  Rechtsklick: entfernen"),
+                            juce::Rectangle<float> (0, plotHeight() * 0.62f, (float) getWidth(), 20), juce::Justification::centred);
             }
         }
 
@@ -276,13 +432,20 @@ namespace
             if (dragging >= 0 && e.mods.isPopupMenu())
             {
                 setParam (clonemodel::bands[dragging].enable, 0.0f, true);
+                if (dragging == selected)
+                    select (-1);
                 dragging = -1;
                 repaint();
                 return;
             }
+            // click on a free spot: new band there (like the original)
+            if (dragging < 0 && ! e.mods.isPopupMenu() && e.position.y < plotHeight())
+                dragging = createBand (e.position);
+            select (dragging);
             if (dragging >= 0)
                 for (int index : { clonemodel::bands[dragging].frequency, clonemodel::bands[dragging].gain })
                     if (auto* p = processor.parameter (index)) p->beginChangeGesture();
+            repaint();
         }
 
         void mouseDrag (const juce::MouseEvent& e) override
@@ -304,20 +467,36 @@ namespace
             dragging = -1;
         }
 
-        void mouseDoubleClick (const juce::MouseEvent& e) override
+        /** Switches on the first free band at `position`; returns its index or -1 if all bands are in use. */
+        int createBand (juce::Point<float> position)
         {
-            if (nodeAt (e.position) >= 0)
-                return;
             for (int band = 0; band < clonemodel::numBands; ++band)
             {
                 if (isActive (band) || clonemodel::bands[band].enable < 0)
                     continue;
                 const auto& info = clonemodel::bands[band];
-                setParam (info.frequency, (float) frequencyOf (e.position.x), true);
-                if (info.gain >= 0) setParam (info.gain, dbOf (e.position.y), true);
+                setParam (info.frequency, (float) frequencyOf (position.x), true);
+                if (info.gain >= 0) setParam (info.gain, dbOf (position.y), true);
                 setParam (info.enable, 1.0f, true);
+                return band;
+            }
+            return -1;
+        }
+
+        void select (int band)
+        {
+            selected = band;
+            panel.setBand (band);
+            panel.setVisible (band >= 0);
+        }
+
+        void timerCallback() override
+        {
+            // the host may switch the selected band off (automation, undo)
+            if (selected >= 0 && ! isActive (selected))
+            {
+                select (-1);
                 repaint();
-                return;
             }
         }
 
@@ -373,7 +552,9 @@ namespace
 
         CloneProcessor& processor;
         const Display& display;
+        BandPanel panel;
         int dragging = -1;
+        int selected = -1;
     };
 }
 
