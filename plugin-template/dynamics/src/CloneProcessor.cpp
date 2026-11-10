@@ -1,4 +1,5 @@
 #include "CloneProcessor.h"
+#include "CloneEditor.h"
 #include "CloneParameters.h"
 
 #include <cmath>
@@ -91,6 +92,13 @@ void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
 
     for (int ch = channels; ch < buffer.getNumChannels(); ++ch)
         buffer.clear (ch, 0, samples);
+}
+
+juce::AudioProcessorEditor* CloneProcessor::createEditor()
+{
+    if (clonegui::present)
+        return new CloneEditor (*this);
+    return new juce::GenericAudioProcessorEditor (*this);
 }
 
 void CloneProcessor::getStateInformation (juce::MemoryBlock& destination)

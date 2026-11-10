@@ -7,6 +7,7 @@
 #include "Protocol.h"
 #include "ScreenCapture.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -20,9 +21,10 @@ Usage:
   vch-gui snapshot <job.json>
   vch-gui --version
 
-Job: { "plugin", "identifier"?, "state"?, "output", "settleMs", "stepMs", "dismissKeys"? (e.g. ["Escape"], default none),
+Job: { "plugin", "identifier"?, "state"?, "output", "settleMs", "stepMs", "audioMs"? (default 1500), "dismissKeys"? (e.g. ["Escape"], default none),
        "clicks"? [ { "dx", "dy" } ] (left clicks relative to the editor centre, e.g. to close a trial notice),
-       "steps": [ { "id", "params": [ { "index", "value" } ], "png"? } ] }
+       "steps": [ { "id", "params": [ { "index", "value" } ], "png"?, "audio"? { "frequency", "levelDb" } } ] }
+A step with "audio" feeds a sine through the plugin while waiting, so that level meters move.
 Each step starts from the plugin's initial parameter values. Results are JSON lines on stdout.
 )";
 
@@ -45,6 +47,46 @@ Each step starts from the plugin's initial parameter values. Results are JSON li
     {
         juce::MessageManager::getInstance()->runDispatchLoopUntil (milliseconds);
     }
+
+    /** Feeds a sine through the plugin in real time while the message loop runs (meters move as in a DAW). */
+    struct AudioFeed
+    {
+        juce::AudioPluginInstance& plugin;
+        double sampleRate = 48000.0;
+        double phase = 0.0;
+        juce::AudioBuffer<float> buffer { 2, 512 };
+        juce::MidiBuffer midi;
+
+        void run (int milliseconds, double frequency, double levelDb)
+        {
+            const double amplitude = juce::Decibels::decibelsToGain (levelDb, -200.0);
+            const auto end = juce::Time::getMillisecondCounterHiRes() + milliseconds;
+            auto last = juce::Time::getMillisecondCounterHiRes();
+            double owed = 0.0;
+            while (juce::Time::getMillisecondCounterHiRes() < end)
+            {
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (5);
+                const auto now = juce::Time::getMillisecondCounterHiRes();
+                owed += (now - last) / 1000.0 * sampleRate;
+                last = now;
+                while (owed >= buffer.getNumSamples())
+                {
+                    buffer.setSize (juce::jmax (2, plugin.getTotalNumInputChannels(), plugin.getTotalNumOutputChannels()), 512, false, false, true);
+                    for (int i = 0; i < buffer.getNumSamples(); ++i)
+                    {
+                        const float v = (float) (amplitude * std::sin (phase));
+                        phase += juce::MathConstants<double>::twoPi * frequency / sampleRate;
+                        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                            buffer.setSample (ch, i, v);
+                    }
+                    phase = std::fmod (phase, juce::MathConstants<double>::twoPi);
+                    midi.clear();
+                    plugin.processBlock (buffer, midi);
+                    owed -= buffer.getNumSamples();
+                }
+            }
+        }
+    };
 
     juce::File resolve (const juce::File& base, const juce::String& path)
     {
@@ -173,6 +215,7 @@ Each step starts from the plugin's initial parameter values. Results are JSON li
             throw std::runtime_error ("job has no 'steps' array");
 
         std::vector<int> touched;
+        AudioFeed feed { *plugin };
 
         for (auto& step : *steps)
         {
@@ -192,7 +235,10 @@ Each step starts from the plugin's initial parameter values. Results are JSON li
                 }
             }
 
-            pump (stepMs);
+            if (auto audio = step["audio"]; audio.isObject())
+                feed.run ((int) job.getProperty ("audioMs", 1500), (double) audio.getProperty ("frequency", 1000.0), (double) audio.getProperty ("levelDb", -10.0));
+            else
+                pump (stepMs);
 
             const auto bounds = holder->getScreenBounds();
             const double scale = juce::Desktop::getInstance().getDisplays().getDisplayForRect (bounds) != nullptr

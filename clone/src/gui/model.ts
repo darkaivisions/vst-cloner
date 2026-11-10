@@ -113,8 +113,25 @@ export interface Control {
   readout?: Readout;
 }
 
+/** Needle of a gain reduction meter (angles in radians, clockwise from 12 o'clock). */
+export interface Needle {
+  pivotX: number;
+  pivotY: number;
+  length: number;
+  width: number;
+  color: string;
+  /** angle at 0 dB gain reduction */
+  angleZero: number;
+  radiansPerDb: number;
+  /** hub at the pivot */
+  cap?: { radius: number; color: string };
+  /** scale marks: angles and radial extent (px from the pivot) */
+  ticks?: { angles: number[]; inner: number; outer: number; width: number; color: string };
+}
+
 export interface Display {
-  kind: "eq" | "generic";
+  /** meter: gain reduction needle (see `needle`) */
+  kind: "eq" | "generic" | "meter";
   x: number;
   y: number;
   w: number;
@@ -137,6 +154,7 @@ export interface Display {
   labelBand?: number;
   /** x of the right edge of the dB labels (default: right edge of the plot) */
   dbLabelRight?: number;
+  needle?: Needle;
 }
 
 export interface GuiModel {

@@ -22,6 +22,7 @@ export function renderSvg(model: GuiModel, values: Map<number, number> = new Map
   for (const l of model.lines) out.push(`<line x1="${l.x1}" y1="${l.y1}" x2="${l.x2}" y2="${l.y2}" stroke="${l.color}" stroke-width="${l.thickness}"/>`);
 
   for (const d of model.displays) {
+    if (d.kind === "meter") continue; // drawn after the texts (needle only)
     out.push(`<rect x="${d.x}" y="${d.y}" width="${d.w}" height="${d.h}" fill="${fill(d.backgroundTop && d.backgroundBottom ? { color: d.backgroundTop, gradient: d.backgroundBottom } : { color: d.background })}"/>`);
     const fMin = d.fMin ?? 10, fMax = d.fMax ?? 30000, top = d.dbTop ?? 13.3, bottom = d.dbBottom ?? -13.3;
     const plotH = d.h - (d.labelBand ?? 0);
@@ -49,6 +50,13 @@ export function renderSvg(model: GuiModel, values: Map<number, number> = new Map
   }
 
   for (const c of model.controls) out.push(renderControl(c, values.get(c.param) ?? c.value ?? 0.5, fill));
+
+  for (const d of model.displays) {
+    const n = d.needle;
+    if (d.kind !== "meter" || !n) continue;
+    const x = n.pivotX + Math.sin(n.angleZero) * n.length, y = n.pivotY - Math.cos(n.angleZero) * n.length;
+    out.push(`<line x1="${n.pivotX}" y1="${n.pivotY}" x2="${x}" y2="${y}" stroke="${n.color}" stroke-width="${n.width}"/>`);
+  }
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${model.width}" height="${model.height}" viewBox="0 0 ${model.width} ${model.height}"><defs>${defs.join("")}</defs>${out.join("")}</svg>`;
 }

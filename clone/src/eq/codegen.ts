@@ -38,6 +38,7 @@ export function parameterLines(params: CloneParam[]): string[] {
     "    const char* id; const char* name; ParamKind kind; float defaultValue;",
     "    const ParamPoint* points; int numPoints; bool log; const char* unit;",
     "    const char* const* choices; int numChoices;",
+    "    int decimals; // −1: automatic",
     "};",
     "",
   ];
@@ -51,7 +52,7 @@ export function parameterLines(params: CloneParam[]): string[] {
     lines.push(
       `    { ${cppString(p.id)}, ${cppString(p.name)}, ParamKind::${kind}, ${cppNumber(p.defaultValue)}f, ` +
         `${p.points ? `points${i}` : "nullptr"}, ${p.points?.length ?? 0}, ${p.log ? "true" : "false"}, ${cppString(p.unit ?? "")}, ` +
-        `${p.choices ? `choices${i}` : "nullptr"}, ${p.choices?.length ?? 0} },`,
+        `${p.choices ? `choices${i}` : "nullptr"}, ${p.choices?.length ?? 0}, ${p.decimals ?? -1} },`,
     );
   });
   lines.push("};", `inline constexpr int numParams = ${params.length};`, "");

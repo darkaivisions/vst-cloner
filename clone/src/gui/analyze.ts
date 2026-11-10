@@ -17,7 +17,7 @@ import {
   type Image,
   type Rgb,
 } from "./image.ts";
-import type { Control, Display, Fill, GuiModel, Line, Panel, Readout, RotaryStyle, TextItem } from "./model.ts";
+import type { Control, Display, Fill, GuiModel, Line, Needle, Panel, Readout, RotaryStyle, TextItem } from "./model.ts";
 import type { GuiProbe, ProbedParameter } from "./probe.ts";
 import { plausibleText, recognizeBlocks } from "./ocr.ts";
 
@@ -937,7 +937,142 @@ export function fontSize(text: string, inkHeight: number): number {
 
 // ---- main ---------------------------------------------------------------------------------------
 
-export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], pluginName: string): Promise<GuiModel> {
+/** Principal axis of a point set: centroid and unit direction. */
+function principalAxis(points: [number, number][]): { cx: number; cy: number; dx: number; dy: number; elongation: number } {
+  const n = points.length;
+  const cx = points.reduce((s, p) => s + p[0], 0) / n, cy = points.reduce((s, p) => s + p[1], 0) / n;
+  let sxx = 0, syy = 0, sxy = 0;
+  for (const [x, y] of points) { sxx += (x - cx) ** 2; syy += (y - cy) ** 2; sxy += (x - cx) * (y - cy); }
+  const angle = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  const l1 = (sxx + syy) / 2 + Math.sqrt(((sxx - syy) / 2) ** 2 + sxy ** 2);
+  const l2 = (sxx + syy) / 2 - Math.sqrt(((sxx - syy) / 2) ** 2 + sxy ** 2);
+  return { cx, cy, dx: Math.cos(angle), dy: Math.sin(angle), elongation: Math.sqrt(l1 / Math.max(l2, 1e-9)) };
+}
+
+/**
+ * Gain reduction needle from editor shots with audio of rising levels: the pixels that leave in every shot are
+ * the needle at rest, the pixels that appear are the deflected needle. Lines through all positions meet at the
+ * pivot; the angles are calibrated with the gain reduction the compressor model predicts for each level.
+ */
+async function analyzeMeter(probe: GuiProbe, noise: Uint8Array, reduction: (levelDb: number) => number): Promise<Display | undefined> {
+  const { width, height } = probe;
+  if (!probe.meter || probe.meter.length < 3) return undefined;
+  const shots = await Promise.all(probe.meter.map((m) => loadRaw(m.file, width, height)));
+  const rest = shots[0]!;
+  const changes = shots.slice(1).map((s) => diffMask(s, rest, 40, noise));
+  const restMask = new Uint8Array(width * height);
+  for (let p = 0; p < restMask.length; p++) restMask[p] = changes.every((c) => c[p]) ? 1 : 0;
+  const all = (m: Uint8Array) => maskPoints(m, width, { x: 0, y: 0, w: width, h: height });
+
+  const positions: { levelDb: number; points: [number, number][] }[] = [{ levelDb: probe.meter[0]!.levelDb, points: all(restMask) }];
+  changes.forEach((c, k) => {
+    const m = new Uint8Array(c.length);
+    for (let p = 0; p < m.length; p++) m[p] = c[p] && !restMask[p] ? 1 : 0;
+    positions.push({ levelDb: probe.meter![k + 1]!.levelDb, points: all(m) });
+  });
+  const lines = positions.filter((p) => p.points.length >= 20).map((p) => ({ ...p, axis: principalAxis(p.points) })).filter((p) => p.axis.elongation > 4);
+  if (lines.length < 2) return undefined;
+
+  // pivot: least-squares intersection of the needle lines
+  let a11 = 0, a12 = 0, a22 = 0, b1 = 0, b2 = 0;
+  for (const { axis } of lines) {
+    const m11 = 1 - axis.dx * axis.dx, m12 = -axis.dx * axis.dy, m22 = 1 - axis.dy * axis.dy;
+    a11 += m11; a12 += m12; a22 += m22;
+    b1 += m11 * axis.cx + m12 * axis.cy;
+    b2 += m12 * axis.cx + m22 * axis.cy;
+  }
+  const det = a11 * a22 - a12 * a12;
+  if (Math.abs(det) < 1e-6) return undefined;
+  const pivotX = (a22 * b1 - a12 * b2) / det, pivotY = (a11 * b2 - a12 * b1) / det;
+  if (pivotX < -width || pivotX > 2 * width || pivotY < -height || pivotY > 2 * height) return undefined;
+
+  const angles = lines.map((l) => ({ levelDb: l.levelDb, angle: angleOf(l.axis.cx - pivotX, l.axis.cy - pivotY), points: l.points }));
+  const distances = angles.flatMap((a) => a.points.map((p) => Math.hypot(p[0] - pivotX, p[1] - pivotY)));
+  const length = percentile(distances, 0.97);
+  const inner = percentile(distances, 0.03);
+  const deflected = angles[angles.length - 1]!;
+  const widthPx = Math.max(1, Math.min(6, deflected.points.length / Math.max(1, length - inner)));
+
+  // calibration: angle = angleZero + radiansPerDb · reduction
+  const points = angles.map((a) => [reduction(a.levelDb), a.angle] as [number, number]);
+  const fit = linearFit(points);
+  if (!fit || Math.abs(fit.b) < 1e-4) return undefined;
+
+  const box = clampBox(grow(union(angles.map((a) => {
+    const xs = a.points.map((p) => p[0]), ys = a.points.map((p) => p[1]);
+    return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs) + 1, h: Math.max(...ys) - Math.min(...ys) + 1 };
+  })), 4), probe);
+  const color = hex(dominantAt(shots[shots.length - 1]!, deflected.points));
+  const background = ringMedian(rest, pivotX, pivotY, length * 0.6);
+
+  // hub: the colour at the pivot (needle removed: shot with the needle elsewhere) up to where it ends
+  let cap: Needle["cap"];
+  const hubShot = shots[shots.length - 1]!;
+  const hub = pixel(hubShot, Math.round(pivotX), Math.round(pivotY));
+  if (colorDistance(hub, background) > 60) {
+    let r = 1;
+    const closerToHub = (c: Rgb) => colorDistance(c, hub) < colorDistance(c, background);
+    while (r < length * 0.3 && closerToHub(ringMedian(hubShot, pivotX, pivotY, r))) r += 0.5;
+    if (r > 2) cap = { radius: r, color: hex(hub) };
+  }
+
+  // scale marks: short strokes on a circle around the pivot, in the swept range (+ margin)
+  const a0 = fit.a, a1 = fit.a + fit.b * 30;
+  const lo = Math.min(a0, a1) - 0.15, hi = Math.max(a0, a1) + 0.15;
+  let ticks: Needle["ticks"];
+  let bestCount = 0;
+  for (let r = length * 0.9; r < length * 1.2; r += 1) {
+    const samples = Math.round((hi - lo) * r);
+    const hits: number[] = [];
+    for (let k = 0; k <= samples; k++) {
+      const a = lo + (k / samples) * (hi - lo);
+      const x = Math.round(pivotX + Math.sin(a) * r), y = Math.round(pivotY - Math.cos(a) * r);
+      if (x < 0 || y < 0 || x >= width || y >= height) continue;
+      if (colorDistance(pixel(rest, x, y), background) > 80 && !restMask[y * width + x]) hits.push(k);
+    }
+    const runs: number[][] = [];
+    for (const k of hits) {
+      const run = runs[runs.length - 1];
+      if (run && k - run[run.length - 1]! <= 1) run.push(k);
+      else runs.push([k]);
+    }
+    const strokes = runs.filter((run) => run.length <= 8);
+    // scale marks are evenly spaced (letters are not)
+    const centres = strokes.map((run) => (run[0]! + run[run.length - 1]!) / 2);
+    const gaps = centres.slice(1).map((c, i) => c - centres[i]!);
+    const meanGap = gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : 0;
+    const even = gaps.length >= 3 && gaps.every((g) => Math.abs(g - meanGap) < meanGap * 0.3);
+    if (even && strokes.length >= 5 && strokes.length > bestCount && strokes.length >= runs.length * 0.8) {
+      bestCount = strokes.length;
+      const angles = strokes.map((run) => lo + (((run[0]! + run[run.length - 1]!) / 2) / samples) * (hi - lo));
+      const extent = (a: number, dir: 1 | -1) => {
+        let rr = r;
+        while (Math.abs(rr - r) < length * 0.3 && colorDistance(pixel(rest, Math.round(pivotX + Math.sin(a) * rr), Math.round(pivotY - Math.cos(a) * rr)), background) > 80) rr += dir;
+        return rr;
+      };
+      const inner = percentile(angles.map((a) => extent(a, -1)), 0.5), outer = percentile(angles.map((a) => extent(a, 1)), 0.5);
+      const points = angles.map((a) => [Math.round(pivotX + Math.sin(a) * r), Math.round(pivotY - Math.cos(a) * r)] as [number, number]);
+      ticks = {
+        angles, inner, outer,
+        width: Math.max(1, strokes.reduce((s, run) => s + run.length, 0) / strokes.length),
+        color: hex(dominantAt(rest, points)),
+      };
+    }
+  }
+
+  return {
+    kind: "meter", ...box,
+    background: hex(dominantColor(rest, box)), grid: color, curve: color, text: color,
+    needle: { pivotX, pivotY, length, width: widthPx, color, angleZero: fit.a, radiansPerDb: fit.b, ...(cap ? { cap } : {}), ...(ticks ? { ticks } : {}) },
+  };
+}
+
+export interface AnalyzeOptions {
+  /** gain reduction (dB) the clone will show for a sine of this peak level – calibrates meters */
+  meterReduction?: (levelDb: number) => number;
+}
+
+export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], pluginName: string, options: AnalyzeOptions = {}): Promise<GuiModel> {
   const { width, height } = probe;
   const base = await loadRaw(probe.base, width, height);
   const base2 = await loadRaw(probe.base2, width, height);
@@ -1061,6 +1196,11 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     displays.push({ kind: d.eq ? "eq" : "generic", ...box, background: hex(bg), grid: hex(grid), curve: hex(curve), text: hex(luminance(bg) > 128 ? [40, 40, 40] : [170, 170, 170]) });
   }
 
+  if (options.meterReduction) {
+    const meter = await analyzeMeter(probe, noise, options.meterReduction);
+    if (meter) displays.push(meter);
+  }
+
   // exclusion mask for static analysis
   const occupied = new Uint8Array(width * height);
   const mark = (b: Box, pad: number) => {
@@ -1071,7 +1211,8 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     mark(c, 3);
     if (c.readout) mark(c.readout, 2);
   }
-  for (const d of displays) mark(d, 1);
+  // meters only add a needle: their scale, texts and background belong to the static layout
+  for (const d of displays) if (d.kind !== "meter") mark(d, 1);
 
   // texts and labels
   const blocks = textBlocks(base, occupied);
@@ -1175,7 +1316,7 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     }
   }
 
-  const insideDisplay = (b: Box) => displays.some((d) => {
+  const insideDisplay = (b: Box) => displays.filter((d) => d.kind !== "meter").some((d) => {
     const ix = Math.max(0, Math.min(b.x + b.w, d.x + d.w) - Math.max(b.x, d.x));
     const iy = Math.max(0, Math.min(b.y + b.h, d.y + d.h) - Math.max(b.y, d.y));
     return ix * iy > area(b) * 0.5;

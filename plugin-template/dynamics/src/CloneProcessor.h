@@ -34,13 +34,24 @@ public:
     using AudioProcessor::processBlock;
 
     bool hasEditor() const override { return true; }
-    juce::AudioProcessorEditor* createEditor() override { return new juce::GenericAudioProcessorEditor (*this); }
+    juce::AudioProcessorEditor* createEditor() override;
 
     void getStateInformation (juce::MemoryBlock&) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     /** Current gain reduction (dB, ≥ 0), for meters. */
     float getGainReduction() const { return gainReduction.load(); }
+
+    // interface used by the rebuilt editor (plugin-template/common/CloneEditor.cpp)
+    juce::RangedAudioParameter* parameter (int index) const { return index >= 0 && index < (int) parameters.size() ? parameters[(size_t) index] : nullptr; }
+    float physicalValue (int index) const
+    {
+        auto* p = parameter (index);
+        if (p == nullptr) return 0.0f;
+        if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (p)) return (float) choice->getIndex();
+        if (auto* toggle = dynamic_cast<juce::AudioParameterBool*> (p)) return toggle->get() ? 1.0f : 0.0f;
+        return p->convertFrom0to1 (p->getValue());
+    }
 
 private:
     /** makeup changes are smoothed (the gain computer itself is smooth by nature) */

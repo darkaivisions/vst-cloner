@@ -1,5 +1,5 @@
 import type { Parameter } from "@vst-cloner/profile";
-import { optionIndex, tableRange, tableValue } from "./mapping.ts";
+import { optionIndex, tableRange, tableValue, textDecimals } from "./mapping.ts";
 import type { EqModel } from "./model.ts";
 
 export interface CloneParam {
@@ -17,6 +17,8 @@ export interface CloneParam {
   log?: boolean;
   unit?: string;
   choices?: string[];
+  /** decimal places of the value text (as in the original); undefined = automatic */
+  decimals?: number;
 }
 
 /** Plugin parameters of the clone: the band parameters and output gain of the original. */
@@ -39,6 +41,7 @@ export function cloneParameters(model: EqModel, parameters: Parameter[]): CloneP
       points: table.points,
       log: table.log,
       unit: table.unit,
+      ...(textDecimals(p) !== undefined ? { decimals: textDecimals(p)! } : {}),
     };
   };
 

@@ -44,6 +44,7 @@ target_sources(vch_clone PRIVATE src/CloneProcessor.cpp src/CloneEditor.cpp)
 target_include_directories(vch_clone PRIVATE src ${CLONE_GENERATED_DIR})
 
 target_compile_definitions(vch_clone PUBLIC
+    VCH_EQ_EDITOR=1
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0

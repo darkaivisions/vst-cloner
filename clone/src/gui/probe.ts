@@ -36,6 +36,8 @@ export interface GuiProbe {
   base2: string;
   visible: ProbedParameter[];
   invisible: number[];
+  /** editor while a 1 kHz sine of the given level runs through the plugin (level meters) */
+  meter?: { levelDb: number; file: string }[];
 }
 
 const MAX_CANDIDATES = 200;
@@ -125,6 +127,8 @@ export interface ProbeOptions {
   log: Logger;
   signal?: AbortSignal;
   onProgress?: (done: number, total: number, label: string) => void;
+  /** also capture the editor with audio of these levels (dBFS, rising; first = silence reference) */
+  meterLevels?: number[];
 }
 
 /**
@@ -212,6 +216,24 @@ export async function probeGui(options: ProbeOptions): Promise<GuiProbe> {
       frames: sweepOf(param).map((value, k) => ({ value, file: second!.shots.get(`p${param.index}_${k}`)!.file })),
     }));
 
+    // level meters only move with audio: fresh instance, rising levels
+    let meter: GuiProbe["meter"];
+    if (options.meterLevels?.length) {
+      const steps: GuiStep[] = options.meterLevels.map((levelDb, k) => ({ id: `meter${k}`, params: [], audio: { frequency: 1000, levelDb } }));
+      const third = await runGuiSnapshot({
+        plugin: options.plugin,
+        ...(options.identifier ? { identifier: options.identifier } : {}),
+        outputDir: passDir(3),
+        steps,
+        display,
+        ...(options.signal ? { signal: options.signal } : {}),
+        onShot: (_, done) => options.onProgress?.(done, steps.length, "Pegelanzeige aufzeichnen"),
+      });
+      if (third.width === width && third.height === height) {
+        meter = options.meterLevels.map((levelDb, k) => ({ levelDb, file: third.shots.get(`meter${k}`)!.file }));
+      }
+    }
+
     const baseShot = (second ?? first).shots.get("base")!;
     return {
       width,
@@ -221,6 +243,7 @@ export async function probeGui(options: ProbeOptions): Promise<GuiProbe> {
       base2: first.shots.get("base2")!.file,
       visible: probed,
       invisible,
+      ...(meter ? { meter } : {}),
     };
   }, options.signal);
 }

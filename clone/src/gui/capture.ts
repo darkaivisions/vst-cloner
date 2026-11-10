@@ -11,6 +11,8 @@ export interface GuiStep {
   id: string;
   params: { index: number; value: number }[];
   png?: boolean;
+  /** feed a sine through the plugin while waiting (level meters) */
+  audio?: { frequency: number; levelDb: number };
 }
 
 export interface GuiShot {

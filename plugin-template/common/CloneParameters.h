@@ -60,10 +60,10 @@ namespace vch
         return lowEnd ? p[0].norm : p[n - 1].norm;
     }
 
-    inline juce::String formatValue (float value, const char* unit)
+    inline juce::String formatValue (float value, const char* unit, int fixedDecimals = -1)
     {
         const auto magnitude = std::abs (value);
-        const int decimals = magnitude < 10.0f ? 3 : magnitude < 100.0f ? 2 : magnitude < 1000.0f ? 1 : 0;
+        const int decimals = fixedDecimals >= 0 ? fixedDecimals : magnitude < 10.0f ? 3 : magnitude < 100.0f ? 2 : magnitude < 1000.0f ? 1 : 0;
         auto text = juce::String (value, decimals);
 
         if (juce::String (unit) == "dB" && value > 0.0f)
@@ -105,9 +105,10 @@ namespace vch
                     [p] (float, float, float value) { return tableNorm (*p, value); });
 
                 const char* unit = info.unit;
+                const int decimals = info.decimals;
                 auto attributes = juce::AudioParameterFloatAttributes()
                                       .withLabel (unit)
-                                      .withStringFromValueFunction ([unit] (float v, int) { return formatValue (v, unit); })
+                                      .withStringFromValueFunction ([unit, decimals] (float v, int) { return formatValue (v, unit, decimals); })
                                       .withValueFromStringFunction ([] (const juce::String& text) { return text.getFloatValue(); });
 
                 return std::make_unique<juce::AudioParameterFloat> (id, info.name, range, info.defaultValue, attributes);

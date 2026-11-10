@@ -69,10 +69,17 @@ export interface GuiCaptureResult {
 export async function captureGuiLayout(
   profile: Profile,
   pluginPath: string,
-  options: { log: Logger; signal?: AbortSignal; onProgress?: (done: number, total: number, label: string) => void },
+  options: {
+    log: Logger;
+    signal?: AbortSignal;
+    onProgress?: (done: number, total: number, label: string) => void;
+    /** compressors: gain reduction (dB) of the clone for a sine of this peak level – finds and calibrates meters */
+    meterReduction?: (levelDb: number) => number;
+  },
 ): Promise<GuiCaptureResult> {
   const workDir = guiCacheDir(profile);
   const probe = await probeGui({
+    ...(options.meterReduction ? { meterLevels: [-80, -30, -18, -6] } : {}),
     plugin: pluginPath,
     identifier: profile.manifest.plugin.identifier,
     parameters: profile.parameters.parameters,
@@ -82,11 +89,12 @@ export async function captureGuiLayout(
     ...(options.onProgress ? { onProgress: options.onProgress } : {}),
   });
   options.log("info", "Oberfläche wird analysiert (Regler, Farben, Flächen, Beschriftungen) …");
-  const model = await analyzeGui(probe, profile.parameters.parameters, profile.manifest.plugin.name);
+  const model = await analyzeGui(probe, profile.parameters.parameters, profile.manifest.plugin.name,
+    options.meterReduction ? { meterReduction: options.meterReduction } : {});
   const kinds = new Map<string, number>();
   for (const c of model.controls) kinds.set(c.kind, (kinds.get(c.kind) ?? 0) + 1);
   const names: Record<string, string> = { rotary: "Drehregler", "slider-h": "Schieberegler", "slider-v": "Schieberegler", toggle: "Schalter", choice: "Auswahlfelder", value: "Wertanzeigen" };
-  options.log("info", `Erkannt: ${[...kinds].map(([k, n]) => `${n} ${names[k] ?? k}`).join(", ") || "keine Bedienelemente"}, ${model.displays.length} Anzeige(n), ${model.panels.length} Flächen, ${model.texts.length} Beschriftungen`);
+  options.log("info", `Erkannt: ${[...kinds].map(([k, n]) => `${n} ${names[k] ?? k}`).join(", ") || "keine Bedienelemente"}, ${model.displays.length} Anzeige(n)${model.displays.some((d) => d.kind === "meter") ? " (davon Pegelreduktions-Nadel)" : ""}, ${model.panels.length} Flächen, ${model.texts.length} Beschriftungen`);
 
   const originalPng = join(workDir, "original.png");
   await copyFile(probe.basePng, originalPng);

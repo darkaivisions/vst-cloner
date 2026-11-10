@@ -3,8 +3,14 @@ import { readProfile, writeProfile, type Profile } from "@vst-cloner/profile";
 import { strFromU8, strToU8 } from "fflate";
 import { buildPlugin, slugify, type BuildResult, type Logger } from "../build.ts";
 import { generateDynamicsHeader } from "./codegen.ts";
-import { fitDynamics, type DynamicsModel } from "./fit.ts";
+import { fitDynamics, predictModel, type DynamicsModel } from "./fit.ts";
+import { staticReduction } from "./model.ts";
 import { verifyDynamicsClone, type DynamicsVerifyReport } from "./verify.ts";
+import { existsSync } from "node:fs";
+import { generateGuiHeader } from "../gui/codegen.ts";
+import { virtualDisplayAvailable } from "../gui/capture.ts";
+import type { GuiModel } from "../gui/model.ts";
+import { captureGuiLayout, compareGui, GUI_MODEL_FILE, guiCacheDir, locatePlugin, type GuiComparison } from "../gui/workflow.ts";
 
 export const DYNAMICS_MODEL_FILE = "model/dynamics.json";
 export const DYNAMICS_REPORT_FILE = "report.json";
@@ -58,14 +64,21 @@ export interface DynamicsCloneOptions {
   skipVerify?: boolean;
   log: Logger;
   signal?: AbortSignal;
-  onStage?: (stage: "analyse" | "build" | "verify" | "save") => void;
+  onStage?: (stage: "analyse" | "gui" | "build" | "verify" | "gui-verify" | "save") => void;
   onProgress?: (done: number, total: number, label: string) => void;
+  /** capture and rebuild the editor of the original (needs the original plugin once) */
+  gui?: boolean;
+  /** capture the editor again even if the profile already has a layout */
+  refitGui?: boolean;
+  /** path of the original plugin (otherwise searched in the standard plugin folders) */
+  pluginPath?: string;
 }
 
 export interface DynamicsCloneResult {
   model: DynamicsModel;
   build: BuildResult;
   verify?: DynamicsVerifyReport;
+  gui?: { controls: number; comparison?: GuiComparison };
 }
 
 /** analyse → build → verify → store model and report in the profile */
@@ -84,11 +97,39 @@ export async function cloneDynamicsProfile(options: DynamicsCloneOptions): Promi
   }
   for (const line of formatDynamicsModel(model)) log("info", line);
 
-  const { header } = generateDynamicsHeader(model, profile.parameters.parameters, pluginName, profile.captures.renders);
+  // editor layout: stored in the profile, captured on request
+  const stored = profile.files.get(GUI_MODEL_FILE);
+  let guiModel = options.refitGui || !stored ? undefined : (JSON.parse(strFromU8(stored)) as GuiModel);
+  let originalRaw = join(guiCacheDir(profile), "pass2", "base.rgba");
+  if (guiModel) log("info", "Im Profil gespeicherte Oberfläche wird verwendet");
+  else if (options.gui) {
+    stage("gui");
+    if (!virtualDisplayAvailable()) log("warn", "Oberfläche wird nicht nachgebaut: Xvfb fehlt (sudo pacman -S xorg-server-xvfb)");
+    else {
+      const pluginPath = options.pluginPath ?? (await locatePlugin(profile));
+      if (!pluginPath) log("warn", "Oberfläche wird nicht nachgebaut: Original-Plugin nicht gefunden");
+      else {
+        const baseParams = predictModel(model, new Map());
+        const captured = await captureGuiLayout(profile, pluginPath, {
+          log,
+          // steady state for a sine: the detector level equals its peak level
+          meterReduction: (levelDb) => staticReduction(levelDb, baseParams),
+          ...(options.signal ? { signal: options.signal } : {}),
+          ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+        });
+        guiModel = captured.model;
+        originalRaw = captured.originalRaw;
+        profile.files.set(GUI_MODEL_FILE, strToU8(JSON.stringify(guiModel)));
+      }
+    }
+  }
+
+  const { header, params } = generateDynamicsHeader(model, profile.parameters.parameters, pluginName, profile.captures.renders);
   stage("build");
   const build = await buildPlugin({
     pluginName,
     modelHeader: header,
+    guiHeader: generateGuiHeader(guiModel, params),
     template: "dynamics",
     outputDir: options.outputDir ?? join(process.cwd(), slugify(pluginName)),
     ...(options.install ? { install: true } : {}),
@@ -103,10 +144,27 @@ export async function cloneDynamicsProfile(options: DynamicsCloneOptions): Promi
     for (const line of formatDynamicsVerify(verify)) log("info", line);
   }
 
+  let gui: DynamicsCloneResult["gui"];
+  if (guiModel) {
+    gui = { controls: guiModel.controls.length };
+    if (virtualDisplayAvailable()) {
+      stage("gui-verify");
+      try {
+        const comparison = await compareGui(profile, build.vst3, existsSync(originalRaw) ? originalRaw : undefined, guiModel, {
+          log,
+          ...(options.signal ? { signal: options.signal } : {}),
+        });
+        if (comparison) gui.comparison = comparison;
+      } catch (error) {
+        log("warn", `Oberflächen-Vergleich nicht möglich: ${(error as Error).message}`);
+      }
+    }
+  }
+
   stage("save");
   profile.files.set(DYNAMICS_MODEL_FILE, strToU8(JSON.stringify({ ...model, fitRevision: DYNAMICS_FIT_REVISION })));
   profile.files.set(DYNAMICS_REPORT_FILE, strToU8(JSON.stringify({ createdAt: new Date().toISOString(), pluginName, model: model.report, ...(verify ? { verify } : {}) }, null, 1)));
   await writeProfile(options.profilePath, profile);
   log("info", `Modell und Bericht im Profil gespeichert: ${options.profilePath}`);
-  return { model, build, ...(verify ? { verify } : {}) };
+  return { model, build, ...(verify ? { verify } : {}), ...(gui ? { gui } : {}) };
 }

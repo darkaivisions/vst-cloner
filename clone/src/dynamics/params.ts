@@ -1,5 +1,5 @@
 import type { CaptureRender, Parameter } from "@vst-cloner/profile";
-import { buildTable, tableRange, tableValue } from "../eq/mapping.ts";
+import { buildTable, tableRange, tableValue, textDecimals } from "../eq/mapping.ts";
 import type { CloneParam } from "../eq/params.ts";
 import type { DynamicsModel } from "./fit.ts";
 
@@ -29,15 +29,21 @@ export function dynamicsCloneParameters(model: DynamicsModel, parameters: Parame
     }
 
     const value = buildTable(p, renders);
-    const monotonic = value && value.points.every((pt, i, all) => i === 0 || Math.sign(pt[1] - all[i - 1]![1]) === Math.sign(all[all.length - 1]![1] - all[0]![1]));
+    // equal neighbours (rounded display texts) do not break monotonicity
+    const direction = value ? Math.sign(value.points[value.points.length - 1]![1] - value.points[0]![1]) : 0;
+    const monotonic = value && direction !== 0 && value.points.every((pt, i, all) => i === 0 || Math.sign(pt[1] - all[i - 1]![1]) !== -direction);
     if (value && monotonic) {
       const [lo, hi] = tableRange(value);
       return {
         id, name: p.name, original: p.index, kind: "continuous",
         defaultValue: Math.min(hi, Math.max(lo, tableValue(value, norm))),
         points: value.points, log: value.log, unit: value.unit,
+        ...(textDecimals(p) !== undefined ? { decimals: textDecimals(p)! } : {}),
       };
     }
-    return { id, name: p.name, original: p.index, kind: "continuous", defaultValue: norm, points: [[0, 0], [1, 1]], unit: "" };
+    return {
+      id, name: p.name, original: p.index, kind: "continuous", defaultValue: norm, points: [[0, 0], [1, 1]], unit: "",
+      ...(textDecimals(p) !== undefined ? { decimals: textDecimals(p)! } : {}),
+    };
   });
 }

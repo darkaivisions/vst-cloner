@@ -207,6 +207,7 @@ namespace
         const Control& control;
     };
 
+#if VCH_EQ_EDITOR
     // ---- band panel (settings of the selected EQ band) -----------------------------------------
 
     class BandPanel final : public juce::Component
@@ -556,6 +557,101 @@ namespace
         int dragging = -1;
         int selected = -1;
     };
+#endif // VCH_EQ_EDITOR
+
+#if VCH_GAIN_REDUCTION_METER
+    // ---- gain reduction meter (in the display areas of a compressor) ----------------------------
+
+    /** Needle meter: pivot at the bottom centre, 0 dB on the left, `maxDb` on the right. */
+    class MeterDisplay final : public juce::Component, private juce::Timer
+    {
+    public:
+        MeterDisplay (CloneProcessor& p, const Display& d) : processor (p), display (d)
+        {
+            setInterceptsMouseClicks (false, false);
+            startTimerHz (30);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto b = getLocalBounds().toFloat();
+            const juce::Point<float> pivot (b.getCentreX(), b.getBottom() - b.getHeight() * 0.12f);
+            const float length = std::min (b.getWidth() * 0.45f, b.getHeight() * 0.8f);
+            constexpr float sweep = 0.9f; // radians each side of vertical
+
+            g.setColour (colour (display.text).withAlpha (0.8f));
+            g.setFont (makeFont (std::max (9.0f, b.getHeight() * 0.07f), false));
+            for (int db = 0; db <= (int) maxDb; db += 5)
+            {
+                const float a = -sweep + 2 * sweep * db / maxDb;
+                const auto outer = polar (pivot.x, pivot.y, length * 1.02f, a), inner = polar (pivot.x, pivot.y, length * 0.92f, a);
+                g.drawLine ({ inner, outer }, 1.5f);
+                const auto label = polar (pivot.x, pivot.y, length * 0.82f, a);
+                g.drawText (juce::String (db), juce::Rectangle<float> (label.x - 12, label.y - 6, 24, 12), juce::Justification::centred);
+            }
+
+            const float a = -sweep + 2 * sweep * juce::jlimit (0.0f, 1.0f, shown / maxDb);
+            g.setColour (colour (display.curve));
+            g.drawLine ({ pivot, polar (pivot.x, pivot.y, length, a) }, 2.0f);
+            g.fillEllipse (pivot.x - 5, pivot.y - 5, 10, 10);
+        }
+
+    private:
+        void timerCallback() override
+        {
+            // ballistics of a VU-style needle: about 300 ms to settle
+            const float target = processor.getGainReduction();
+            shown += (target - shown) * 0.25f;
+            repaint();
+        }
+
+        static constexpr float maxDb = 30.0f;
+        CloneProcessor& processor;
+        const Display& display;
+        float shown = 0.0f;
+    };
+
+    /** Needle measured on the original (kind 2): only the needle is drawn, scale and housing are in the layout. */
+    class NeedleMeter final : public juce::Component, private juce::Timer
+    {
+    public:
+        NeedleMeter (CloneProcessor& p, const Display& d) : processor (p), needle (d.needle)
+        {
+            setInterceptsMouseClicks (false, false);
+            startTimerHz (30);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto& t = needle.ticks;
+            g.setColour (colour (t.color));
+            for (int i = 0; i < t.count; ++i)
+                g.drawLine ({ polar (needle.pivotX, needle.pivotY, t.inner, t.angles[i]), polar (needle.pivotX, needle.pivotY, t.outer, t.angles[i]) }, t.width);
+
+            const float a = needle.angleZero + needle.radiansPerDb * shown;
+            const auto tip = polar (needle.pivotX, needle.pivotY, needle.length, a);
+            g.setColour (colour (needle.color));
+            g.drawLine ({ { needle.pivotX, needle.pivotY }, tip }, needle.width);
+
+            if (needle.capRadius > 0)
+            {
+                g.setColour (colour (needle.capColor));
+                g.fillEllipse (needle.pivotX - needle.capRadius, needle.pivotY - needle.capRadius, 2 * needle.capRadius, 2 * needle.capRadius);
+            }
+        }
+
+    private:
+        void timerCallback() override
+        {
+            shown += (processor.getGainReduction() - shown) * 0.25f;
+            repaint();
+        }
+
+        CloneProcessor& processor;
+        const Needle& needle;
+        float shown = 0.0f;
+    };
+#endif // VCH_GAIN_REDUCTION_METER
 }
 
 // ---- content: everything at the original size -------------------------------------------------
@@ -572,8 +668,22 @@ public:
         {
             const auto& d = clonegui::displays[i];
             std::unique_ptr<juce::Component> component;
+#if VCH_EQ_EDITOR
             if (d.kind == 0 && clonemodel::numBands > 0)
                 component = std::make_unique<EqDisplay> (processor, d);
+#endif
+#if VCH_GAIN_REDUCTION_METER
+            if (d.kind == 2)
+            {
+                // the needle may swing outside the measured area: the component covers the whole editor
+                auto needle = std::make_unique<NeedleMeter> (processor, d);
+                needle->setBounds (0, 0, clonegui::width, clonegui::height);
+                addAndMakeVisible (*needle);
+                children.push_back (std::move (needle));
+                continue;
+            }
+            component = std::make_unique<MeterDisplay> (processor, d);
+#endif
             if (component != nullptr)
             {
                 component->setBounds (juce::Rectangle<float> (d.x, d.y, d.w, d.h).toNearestInt());

@@ -162,7 +162,10 @@ vst-cloner/
    - Klangfarbe: tanh-Sättigung zwischen Pegelreduktion und Ausgangspegel + Detektor-Welligkeit (schneller
      Energiepfad, erzeugt die Oberwellen komprimierter Signale); Drive gemeinsam über alle Messungen gefittet
      (Änderungen nur wo die Messung sie verlangt); Open Optical: H3/H5 meist innerhalb 1–2 dB
-   - Offen: nachgebaute Oberfläche, Desktop-Modus, Fit-Zeit (~60 s), danach Distortion/Amp (NAM)
+   - Oberfläche: gemeinsamer Klon-Editor (`plugin-template/common`), Pegelreduktions-Nadel wird mit Audio im
+     Original gefunden (Drehpunkt, Länge, Nabe, Skalenstriche) und am Kompressor-Modell kalibriert;
+     Wertformat wie im Original; Open Optical: 82 % Struktur-, 95 % Farbähnlichkeit
+   - Offen: Rahmen/Dekor, Desktop-Modus, Fit-Zeit (~60 s), danach Distortion/Amp (NAM)
 6. **Delay + Reverb**
 7. **REA-Integration** (Analyst-Agent, `spec.md`, Clean-Room-Trennung) + **yabridge-Check**
 8. **Distribution:** Installer, Updates, Profilbibliothek

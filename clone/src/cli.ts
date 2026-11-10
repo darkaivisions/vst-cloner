@@ -68,6 +68,9 @@ export async function main(command: string, argv: string[]): Promise<number> {
             ...(values.install ? { install: true } : {}),
             ...(values.refit ? { refit: true } : {}),
             ...(values["no-verify"] ? { skipVerify: true } : {}),
+            ...(values.gui ? { gui: true } : {}),
+            ...(values["refit-gui"] ? { gui: true, refitGui: true } : {}),
+            ...(values.plugin ? { pluginPath: resolve(values.plugin) } : {}),
             log,
           });
           console.log(`VST3: ${result.build.vst3}\nLV2:  ${result.build.lv2}`);

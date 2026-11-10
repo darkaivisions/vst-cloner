@@ -43,6 +43,10 @@ struct Control
 /** kind: 0 EQ curve, 1 generic area. EQ axes: log frequency fMin…fMax (left→right), linear dB dbTop…dbBottom;
     dbStep: grid distance in dB (0 = derived from the range); labelBand: strip for frequency labels below the plot;
     dbLabelRight: right edge of the dB labels relative to the display (0 = right edge) */
-struct Display { int kind; float x, y, w, h; uint32_t background, backgroundBottom, grid, curve, text; float fMin, fMax, dbTop, dbBottom, dbStep, labelBand, dbLabelRight; };
+/** Gain reduction needle (editor coordinates; angles in radians clockwise from 12 o'clock): angle = angleZero + radiansPerDb · reduction */
+struct Needle { float pivotX, pivotY, length, width; uint32_t color; float angleZero, radiansPerDb; float capRadius; uint32_t capColor; Ticks ticks; };
+
+/** kind 2: gain reduction meter (needle) */
+struct Display { int kind; float x, y, w, h; uint32_t background, backgroundBottom, grid, curve, text; float fMin, fMax, dbTop, dbBottom, dbStep, labelBand, dbLabelRight; Needle needle; };
 
 } // namespace clonegui

@@ -94,6 +94,18 @@ export function parseSlope(label: string): SlopeOption {
   return { label, order: 16, approximate: true, ...(/brick\s*wall/i.test(label) ? { brickwall: true } : {}) };
 }
 
+/** Decimal places the original shows in its value texts (most common count), undefined if not numeric. */
+export function textDecimals(param: Parameter): number | undefined {
+  const counts = new Map<number, number>();
+  for (const t of param.texts ?? []) {
+    const match = /[+-]?\d+(?:[.,](\d+))?/.exec(t.text);
+    if (!match) continue;
+    const d = match[1]?.length ?? 0;
+    counts.set(d, (counts.get(d) ?? 0) + 1);
+  }
+  return counts.size ? [...counts].sort((a, b) => b[1] - a[1])[0]![0] : undefined;
+}
+
 // ---- tables ------------------------------------------------------------------------------------
 
 export function buildTable(param: Parameter, renders: CaptureRender[] = []): ValueTable | undefined {

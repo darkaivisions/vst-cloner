@@ -86,9 +86,15 @@ export function generateGuiHeader(gui: GuiModel | undefined, params: CloneParam[
     return `{ ${cloneIndex.get(c.param)}, ${KIND[c.kind]}, ${f(c.x)}, ${f(c.y)}, ${f(c.w)}, ${f(c.h)}, ${rotary}, ${argb(c1 as string)}, ${argb(c2 as string)}, ${f(f1 as number)}, ${readout} }`;
   }));
 
-  array("displays", "Display", gui.displays.map((d) =>
-    `{ ${d.kind === "eq" ? 0 : 1}, ${f(d.x)}, ${f(d.y)}, ${f(d.w)}, ${f(d.h)}, ${argb(d.backgroundTop ?? d.background)}, ${argb(d.backgroundBottom ?? d.background)}, ${argb(d.grid)}, ${argb(d.curve)}, ${argb(d.text)}, ` +
-    `${f(d.fMin ?? 10)}, ${f(d.fMax ?? 30000)}, ${f(d.dbTop ?? 13.3)}, ${f(d.dbBottom ?? -13.3)}, ${f(d.dbStep ?? 0)}, ${f(d.labelBand ?? 0)}, ${f(d.dbLabelRight !== undefined ? d.dbLabelRight - d.x : 0)} }`));
+  gui.displays.forEach((d, i) => {
+    if (d.needle?.ticks) lines.push(`inline const float needleTicks${i}[] = { ${d.needle.ticks.angles.map(f).join(", ")} };`);
+  });
+  array("displays", "Display", gui.displays.map((d, i) =>
+    `{ ${d.kind === "eq" ? 0 : d.kind === "meter" ? 2 : 1}, ${f(d.x)}, ${f(d.y)}, ${f(d.w)}, ${f(d.h)}, ${argb(d.backgroundTop ?? d.background)}, ${argb(d.backgroundBottom ?? d.background)}, ${argb(d.grid)}, ${argb(d.curve)}, ${argb(d.text)}, ` +
+    `${f(d.fMin ?? 10)}, ${f(d.fMax ?? 30000)}, ${f(d.dbTop ?? 13.3)}, ${f(d.dbBottom ?? -13.3)}, ${f(d.dbStep ?? 0)}, ${f(d.labelBand ?? 0)}, ${f(d.dbLabelRight !== undefined ? d.dbLabelRight - d.x : 0)}, ` +
+    `{ ${f(d.needle?.pivotX ?? 0)}, ${f(d.needle?.pivotY ?? 0)}, ${f(d.needle?.length ?? 0)}, ${f(d.needle?.width ?? 0)}, ${argb(d.needle?.color)}, ${f(d.needle?.angleZero ?? 0)}, ${f(d.needle?.radiansPerDb ?? 0)}, ` +
+    `${f(d.needle?.cap?.radius ?? 0)}, ${argb(d.needle?.cap?.color)}, ` +
+    `{ ${d.needle?.ticks?.angles.length ?? 0}, ${d.needle?.ticks ? `needleTicks${i}` : "nullptr"}, ${f(d.needle?.ticks?.inner ?? 0)}, ${f(d.needle?.ticks?.outer ?? 0)}, ${f(d.needle?.ticks?.width ?? 1)}, ${argb(d.needle?.ticks?.color)} } } }`));
 
   lines.push("} // namespace clonegui", "");
   return lines.join("\n");
