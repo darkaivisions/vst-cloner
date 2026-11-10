@@ -147,8 +147,15 @@ vst-cloner/
    - Pro-Q 3: Klon-Editor 76 % Struktur-, 98 % Farbähnlichkeit
    - Texterkennung mit tesseract (optional, eng+deu): Beschriftungen, Titel und freie Texte werden gelesen
      statt aus Parameternamen geraten; Schriftgröße aus Tintenhöhe und Buchstabenformen
-   - Offen: Zeigerinstrumente;
-     Analyzer-Skala/Pegelmesser; Bänder direkt in der Kurve bedienen (Pro-Q-Stil) im Klon-Editor prüfen
+   - Nachgetragen: Pegelreduktions-Nadeln und Pegelbalken (mit Testton im Original gefunden und kalibriert),
+     runde Flächen (Kreis-Fit am Außenrand, radiales Farbprofil, Speichen), senkrechte Wörter, Texte unter
+     beweglichen Teilen (in den Aufnahmen gelesen, in denen sie frei sind), unsichere OCR-Lesungen gegen
+     Parameternamen abgeglichen; Schalter/Menüs, die als stufenlose Parameter gemeldet werden, an
+     Werttext-Plateaus erkannt und im Klon als Auswahl-Parameter angelegt (Werte zurück auf die des Originals)
+   - IEM Directional Compressor: 75 % Struktur-, 96 % Farbähnlichkeit
+   - Offen: XY-Punkte (z. B. Richtung auf der Kugel), farbige Vollringe um Regler, Regler mit Verlauf und
+     kleinem Zeiger (DS1), Skalen der Pegelmesser, Schriftstärken innerhalb eines Titels, Logos;
+     Bänder direkt in der Kurve bedienen (Pro-Q-Stil) im Klon-Editor prüfen
 5. **Kompressor + Distortion** (inkl. lokalem NAM-Training, CPU/GPU) ← in Arbeit
    - Messfolge `dynamics` (`--class dynamics`): lange Ruhephasen, steigende Pegeltreppe, Bursts (lang/kurz/klein),
      100-Hz-Stufen für Sättigung, Rauschen, leiser Sweep; Erkennung von Kompressoren an Parameternamen
@@ -165,7 +172,15 @@ vst-cloner/
    - Oberfläche: gemeinsamer Klon-Editor (`plugin-template/common`), Pegelreduktions-Nadel wird mit Audio im
      Original gefunden (Drehpunkt, Länge, Nabe, Skalenstriche) und am Kompressor-Modell kalibriert;
      Wertformat wie im Original; Open Optical: 82 % Struktur-, 95 % Farbähnlichkeit
-   - Offen: Rahmen/Dekor, Desktop-Modus, Fit-Zeit (~60 s), danach Distortion/Amp (NAM)
+   - Desktop-App: Kompressor-Messung als eigener Modus, Vorschau des Klons und Profil-Details in der Bibliothek
+   - IEM Directional Compressor (25 Parameter, Menüs als stufenlose Parameter): 0,71 dB über 224 Einstellungen
+   - **Distortion** (`--class distortion`): Sinus-Pegeltreppen bei mehreren Frequenzen, Rauschen, leiser Sweep;
+     Wiener-Hammerstein-Modell (Vorfilter → asymmetrische weiche Begrenzung + harte Schienen → Nachfilter),
+     pro Regler automatisch gewählt, welche Modellteile er verändert; Laufzeit des Originals übernommen;
+     Fit parallel in Worker-Threads (~110 s); C++-Vorlage `plugin-template/distortion` sample-genau
+   - GxBoss DS1: Grundton 0,68 dB, Oberwellen 1,8 dB, Kleinsignal 1,23 dB, Fehler/Signal −6,8 dB
+   - Offen: Distortion-Modus in der App, Zeitbereichs-Term im Fit (Fehler/Signal), Fit-Zeit Kompressor (~60 s),
+     Rahmen/Dekor; danach Amps mit NAM (Swanky Amp, TONE3000)
 6. **Delay + Reverb**
 7. **REA-Integration** (Analyst-Agent, `spec.md`, Clean-Room-Trennung) + **yabridge-Check**
 8. **Distribution:** Installer, Updates, Profilbibliothek

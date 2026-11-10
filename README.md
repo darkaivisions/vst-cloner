@@ -9,14 +9,17 @@ neu gebaut. Kein dekompilierter Code, keine extrahierten Samples – nur gemesse
 Gesamtplan und Meilensteine: [PLAN.md](PLAN.md) · Profilformat: [docs/profile-format.md](docs/profile-format.md)
 
 **Stand: Meilenstein 5 in Arbeit** – Desktop-App, Capture-Host, Profilformat und LLM-Anbindung funktionieren.
-Klone (VST3/LV2) gibt es für **parametrische EQs** und **Kompressoren/Limiter**, jeweils mit nachgebauter
-Oberfläche des Originals. Distortion/Amp (NAM) folgt.
+Klone (VST3/LV2) gibt es für **parametrische EQs**, **Kompressoren/Limiter** und **Verzerrer** (Overdrive/
+Distortion, zunächst über die Kommandozeile), jeweils mit nachgebauter Oberfläche des Originals.
+Amp-Simulationen mit NAM folgen.
 Getestet unter Linux mit nativen VST3-Plugins und Windows-Plugins über yabridge.
 
 | Klon | Original | Abweichung | Oberfläche |
 |---|---|---|---|
 | Pro-Q 3 Clone | FabFilter Pro-Q 3 (yabridge) | 0,10 dB über 149 Einstellungen | 74 % Struktur, 98 % Farbe |
 | Open Optical Clone | Open Optical (Opto-Kompressor) | 0,50 dB Pegelverlauf über 44 Einstellungen, Oberwellen meist ±2 dB | 82 % Struktur, 95 % Farbe |
+| DirectionalCompressor Clone | IEM Directional Compressor | 0,71 dB Pegelverlauf über 224 Einstellungen | 75 % Struktur, 96 % Farbe |
+| GxBoss DS1 Clone | GxBoss DS1 (Guitarix, LV2) | Grundton 0,68 dB, Oberwellen 1,8 dB, Kleinsignal 1,23 dB | noch grob |
 
 ## Voraussetzungen
 
@@ -120,13 +123,32 @@ Der Fit wählt die Variante selbst; jeder Regler wird über eine Tabelle auf die
 Zufallskombinationen, die nie zum Fitten benutzt werden, dienen als Gegenprobe. Das Plugin
 (`plugin-template/dynamics`) rechnet sample-genau wie das TypeScript-Modell.
 
+### Verzerrer klonen
+
+```bash
+# 1. Verzerrer vermessen (Sinus-Pegeltreppen bei mehreren Frequenzen, Rauschen, leiser Sweep)
+npm run vch -- capture /usr/lib/lv2/gx_bossds1.lv2 --class distortion -o mein-ds1.vcprofile
+
+# 2. Klon bauen (vch clone erkennt Verzerrer-Profile selbst)
+npm run vch -- clone mein-ds1.vcprofile -o ./mein-ds1-clone --gui
+```
+
+Das Modell ist eine Wiener-Hammerstein-Kette: Eingangsverstärkung → Vorfilter (Hochpass, zwei Glocken,
+Tiefpass) → weiche, asymmetrische Begrenzung mit harten „Versorgungsschienen“ → Nachfilter (Glocke,
+Höhenregal, Tief- und Hochpass) → Ausgangspegel. Für jeden Regler wählt der Fit, welche Teile des Modells
+er verändert (beim DS1: LEVEL nur den Ausgang, TONE das Nachfilter, DRIVE Eingang und Vorfilter); der Fit
+läuft parallel in Worker-Threads (~2 min). Die Laufzeit des Originals wird gemessen und übernommen. Das
+Plugin (`plugin-template/distortion`) rechnet sample-genau wie das TypeScript-Modell.
+
 ### Oberfläche nachbauen
 
 Mit `--gui` (bzw. der Option in der App) öffnet `vch-gui` den Editor des Originals unsichtbar (unter
 Linux in Xvfb), bewegt jeden Regler einzeln und leitet aus den Bildern ein Layout ab: Drehregler,
 Schieber, Schalter, Auswahlfelder, Wertanzeigen, EQ-Kurve, Flächen, Linien und Texte (mit tesseract
-gelesen, falls installiert). Bei Kompressoren läuft zusätzlich ein Testton durch das Original, um die
-Pegelreduktions-Nadel zu finden und zu kalibrieren. Gespeichert wird nur das Layout (`model/gui.json`),
+gelesen, falls installiert), runde Flächen mit Ringen und Speichen sowie senkrecht gesetzte Wörter.
+Schalter und Menüs, die ein Plugin als stufenlose Parameter meldet, werden an ihren Werttexten erkannt
+und im Klon zu echten Auswahl-Parametern. Bei Kompressoren läuft zusätzlich ein Testton durch das
+Original, um die Pegelreduktions-Nadel und Pegelbalken zu finden und zu kalibrieren. Gespeichert wird nur das Layout (`model/gui.json`),
 keine Grafik des Originals. Der Vergleich Klon ↔ Original landet als Bild im Cache.
 
 Zusätzlich nötig: `xorg-server-xvfb`, optional `tesseract` mit `tesseract-data-eng`/`-deu`.
@@ -189,11 +211,13 @@ profile/   JSON-Schemas, Reader/Writer mit Prüfsummen, WAV-I/O
 capture/   Testsignale, Messplan, Ansteuerung von vch-host, CLI `vch`
 agent/     LLM-Anbieter (Vercel AI SDK), models.dev-Katalog, Schlüsselbund, Fähigkeitstests, Rollen
 clone/     Analyse, Messpläne, Fits und Codegeneratoren: eq/ (Filter-Fit), dynamics/ (Kompressor-Modell),
+           distortion/ (Wiener-Hammerstein-Modell, paralleler Fit),
            gui/ (Oberflächen-Analyse, Texterkennung), dsp/ (Biquads, elliptische Filter, Optimierer);
            Plugin-Build und Vergleich mit dem Original
 plugin-template/
            eq/        C++/JUCE-EQ-Engine (Formeln identisch mit clone/src/dsp/biquad.ts)
            dynamics/  C++/JUCE-Kompressor-Engine (identisch mit clone/src/dynamics/model.ts)
+           distortion/ C++/JUCE-Verzerrer-Engine (identisch mit clone/src/distortion/model.ts)
            common/    Parameter und nachgebauter Editor, gemeinsam für alle Vorlagen
 host/      zusätzlich vch-gui: öffnet Plugin-Editoren unsichtbar und nimmt sie auf
 bridge/    JSON-Zeilen-Schnittstelle zwischen Oberfläche und den Paketen (Jobs, Fortschritt, Protokoll)
