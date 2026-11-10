@@ -7,7 +7,7 @@ import { pack, predictParams, tableAt, type ParamTable } from "../src/dynamics/f
 import { detectDynamics, NotDynamicsError } from "../src/dynamics/plan.ts";
 
 const params: CompressorParams = {
-  thresholdDb: -20, ratio: 4, kneeDb: 6, makeupDb: 0, attack: 0.01, release: 0.1, charge: 0, slow: 4, slowKneeDb: 1,
+  thresholdDb: -20, ratio: 4, kneeDb: 6, makeupDb: 0, attack: 0.01, release: 0.1, charge: 0, slow: 4, slowKneeDb: 1, detectorTime: 0,
 };
 
 test("static curve: no reduction below the knee, slope 1 − 1/ratio above, continuous knee", () => {
@@ -85,4 +85,18 @@ test("dynamics header: parameters with the original's names, tables in clone ind
   assert.match(header, /\{ 0, false, 2, tableValues0, tablePacked0, 0\.5 \}/);
   assert.match(header, /\{ 1, true, 2, tableValues1, tablePacked1, 0\.0 \}/);
   assert.match(header, /numTables = 2/);
+});
+
+test("pchip: passes through the points, stays monotone, no overshoot", async () => {
+  const { pchip } = await import("../src/dynamics/fit.ts");
+  const xs = [0, 0.15, 0.25, 0.5, 1], ys = [0.6, 4.8, 6.0, 8.7, 12.7];
+  xs.forEach((x, i) => assert.ok(Math.abs(pchip(xs, ys, x) - ys[i]!) < 1e-12));
+  let previous = -Infinity;
+  for (let x = 0; x <= 1; x += 0.01) {
+    const y = pchip(xs, ys, x);
+    assert.ok(y >= previous - 1e-12 && y >= 0.6 - 1e-12 && y <= 12.7 + 1e-12);
+    previous = y;
+  }
+  // a plateau stays flat (no overshoot between equal values)
+  assert.ok(Math.abs(pchip([0, 1, 2, 3], [0, 5, 5, 9], 1.5) - 5) < 1e-12);
 });

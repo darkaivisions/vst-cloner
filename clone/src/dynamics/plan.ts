@@ -1,4 +1,14 @@
-import { DEFAULT_PLAN, planCaptures, type CapturePlan, type CapturePlanner, type HostInfo, type PlanOptions } from "@vst-cloner/capture";
+import {
+  createRandom,
+  DEFAULT_PLAN,
+  PlanTooLargeError,
+  selectParameters,
+  type CapturePlan,
+  type CapturePlanner,
+  type HostInfo,
+  type PlannedRender,
+  type PlanOptions,
+} from "@vst-cloner/capture";
 import type { Parameter } from "@vst-cloner/profile";
 
 /** Roles of dynamics parameters, recognised by name. */
@@ -62,28 +72,38 @@ const percent = (p: Parameter, value: number) => {
   return text ?? `${Math.round(value * 100)} %`;
 };
 
-/** Generic sweeps of every parameter (training) plus random combinations (validation). */
+/** Sweep points of continuous parameters: denser towards the ends, where control curves usually bend most. */
+export const DYNAMICS_SWEEP = [0, 0.05, 0.15, 0.3, 0.5, 0.7, 0.85, 0.95, 1];
+
+/** Single-parameter sweeps (training) plus random combinations (validation). */
 export function planDynamics(parameters: Parameter[], options: PlanOptions): CapturePlan & { mapping: DynamicsMapping } {
   const mapping = detectDynamics(parameters);
-  const plan = planCaptures(parameters, {
-    ...options,
-    points: Math.max(options.points, 5),
-    exclude: options.exclude ? new RegExp(`${options.exclude.source}|${IGNORED.source}`, "i") : IGNORED,
-  });
-  const byIndex = new Map(parameters.map((p) => [p.index, p]));
-  return {
-    ...plan,
-    mapping,
-    renders: plan.renders.map((r) => ({
-      ...r,
-      purpose: r.kind === "random" ? "validate" : "train",
-      label: r.kind === "default"
-        ? "Grundeinstellung"
-        : r.kind === "sweep"
-          ? r.params.map((v) => `${byIndex.get(v.index)!.name} = ${percent(byIndex.get(v.index)!, v.value)}`).join(", ")
-          : `Zufallskombination ${r.id}`,
-    })),
-  };
+  const exclude = options.exclude ? new RegExp(`${options.exclude.source}|${IGNORED.source}`, "i") : IGNORED;
+  const selected = selectParameters(parameters, { ...(options.include ? { include: options.include } : {}), exclude });
+  const stepped = (p: Parameter) => p.discrete && p.numSteps >= 2 && p.numSteps <= 64;
+  const base = (p: Parameter) => p.value ?? p.default;
+  const fixed = options.fixed ?? [];
+
+  const renders: Omit<PlannedRender, "id">[] = [{ kind: "default", purpose: "train", label: "Grundeinstellung", params: [...fixed] }];
+  for (const p of selected) {
+    const values = stepped(p) ? Array.from({ length: p.numSteps }, (_, i) => i / (p.numSteps - 1)) : DYNAMICS_SWEEP;
+    for (const value of values) {
+      if (Math.abs(value - base(p)) < 1e-4) continue;
+      renders.push({ kind: "sweep", sweepParameter: p.index, purpose: "train", label: `${p.name} = ${percent(p, value)}`, params: [...fixed, { index: p.index, value }] });
+    }
+  }
+  const random = createRandom(options.seed);
+  for (let i = 0; i < options.random; i++) {
+    renders.push({
+      kind: "random",
+      purpose: "validate",
+      label: `Zufallskombination ${i + 1}`,
+      params: [...fixed, ...selected.map((p) => ({ index: p.index, value: stepped(p) ? Math.floor(random() * p.numSteps) / (p.numSteps - 1) : random() }))],
+    });
+  }
+  if (renders.length > options.maxRenders) throw new PlanTooLargeError(renders.length, options.maxRenders);
+  const width = Math.max(4, String(renders.length - 1).length);
+  return { selected, mapping, renders: renders.map((r, i) => ({ id: `r${String(i).padStart(width, "0")}`, ...r })) };
 }
 
 export const dynamicsPlanner: CapturePlanner = {

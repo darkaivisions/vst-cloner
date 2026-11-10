@@ -29,6 +29,8 @@ export interface DynamicsObservation {
 export interface DynamicsInput {
   sampleRate: number;
   levels: Record<Detector, Float64Array>;
+  /** 10^(level/10) of `levels` */
+  energies: Record<Detector, Float64Array>;
   /** input RMS per window (dB) */
   windowDb: Float64Array;
 }
@@ -51,6 +53,10 @@ export function dynamicsInput(profile: Profile): DynamicsInput {
   return {
     sampleRate: profile.manifest.capture.sampleRate,
     levels: { peak: blockLevels(signal, "peak"), rms: blockLevels(signal, "rms") },
+    energies: {
+      peak: blockLevels(signal, "peak").map((l) => 10 ** (l / 10)),
+      rms: blockLevels(signal, "rms").map((l) => 10 ** (l / 10)),
+    },
     windowDb: windowRmsDb(signal, windows),
   };
 }
@@ -72,7 +78,7 @@ export function dynamicsObservations(profile: Profile, input: DynamicsInput): Dy
 
 /** Model gain per comparison window (dB, including makeup). */
 export function modelWindowDb(input: DynamicsInput, p: CompressorParams, s: CompressorStructure): Float64Array {
-  const applied = appliedBlockGains(simulateGain(input.levels[s.detector], p, s, input.sampleRate));
+  const applied = appliedBlockGains(simulateGain(input.levels[s.detector], p, s, input.sampleRate, input.energies[s.detector]));
   const out = new Float64Array(input.windowDb.length);
   for (let w = 0; w < out.length; w++) {
     let sum = 0;
@@ -105,11 +111,13 @@ export function compare(model: Float64Array, measured: Float64Array): Errors {
 export const pack = (p: CompressorParams): number[] => [
   p.thresholdDb, Math.log(Math.max(p.ratio - 1, 1e-3)), Math.log(p.kneeDb + 0.1), p.makeupDb,
   Math.log(p.attack), Math.log(p.release), Math.log(p.charge), Math.log(p.slow), Math.log(p.slowKneeDb + 0.01),
+  Math.log(p.detectorTime + 1e-4),
 ];
 export const unpack = (x: number[]): CompressorParams => ({
   thresholdDb: x[0]!, ratio: 1 + Math.exp(x[1]!), kneeDb: Math.max(0, Math.exp(x[2]!) - 0.1), makeupDb: x[3]!,
   attack: Math.exp(x[4]!), release: Math.exp(x[5]!), charge: Math.exp(x[6]!), slow: Math.exp(x[7]!),
   slowKneeDb: Math.max(0, Math.exp(x[8]!) - 0.01),
+  detectorTime: Math.max(0, Math.exp(x[9]!) - 1e-4),
 });
 
 /** Rough start values from the static part (the rising level steps). */
@@ -123,16 +131,16 @@ export function initialGuess(o: DynamicsObservation, input: DynamicsInput, s: Co
   const thresholdDb = compressed.length ? Math.min(...compressed.map(([l]) => l)) + 3 : -10;
   return {
     thresholdDb, ratio: 4, kneeDb: 6, makeupDb,
-    attack: 0.01, release: 0.1, charge: 0.3, slow: 4, slowKneeDb: 2,
+    attack: 0.01, release: 0.1, charge: 0.3, slow: 4, slowKneeDb: 2, detectorTime: 0.005,
   };
 }
 
 export function fitRender(o: DynamicsObservation, input: DynamicsInput, s: CompressorStructure, start?: CompressorParams, maxEvaluations = 600) {
   const initial = start ?? initialGuess(o, input, s);
   const cost = (x: number[]) => compare(modelWindowDb(input, unpack(x), s), o.measuredDb).rmsDb;
-  const result = nelderMead(cost, pack(initial), { step: [6, 0.7, 0.7, 2, 0.7, 0.7, 0.7, 0.7, 1], maxEvaluations });
+  const result = nelderMead(cost, pack(initial), { step: [6, 0.7, 0.7, 2, 0.7, 0.7, 0.7, 0.7, 1, 1], maxEvaluations });
   // a restart from the result escapes most early collapses of the simplex
-  const again = nelderMead(cost, result.x, { step: [2, 0.3, 0.3, 0.5, 0.3, 0.3, 0.3, 0.3, 0.5], maxEvaluations: maxEvaluations / 2 });
+  const again = nelderMead(cost, result.x, { step: [2, 0.3, 0.3, 0.5, 0.3, 0.3, 0.3, 0.3, 0.5, 0.5], maxEvaluations: maxEvaluations / 2 });
   const params = unpack(again.x);
   return { params, errors: compare(modelWindowDb(input, params, s), o.measuredDb) };
 }
@@ -178,18 +186,38 @@ export interface ParamTable {
   points: { value: number; packed: number[] }[];
 }
 
-/** Packed model at plugin value `value` (piecewise linear between the sweep points, constant outside). */
+/**
+ * Monotone cubic (PCHIP, Fritsch–Carlson) interpolation of one component at `x`; constant outside the points.
+ * Follows bent control curves without overshooting. Same in plugin-template/dynamics/src/DynamicsEngine.h.
+ */
+export function pchip(xs: number[], ys: number[], x: number): number {
+  const n = xs.length;
+  if (x <= xs[0]!) return ys[0]!;
+  if (x >= xs[n - 1]!) return ys[n - 1]!;
+  let k = 0;
+  while (xs[k + 1]! < x) k++;
+  const h = (i: number) => xs[i + 1]! - xs[i]!;
+  const d = (i: number) => (ys[i + 1]! - ys[i]!) / h(i);
+  const slope = (i: number) => {
+    if (i === 0) return d(0);
+    if (i === n - 1) return d(n - 2);
+    const a = d(i - 1), b = d(i);
+    if (a * b <= 0) return 0;
+    const w1 = 2 * h(i) + h(i - 1), w2 = h(i) + 2 * h(i - 1);
+    return (w1 + w2) / (w1 / a + w2 / b);
+  };
+  const hk = h(k), t = (x - xs[k]!) / hk, t2 = t * t, t3 = t2 * t;
+  return (2 * t3 - 3 * t2 + 1) * ys[k]! + (t3 - 2 * t2 + t) * hk * slope(k) + (-2 * t3 + 3 * t2) * ys[k + 1]! + (t3 - t2) * hk * slope(k + 1);
+}
+
+/** Packed model at plugin value `value`: nearest point for discrete parameters, PCHIP otherwise. */
 export function tableAt(table: ParamTable, value: number): number[] {
   const pts = table.points;
   if (table.discrete || pts.length === 1) {
     return pts.reduce((best, p) => (Math.abs(p.value - value) < Math.abs(best.value - value) ? p : best)).packed;
   }
-  if (value <= pts[0]!.value) return pts[0]!.packed;
-  if (value >= pts[pts.length - 1]!.value) return pts[pts.length - 1]!.packed;
-  const k = pts.findIndex((p) => p.value >= value);
-  const a = pts[k - 1]!, b = pts[k]!;
-  const t = (value - a.value) / (b.value - a.value);
-  return a.packed.map((v, i) => v + (b.packed[i]! - v) * t);
+  const xs = pts.map((p) => p.value);
+  return pts[0]!.packed.map((_, i) => pchip(xs, pts.map((p) => p.packed[i]!), value));
 }
 
 /**

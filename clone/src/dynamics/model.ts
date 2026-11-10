@@ -26,6 +26,9 @@ export interface CompressorParams {
   slow: number;
   /** below this amount of reduction the slow stage turns from constant dB/s into an exponential decay */
   slowKneeDb: number;
+  /** averaging time of the detector (s): the energy is smoothed before the static curve. Large level jumps
+   *  therefore reach the curve faster (in dB) than small ones – a program-dependent attack */
+  detectorTime: number;
 }
 
 export interface CompressorStructure {
@@ -68,16 +71,28 @@ export function blockLevels(signal: Float32Array, detector: Detector): Float64Ar
  * Runs the gain computer over block levels; returns the gain (dB) at the end of every block
  * (before makeup). Feedback detects the output of the previous block.
  */
-export function simulateGain(levels: Float64Array, p: CompressorParams, s: CompressorStructure, sampleRate: number): Float64Array {
+export function simulateGain(
+  levels: Float64Array,
+  p: CompressorParams,
+  s: CompressorStructure,
+  sampleRate: number,
+  /** 10^(level/10) per block – pass it when simulating many times (fitting) */
+  energies?: Float64Array,
+): Float64Array {
   const attack = coefficient(p.attack, sampleRate);
   const release = coefficient(p.release, sampleRate);
   const charge = coefficient(p.charge, sampleRate);
   const slowStep = (p.slow * BLOCK) / sampleRate;
+  const smoothing = coefficient(p.detectorTime, sampleRate);
   const gains = new Float64Array(levels.length);
-  let fast = 0, slow = 0, reduction = 0;
+  // below the lower knee edge the curve is 0 – no logarithm needed there
+  const kneeStart = 10 ** ((p.thresholdDb - p.kneeDb / 2) / 10);
+  let fast = 0, slow = 0, reduction = 0, energy = 0;
   for (let b = 0; b < levels.length; b++) {
-    const level = s.topology === "feedback" ? levels[b]! - reduction : levels[b]!;
-    const target = staticReduction(level, p);
+    const e = energies ? energies[b]! : 10 ** (levels[b]! / 10);
+    const raw = s.topology === "feedback" && reduction > 0 ? e * 10 ** (-reduction / 10) : e;
+    energy = smoothing * energy + (1 - smoothing) * raw;
+    const target = energy <= kneeStart ? 0 : staticReduction(10 * Math.log10(energy + 1e-24), p);
     fast = target > fast ? attack * fast + (1 - attack) * target : release * fast + (1 - release) * target;
     if (p.charge > 0) {
       if (fast > slow) slow = charge * slow + (1 - charge) * fast;
