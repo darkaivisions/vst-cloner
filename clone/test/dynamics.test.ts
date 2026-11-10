@@ -7,7 +7,7 @@ import { pack, predictParams, tableAt, type ParamTable } from "../src/dynamics/f
 import { detectDynamics, NotDynamicsError } from "../src/dynamics/plan.ts";
 
 const params: CompressorParams = {
-  thresholdDb: -20, ratio: 4, kneeDb: 6, makeupDb: 0, attack: 0.01, release: 0.1, charge: 0, slow: 4, slowKneeDb: 1, detectorTime: 0,
+  thresholdDb: -20, ratio: 4, kneeDb: 6, makeupDb: 0, attack: 0.01, release: 0.1, charge: 0, slow: 4, slowKneeDb: 1, detectorTime: 0, drive: 0, rippleTime: 0.001, ripple: 0,
 };
 
 test("static curve: no reduction below the knee, slope 1 − 1/ratio above, continuous knee", () => {

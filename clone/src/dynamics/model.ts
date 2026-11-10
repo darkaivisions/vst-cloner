@@ -29,6 +29,12 @@ export interface CompressorParams {
   /** averaging time of the detector (s): the energy is smoothed before the static curve. Large level jumps
    *  therefore reach the curve faster (in dB) than small ones – a program-dependent attack */
   detectorTime: number;
+  /** saturation after the gain reduction, before makeup: tanh(drive · x) / drive (0 = clean) */
+  drive: number;
+  /** detector ripple reaching the gain: a fast energy path (time constant, s) whose curve value differs from the
+   *  smoothed one; this share of the difference modulates the gain (colours compressed signals with odd harmonics) */
+  rippleTime: number;
+  ripple: number;
 }
 
 export interface CompressorStructure {
@@ -84,14 +90,16 @@ export function simulateGain(
   const charge = coefficient(p.charge, sampleRate);
   const slowStep = (p.slow * BLOCK) / sampleRate;
   const smoothing = coefficient(p.detectorTime, sampleRate);
+  const rippleSmoothing = coefficient(p.rippleTime, sampleRate);
   const gains = new Float64Array(levels.length);
   // below the lower knee edge the curve is 0 – no logarithm needed there
   const kneeStart = 10 ** ((p.thresholdDb - p.kneeDb / 2) / 10);
-  let fast = 0, slow = 0, reduction = 0, energy = 0;
+  let fast = 0, slow = 0, reduction = 0, energy = 0, rippleEnergy = 0;
   for (let b = 0; b < levels.length; b++) {
     const e = energies ? energies[b]! : 10 ** (levels[b]! / 10);
     const raw = s.topology === "feedback" && reduction > 0 ? e * 10 ** (-reduction / 10) : e;
     energy = smoothing * energy + (1 - smoothing) * raw;
+    rippleEnergy = rippleSmoothing * rippleEnergy + (1 - rippleSmoothing) * raw;
     const target = energy <= kneeStart ? 0 : staticReduction(10 * Math.log10(energy + 1e-24), p);
     fast = target > fast ? attack * fast + (1 - attack) * target : release * fast + (1 - release) * target;
     if (p.charge > 0) {
@@ -100,7 +108,12 @@ export function simulateGain(
       else slow = Math.max(fast, slow - (slowStep * slow) / Math.max(slow + p.slowKneeDb, 1e-9));
     }
     reduction = Math.max(fast, slow);
-    gains[b] = -reduction;
+    let applied = reduction;
+    if (p.ripple > 0) {
+      const rippleTarget = rippleEnergy <= kneeStart ? 0 : staticReduction(10 * Math.log10(rippleEnergy + 1e-24), p);
+      applied += p.ripple * (rippleTarget - target);
+    }
+    gains[b] = -applied;
   }
   return gains;
 }
@@ -120,6 +133,28 @@ export function sampleGains(blockGains: Float64Array, length: number, makeupDb: 
     }
     from = to;
     to = blockGains[b] ?? to;
+  }
+  return out;
+}
+
+/** Odd-order saturation with unity small-signal gain. */
+export function shape(v: number, drive: number): number {
+  return drive > 1e-4 ? Math.tanh(drive * v) / drive : v;
+}
+
+/**
+ * Output of the model for samples [from, to) of `signal`: gain reduction ramp (as sampleGains), saturation,
+ * makeup. Exactly what the plugin computes per sample.
+ */
+export function renderModel(signal: Float32Array, blockGains: Float64Array, p: CompressorParams, from = 0, to = signal.length): Float32Array {
+  const out = new Float32Array(to - from);
+  const makeup = 10 ** (p.makeupDb / 20);
+  for (let i = from; i < to; i++) {
+    const b = Math.floor(i / BLOCK);
+    const start = b >= 2 ? blockGains[b - 2]! : 0;
+    const end = b >= 1 ? blockGains[b - 1]! : 0;
+    const t = (i - b * BLOCK + 1) / BLOCK;
+    out[i - from] = shape(signal[i]! * 10 ** ((start + (end - start) * t) / 20), p.drive) * makeup;
   }
   return out;
 }

@@ -5,7 +5,7 @@ import { pluginInfo, regenerateTestSignal, runHost, type RenderJob } from "@vst-
 import { decodeWav, encodeWav, type Profile } from "@vst-cloner/profile";
 import type { Logger } from "../build.ts";
 import { compare, dynamicsInput, dynamicsObservations, predictModel, windowRmsDb, type DynamicsModel, type Errors } from "./fit.ts";
-import { sampleGains, simulateGain } from "./model.ts";
+import { renderModel, simulateGain } from "./model.ts";
 import { dynamicsCloneParameters } from "./params.ts";
 
 export interface DynamicsVerifyReport {
@@ -80,8 +80,8 @@ export async function verifyDynamicsClone(
 
       // reference: the TypeScript model applied sample by sample (exactly what the plugin must do)
       const params = predictModel(model, new Map(o.params.map((p) => [p.index, p.value])));
-      const gains = sampleGains(simulateGain(input.levels[model.structure.detector], params, model.structure, sampleRate), signal.length, params.makeupDb);
-      const reference = windowRmsDb(signal.map((v, i) => v * gains[i]!), input.windowDb.length).map((v, w) => v - input.windowDb[w]!);
+      const gains = simulateGain(input.levels[model.structure.detector], params, model.structure, sampleRate);
+      const reference = windowRmsDb(renderModel(signal, gains, params), input.windowDb.length).map((v, w) => v - input.windowDb[w]!);
       const engine = compare(cloneDb, o.measuredDb.map((m, w) => (Number.isNaN(m) ? NaN : reference[w]!)));
       if (engine.maxDb > engineMaxDb) {
         engineMaxDb = engine.maxDb;

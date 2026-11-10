@@ -9,7 +9,7 @@ import { verifyDynamicsClone, type DynamicsVerifyReport } from "./verify.ts";
 export const DYNAMICS_MODEL_FILE = "model/dynamics.json";
 export const DYNAMICS_REPORT_FILE = "report.json";
 /** Raised whenever the dynamics fit changes; older stored models are fitted again. */
-export const DYNAMICS_FIT_REVISION = 2; // 2: detector averaging time
+export const DYNAMICS_FIT_REVISION = 3; // 2: detector averaging time, 3: saturation and detector ripple
 
 /** Whether a profile was captured with the dynamics plan (or already holds a dynamics model). */
 export function isDynamicsProfile(profile: Profile): boolean {
@@ -33,6 +33,7 @@ export function formatDynamicsModel(model: DynamicsModel): string[] {
     `Grundeinstellung: Schwelle ${p.thresholdDb.toFixed(1)} dB, Verhältnis ${p.ratio.toFixed(2)}:1, Knick ${p.kneeDb.toFixed(1)} dB, Pegel ${p.makeupDb >= 0 ? "+" : ""}${p.makeupDb.toFixed(1)} dB`,
     `Zeitverhalten: Detektor ${(p.detectorTime * 1000).toFixed(1)} ms, Attack ${(p.attack * 1000).toFixed(1)} ms, Release ${(p.release * 1000).toFixed(0)} ms` +
       (p.charge > 0 ? `, Speicher lädt in ${(p.charge * 1000).toFixed(0)} ms, baut mit ${p.slow.toFixed(1)} dB/s ab` : ""),
+    `Klangfarbe: Sättigung ${p.drive > 0 ? `Drive ${p.drive.toFixed(2)}` : "aus"}, Detektor-Welligkeit ${(p.ripple * 100).toFixed(1)} % (${(p.rippleTime * 1000).toFixed(1)} ms)`,
     `Parameter: ${model.tables.map((t) => t.name).join(", ")}`,
   ];
   if (model.report.train) lines.push(`Modell vs. Original (Einzelparameter): ${db(model.report.train.rmsDb)} (max ${model.report.train.maxDb.toFixed(1)}) – ${verdict(model.report.train.rmsDb)}`);

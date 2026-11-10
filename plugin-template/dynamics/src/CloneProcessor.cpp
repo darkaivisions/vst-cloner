@@ -60,8 +60,10 @@ void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
 
     for (int i = 0; i < samples; ++i)
     {
+        // renderModel() in model.ts: gain reduction ramp → saturation → makeup
         const double t = (position + 1) / (double) vch::dynamicsBlock;
-        const double gain = std::exp ((fromDb + (toDb - fromDb) * t + makeupDb) * ln10over20);
+        const double reduction = std::exp ((fromDb + (toDb - fromDb) * t) * ln10over20);
+        const double makeup = std::exp (makeupDb * ln10over20);
 
         for (int ch = 0; ch < channels; ++ch)
         {
@@ -69,7 +71,7 @@ void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
             const double x = data[i];
             sumSquares += x * x;
             peak = std::max (peak, std::abs (x));
-            data[i] = (float) (x * gain);
+            data[i] = (float) (vch::shape (x * reduction, params.drive) * makeup);
         }
 
         if (++position == vch::dynamicsBlock)

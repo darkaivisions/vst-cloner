@@ -158,8 +158,11 @@ vst-cloner/
      Plugin-Parameter, additiv kombiniert; Open Optical: Training 0,51 dB, Vorhersage unbekannter Kombinationen 0,96 dB
    - C++-Vorlage `plugin-template/dynamics` (Engine sample-genau wie die TS-Referenz), gemeinsame Parameter-Logik
      in `plugin-template/common`; `vch clone` erkennt Dynamik-Profile; Open Optical Clone: 0,72 dB zum Original
-   - Offen: programmabhängige Attack, Sättigung (Oberwellen), nachgebaute Oberfläche, Desktop-Modus,
-     danach Distortion/Amp (NAM)
+   - Programmabhängige Attack (Detektor mittelt Energie), dichtere Sweeps, PCHIP-Tabellen: 0,50 dB
+   - Klangfarbe: tanh-Sättigung zwischen Pegelreduktion und Ausgangspegel + Detektor-Welligkeit (schneller
+     Energiepfad, erzeugt die Oberwellen komprimierter Signale); Drive gemeinsam über alle Messungen gefittet
+     (Änderungen nur wo die Messung sie verlangt); Open Optical: H3/H5 meist innerhalb 1–2 dB
+   - Offen: nachgebaute Oberfläche, Desktop-Modus, Fit-Zeit (~60 s), danach Distortion/Amp (NAM)
 6. **Delay + Reverb**
 7. **REA-Integration** (Analyst-Agent, `spec.md`, Clean-Room-Trennung) + **yabridge-Check**
 8. **Distribution:** Installer, Updates, Profilbibliothek
