@@ -97,6 +97,31 @@ function ringMedian(img: Image, cx: number, cy: number, r: number): Rgb {
   return [median(0), median(1), median(2)];
 }
 
+/**
+ * Robust circle fit for a value arc: refits after dropping points far from the ring.
+ * Returns the ring if most points lie on it and it spans a good part of the circle.
+ */
+function fitRing(points: [number, number][]): { cx: number; cy: number; r: number; width: number } | undefined {
+  if (points.length < 30) return undefined;
+  let inliers = points;
+  let circle = fitCircle(inliers);
+  for (let i = 0; i < 4 && circle; i++) {
+    const c = circle;
+    const d = points.map((p) => Math.abs(Math.hypot(p[0] - c.cx, p[1] - c.cy) - c.r));
+    // a fixed band relative to the radius: a rotating pointer spreads its pixels radially and fails this test
+    const tolerance = Math.max(2, c.r * 0.08);
+    inliers = points.filter((_, k) => d[k]! <= tolerance);
+    if (inliers.length < 20) return undefined;
+    circle = fitCircle(inliers);
+  }
+  if (!circle || circle.r < 6 || inliers.length < points.length * 0.6) return undefined;
+  const c = circle;
+  const sectors = new Set(inliers.map((p) => Math.floor(((Math.atan2(p[0] - c.cx, -(p[1] - c.cy)) + TAU) % TAU) / TAU * 24)));
+  if (sectors.size < 8) return undefined;
+  const radial = inliers.map((p) => Math.hypot(p[0] - c.cx, p[1] - c.cy));
+  return { ...c, width: Math.max(1.5, percentile(radial, 0.95) - percentile(radial, 0.05) + 1) };
+}
+
 /** Least-squares circle through points (Kåsa fit). */
 function fitCircle(points: [number, number][]): { cx: number; cy: number; r: number } | undefined {
   if (points.length < 3) return undefined;
@@ -158,10 +183,12 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
   const indicator = frames.map((f) => maskPoints(diffMask(f, median, 30, noise), width, searchBox));
   if (indicator.flat().length < 6) return undefined;
 
+  // Value arcs: if most changing pixels lie on a ring, that ring is centred on the knob axis.
+  const ring = fitRing(indicator.flat());
   // The centroid of a rotating pointer moves on a circle around the knob axis.
-  let cx = main.x + main.w / 2;
-  let cy = main.y + main.h / 2;
-  for (let iteration = 0; iteration < 2; iteration++) {
+  let cx = ring ? ring.cx : main.x + main.w / 2;
+  let cy = ring ? ring.cy : main.y + main.h / 2;
+  for (let iteration = 0; iteration < (ring ? 0 : 2); iteration++) {
     const reach = percentile(indicator.flat().map((p) => Math.hypot(p[0] - cx, p[1] - cy)), 0.95);
     const centroids = indicator
       .map((pts) => pts.filter((p) => Math.hypot(p[0] - cx, p[1] - cy) < reach * 0.9))
@@ -173,16 +200,20 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
     cy = circle.cy;
   }
   const dist = (p: [number, number]) => Math.hypot(p[0] - cx, p[1] - cy);
-  const pointerReach = percentile(indicator.flat().map(dist), 0.95);
+  // pointer: changing pixels inside the arc (if there is one)
+  const inside = (p: [number, number]) => !ring || dist(p) < ring.r - ring.width;
+  const pointerReach = percentile(indicator.flat().filter(inside).map(dist), 0.95) || (ring ? ring.r * 0.7 : 0);
 
   // knob body: first radius where the ring colour departs from the centre colour
   const centre = ringMedian(median, cx, cy, Math.max(2, pointerReach * 0.25));
   let radius = pointerReach * 1.05;
-  for (let r = pointerReach * 0.5; r < pointerReach * 2.2; r += 0.5) {
-    if (colorDistance(ringMedian(median, cx, cy, r), centre) > 40) {
+  const maxRadius = ring ? ring.r - ring.width / 2 - 1 : pointerReach * 2.2;
+  for (let r = pointerReach * 0.5; r < maxRadius; r += 0.5) {
+    if (colorDistance(ringMedian(median, cx, cy, r), centre) > (ring ? 14 : 40)) {
       radius = r;
       break;
     }
+    radius = Math.min(maxRadius, Math.max(radius, r));
   }
 
   const first = indicator[0]!;
