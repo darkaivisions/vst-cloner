@@ -64,12 +64,26 @@ namespace vch
     {
         const auto magnitude = std::abs (value);
         const int decimals = fixedDecimals >= 0 ? fixedDecimals : magnitude < 10.0f ? 3 : magnitude < 100.0f ? 2 : magnitude < 1000.0f ? 1 : 0;
+        // no "-0.0": values that round to zero are shown as zero
+        if (magnitude < 0.5f * std::pow (10.0f, (float) -decimals))
+            value = 0.0f;
         auto text = juce::String (value, decimals);
 
         if (juce::String (unit) == "dB" && value > 0.0f)
             text = "+" + text;
 
         return juce::String (unit).isEmpty() ? text : text + " " + unit;
+    }
+
+    /** Normalised value of the original for a clone parameter (differs only for switches and menus that the
+        original reports as continuous, see cloneValue() in clone/src/dynamics/params.ts). */
+    inline double originalValue (const ParamInfo& info, const juce::RangedAudioParameter& parameter)
+    {
+        const double value = parameter.getValue();
+        if (info.stepValues == nullptr || info.numStepValues < 2)
+            return value;
+        const int index = juce::jlimit (0, info.numStepValues - 1, (int) std::lround (value * (info.numStepValues - 1)));
+        return info.stepValues[index];
     }
 
     inline std::unique_ptr<juce::RangedAudioParameter> makeParameter (const ParamInfo& info)

@@ -17,6 +17,8 @@ export interface CloneParam {
   log?: boolean;
   unit?: string;
   choices?: string[];
+  /** choice/toggle of an original that reports it as continuous: the original's normalised value per option */
+  stepValues?: number[];
   /** decimal places of the value text (as in the original); undefined = automatic */
   decimals?: number;
 }

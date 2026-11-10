@@ -57,10 +57,10 @@ void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
 {
     juce::ScopedNoDenormals noDenormals;
 
-    // model values of the current plugin parameters (normalised values = the original's)
+    // model values of the current plugin parameters (normalised values of the original)
     double target[vch::numPacked];
     vch::predictPacked (clonemodel::basePacked, vch::numPacked, clonemodel::tables, clonemodel::numTables,
-                        [this] (int index) { return (double) parameters[(size_t) index]->getValue(); }, target);
+                        [this] (int index) { return vch::originalValue (clonemodel::params[index], *parameters[(size_t) index]); }, target);
     if (! initialised)
     {
         // first block after reset: no smoothing (offline renders must match the settings exactly)

@@ -1,5 +1,5 @@
 import type { CaptureRender, Parameter } from "@vst-cloner/profile";
-import { buildTable, tableRange, tableValue, textDecimals } from "../eq/mapping.ts";
+import { buildTable, parameterSteps, stepIndex, tableRange, tableValue, textDecimals } from "../eq/mapping.ts";
 import type { CloneParam } from "../eq/params.ts";
 import type { DynamicsModel } from "./fit.ts";
 
@@ -28,6 +28,18 @@ export function dynamicsCloneParameters(model: Pick<DynamicsModel, "tables">, pa
       return { id, name: p.name, original: p.index, kind: "choice", defaultValue: index, choices };
     }
 
+    // switches and menus that the original reports as continuous (value-text plateaus)
+    const steps = parameterSteps(p);
+    if (steps && !p.discrete) {
+      const index = stepIndex(steps, norm);
+      const stepValues = steps.values;
+      if (steps.labels.length === 2 && steps.labels.every((l) => /^(off|on)$/i.test(l.trim())) && /^off$/i.test(steps.labels[0]!.trim())) {
+        return { id, name: p.name, original: p.index, kind: "toggle", defaultValue: index, stepValues };
+      }
+      return { id, name: p.name, original: p.index, kind: "choice", defaultValue: index, choices: steps.labels, stepValues };
+    }
+
+    const label = p.label?.trim() ?? "";
     const value = buildTable(p, renders);
     // equal neighbours (rounded display texts) do not break monotonicity
     const direction = value ? Math.sign(value.points[value.points.length - 1]![1] - value.points[0]![1]) : 0;
@@ -37,13 +49,31 @@ export function dynamicsCloneParameters(model: Pick<DynamicsModel, "tables">, pa
       return {
         id, name: p.name, original: p.index, kind: "continuous",
         defaultValue: Math.min(hi, Math.max(lo, tableValue(value, norm))),
-        points: value.points, log: value.log, unit: value.unit,
+        points: value.points, log: value.log, unit: value.unit || label,
         ...(textDecimals(p) !== undefined ? { decimals: textDecimals(p)! } : {}),
       };
     }
     return {
-      id, name: p.name, original: p.index, kind: "continuous", defaultValue: norm, points: [[0, 0], [1, 1]], unit: "",
+      id, name: p.name, original: p.index, kind: "continuous", defaultValue: norm, points: [[0, 0], [1, 1]], unit: label,
       ...(textDecimals(p) !== undefined ? { decimals: textDecimals(p)! } : {}),
     };
   });
+}
+
+/**
+ * Normalised clone value for a normalised value of the original (the clone's normalised values equal the
+ * original's, except for switches and menus the original reports as continuous).
+ */
+export function cloneValue(param: CloneParam, original: Parameter | undefined, value: number): number {
+  if (!param.stepValues || !original) return value;
+  const steps = parameterSteps(original);
+  if (!steps) return value;
+  return stepIndex(steps, value) / Math.max(param.stepValues.length - 1, 1);
+}
+
+/** Value of the original that the clone's model actually uses for it (the middle of a switch/menu step). */
+export function modelValue(param: CloneParam, original: Parameter | undefined, value: number): number {
+  if (!param.stepValues || !original) return value;
+  const steps = parameterSteps(original);
+  return steps ? param.stepValues[stepIndex(steps, value)] ?? value : value;
 }

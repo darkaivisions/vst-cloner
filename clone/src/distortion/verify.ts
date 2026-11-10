@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { pluginInfo, runHost, type RenderJob } from "@vst-cloner/capture";
 import { decodeWav, encodeWav, type Profile } from "@vst-cloner/profile";
 import type { Logger } from "../build.ts";
-import { dynamicsCloneParameters } from "../dynamics/params.ts";
+import { cloneValue, dynamicsCloneParameters, modelValue } from "../dynamics/params.ts";
 import {
   compareDistortion,
   distortionInput,
@@ -58,10 +58,15 @@ export async function verifyDistortionClone(
   const info = await pluginInfo(clonePath, { sampleRate, ...host });
   const cloneIndexByName = new Map(info.parameters.map((p) => [p.name, p.index]));
   const toClone = new Map<number, number>();
+  const convert = new Map<number, (value: number) => number>();
+  const asModel = new Map<number, (value: number) => number>();
+  const originals = new Map(profile.parameters.parameters.map((p) => [p.index, p]));
   for (const param of dynamicsCloneParameters(model, profile.parameters.parameters, profile.captures.renders)) {
     const index = cloneIndexByName.get(param.name);
     if (index === undefined) throw new Error(`Der Klon hat keinen Parameter „${param.name}“`);
     toClone.set(param.original, index);
+    convert.set(param.original, (value) => cloneValue(param, originals.get(param.original), value));
+    asModel.set(param.original, (value) => modelValue(param, originals.get(param.original), value));
   }
 
   const renders = profile.captures.renders;
@@ -76,7 +81,7 @@ export async function verifyDistortionClone(
     renders: renders.map((r) => ({
       id: r.id,
       output: `out/${r.id}.wav`,
-      params: r.params.flatMap((p) => (toClone.has(p.index) ? [{ index: toClone.get(p.index)!, value: p.value }] : [])),
+      params: r.params.flatMap((p) => (toClone.has(p.index) ? [{ index: toClone.get(p.index)!, value: convert.get(p.index)!(p.value) }] : [])),
     })),
   };
 
@@ -97,7 +102,7 @@ export async function verifyDistortionClone(
       const clone = decodeWav(await readFile(join(workDir, "out", `${o.renderId}.wav`))).channels[0]!;
       const original = decodeWav(profile.files.get(renders.find((r) => r.id === o.renderId)!.file)!).channels[0]!;
       rows.push({ label: o.label, purpose: o.purpose, errors: compareDistortion(measureOutput(input, clone), o), esrDb: esrDb(original, clone, from, to) });
-      const reference = processDistortion(input.signal, predictDistortion(model, new Map(o.params.map((p) => [p.index, p.value]))), sampleRate, model.delay ?? 0);
+      const reference = processDistortion(input.signal, predictDistortion(model, new Map(o.params.map((p) => [p.index, asModel.get(p.index)?.(p.value) ?? p.value]))), sampleRate, model.delay ?? 0);
       const engine = esrDb(reference, clone, 0, Math.min(reference.length, clone.length));
       if (engine > engineEsrDb) {
         engineEsrDb = engine;

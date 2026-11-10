@@ -44,9 +44,9 @@ void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
 {
     juce::ScopedNoDenormals noDenormals;
 
-    // model parameters from the current plugin parameters (normalised values = the original's)
+    // model parameters from the current plugin parameters (normalised values of the original)
     const auto params = vch::predict (clonemodel::basePacked, clonemodel::tables, clonemodel::numTables,
-                                      [this] (int index) { return (double) parameters[(size_t) index]->getValue(); });
+                                      [this] (int index) { return vch::originalValue (clonemodel::params[index], *parameters[(size_t) index]); });
     computer.setParams (params, currentSampleRate);
     if (! initialised)
     {

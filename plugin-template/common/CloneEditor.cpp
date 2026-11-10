@@ -184,6 +184,73 @@ namespace
         juce::RangedAudioParameter& parameter;
     };
 
+    // ---- choice (menu) -----------------------------------------------------------------------
+
+    /** Box in the original's colours showing the current option; a click opens the list of options. */
+    class Choice final : public juce::Component
+    {
+    public:
+        Choice (const Control& c, juce::RangedAudioParameter& p)
+            : control (c), parameter (p), attachment (p, [this] (float) { repaint(); })
+        {
+            setMouseCursor (juce::MouseCursor::PointingHandCursor);
+            attachment.sendInitialUpdate();
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            auto r = getLocalBounds().toFloat();
+            g.setColour (colour (control.c1));
+            g.fillRoundedRectangle (r, std::min (r.getHeight() * 0.5f, 6.0f));
+
+            const auto font = makeFont (control.f1, false);
+            const auto text = parameter.getCurrentValueAsText();
+            g.setFont (font);
+            g.setColour (colour (control.c2));
+            // an arrow only where the text still fits next to it
+            const float arrow = r.getHeight() * 0.5f;
+            const bool withArrow = juce::GlyphArrangement::getStringWidth (font, text) + arrow * 2.5f < r.getWidth();
+            auto textArea = r.reduced (3.0f, 0.0f);
+            if (withArrow)
+            {
+                auto a = textArea.removeFromRight (arrow).withSizeKeepingCentre (arrow * 0.7f, arrow * 0.4f);
+                juce::Path path;
+                path.addTriangle (a.getX(), a.getY(), a.getRight(), a.getY(), a.getCentreX(), a.getBottom());
+                g.fillPath (path);
+            }
+            g.drawFittedText (text, textArea.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+        }
+
+        void mouseDown (const juce::MouseEvent&) override
+        {
+            juce::PopupMenu menu;
+            const auto options = optionTexts();
+            const int current = juce::roundToInt (parameter.getValue() * (float) std::max (options.size() - 1, 1));
+            for (int i = 0; i < options.size(); ++i)
+                menu.addItem (i + 1, options[i], true, i == current);
+            juce::Component::SafePointer<Choice> safe (this);
+            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safe, options] (int result)
+            {
+                if (safe == nullptr || result <= 0)
+                    return;
+                const float norm = (float) (result - 1) / (float) std::max (options.size() - 1, 1);
+                safe->attachment.setValueAsCompleteGesture (safe->parameter.convertFrom0to1 (norm));
+            });
+        }
+
+    private:
+        juce::StringArray optionTexts() const
+        {
+            if (auto* choice = dynamic_cast<const juce::AudioParameterChoice*> (&parameter))
+                return choice->choices;
+            return parameter.getAllValueStrings();
+        }
+
+        const Control& control;
+        juce::RangedAudioParameter& parameter;
+        juce::ParameterAttachment attachment;
+    };
+
     // ---- toggle ------------------------------------------------------------------------------
 
     class Toggle final : public juce::Button
@@ -726,14 +793,7 @@ public:
             }
             else if (c.kind == 4)
             {
-                auto box = std::make_unique<juce::ComboBox>();
-                if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (parameter))
-                    box->addItemList (choice->choices, 1);
-                box->setColour (juce::ComboBox::backgroundColourId, colour (c.c1));
-                box->setColour (juce::ComboBox::textColourId, colour (c.c2));
-                box->setColour (juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
-                box->setColour (juce::ComboBox::arrowColourId, colour (c.c2));
-                attachments.push_back (std::make_unique<juce::ComboBoxParameterAttachment> (*parameter, *box));
+                auto box = std::make_unique<Choice> (c, *parameter);
                 component = std::move (box);
             }
 

@@ -2,7 +2,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Parameter } from "@vst-cloner/profile";
 import type { Logger } from "../build.ts";
-import { buildTable, detectEq, tableNorm, tableRange, type EqMapping } from "../eq/mapping.ts";
+import { buildTable, detectEq, parameterSteps, tableNorm, tableRange, type EqMapping } from "../eq/mapping.ts";
 import { runGuiSnapshot, withVirtualDisplay, type GuiStep } from "./capture.ts";
 import { countMask, diffMask, dilate, loadRaw } from "./image.ts";
 
@@ -100,33 +100,6 @@ function eqContext(parameters: Parameter[]): EqProbeContext | undefined {
   const frequencyValues = band.frequency !== undefined ? [50, 200, 1000, 5000, 15000].map((f) => normOf(band.frequency, f)!).filter((v) => v !== undefined) : undefined;
   const gainValues = band.gain !== undefined ? [-9, -4.5, 0, 4.5, 9].map((g) => normOf(band.gain, g)!).filter((v) => v !== undefined) : undefined;
   return { mapping, roles, context, ...(frequencyValues ? { frequencyValues } : {}), ...(gainValues ? { gainValues } : {}) };
-}
-
-/** a value text that is a plain number with an optional unit (continuous controls) */
-const NUMERIC_TEXT = /^\s*[+-]?(\d+([.,]\d+)?|inf)\s*(db|%|ms|s|hz|khz|°|:\s*1|x)?\s*$/i;
-
-/**
- * Steps of a parameter: declared steps, or – for plugins that report switches and menus as continuous –
- * the plateaus of its value texts (OFF/ON, Full/Masked/Unmasked …). Values are the middle of each plateau.
- */
-export function parameterSteps(p: Parameter): { values: number[]; labels: string[] } | undefined {
-  if (p.discrete && p.numSteps >= 2 && p.numSteps < 1000) {
-    const values = Array.from({ length: p.numSteps }, (_, i) => i / (p.numSteps - 1));
-    const labels = values.map((v) => p.texts?.reduce((best, t) => (Math.abs(t.value - v) < Math.abs(best.value - v) ? t : best)).text ?? String(v));
-    return { values, labels };
-  }
-  const texts = [...(p.texts ?? [])].sort((a, b) => a.value - b.value);
-  if (texts.length < 3) return undefined;
-  const distinct = [...new Set(texts.map((t) => t.text))];
-  const repeats = distinct.length < texts.length;
-  if (!repeats || distinct.length > 12 || distinct.every((t) => NUMERIC_TEXT.test(t))) return undefined;
-  const plateaus: { label: string; from: number; to: number }[] = [];
-  for (const t of texts) {
-    const last = plateaus[plateaus.length - 1];
-    if (last && last.label === t.text) last.to = t.value;
-    else plateaus.push({ label: t.text, from: t.value, to: t.value });
-  }
-  return { values: plateaus.map((q) => (q.from + q.to) / 2), labels: plateaus.map((q) => q.label) };
 }
 
 function alternative(p: Parameter): number {

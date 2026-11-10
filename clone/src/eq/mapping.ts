@@ -259,3 +259,49 @@ export function detectEq(parameters: Parameter[], renders: CaptureRender[] = [])
 export function optionIndex(norm: number, count: number): number {
   return Math.max(0, Math.min(count - 1, Math.round(norm * (count - 1))));
 }
+
+/** a value text that is a plain number with an optional unit (continuous controls) */
+const NUMERIC_TEXT = /^\s*[+-]?(\d+([.,]\d+)?|inf)\s*(db|%|ms|s|hz|khz|°|:\s*1|x)?\s*$/i;
+
+export interface ParameterSteps {
+  /** normalised value per step (middle of its plateau) */
+  values: number[];
+  labels: string[];
+  /** normalised range [from, to] of each step */
+  bounds: [number, number][];
+}
+
+/**
+ * Steps of a parameter: declared steps, or – for plugins that report switches and menus as continuous –
+ * the plateaus of its value texts (OFF/ON, Full/Masked/Unmasked …). Values are the middle of each plateau.
+ */
+export function parameterSteps(p: Parameter): ParameterSteps | undefined {
+  if (p.discrete && p.numSteps >= 2 && p.numSteps < 1000) {
+    const values = Array.from({ length: p.numSteps }, (_, i) => i / (p.numSteps - 1));
+    const labels = values.map((v) => p.texts?.reduce((best, t) => (Math.abs(t.value - v) < Math.abs(best.value - v) ? t : best)).text ?? String(v));
+    const half = 0.5 / (p.numSteps - 1);
+    return { values, labels, bounds: values.map((v) => [Math.max(0, v - half), Math.min(1, v + half)]) };
+  }
+  const texts = [...(p.texts ?? [])].sort((a, b) => a.value - b.value);
+  if (texts.length < 3) return undefined;
+  const distinct = [...new Set(texts.map((t) => t.text))];
+  const repeats = distinct.length < texts.length;
+  if (!repeats || distinct.length > 12 || distinct.every((t) => NUMERIC_TEXT.test(t))) return undefined;
+  const plateaus: { label: string; from: number; to: number }[] = [];
+  for (const t of texts) {
+    const last = plateaus[plateaus.length - 1];
+    if (last && last.label === t.text) last.to = t.value;
+    else plateaus.push({ label: t.text, from: t.value, to: t.value });
+  }
+  return { values: plateaus.map((q) => (q.from + q.to) / 2), labels: plateaus.map((q) => q.label), bounds: plateaus.map((q) => [q.from, q.to]) };
+}
+
+/** Step that a normalised value of the original selects: the plateau containing it, else the nearest one. */
+export function stepIndex(steps: ParameterSteps, value: number): number {
+  let best = 0, bestDistance = Infinity;
+  steps.bounds.forEach(([from, to], i) => {
+    const distance = value < from ? from - value : value > to ? value - to : 0;
+    if (distance < bestDistance) { best = i; bestDistance = distance; }
+  });
+  return best;
+}

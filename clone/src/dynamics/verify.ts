@@ -6,7 +6,7 @@ import { decodeWav, encodeWav, type Profile } from "@vst-cloner/profile";
 import type { Logger } from "../build.ts";
 import { compare, dynamicsInput, dynamicsObservations, predictModel, windowRmsDb, type DynamicsModel, type Errors } from "./fit.ts";
 import { renderModel, simulateGain } from "./model.ts";
-import { dynamicsCloneParameters } from "./params.ts";
+import { cloneValue, dynamicsCloneParameters, modelValue } from "./params.ts";
 
 export interface DynamicsVerifyReport {
   clone: string;
@@ -38,10 +38,15 @@ export async function verifyDynamicsClone(
   const info = await pluginInfo(clonePath, { sampleRate, ...host });
   const cloneIndexByName = new Map(info.parameters.map((p) => [p.name, p.index]));
   const toClone = new Map<number, number>();
+  const convert = new Map<number, (value: number) => number>();
+  const asModel = new Map<number, (value: number) => number>();
+  const originals = new Map(profile.parameters.parameters.map((p) => [p.index, p]));
   for (const param of dynamicsCloneParameters(model, profile.parameters.parameters, profile.captures.renders)) {
     const index = cloneIndexByName.get(param.name);
     if (index === undefined) throw new Error(`Der Klon hat keinen Parameter „${param.name}“`);
     toClone.set(param.original, index);
+    convert.set(param.original, (value) => cloneValue(param, originals.get(param.original), value));
+    asModel.set(param.original, (value) => modelValue(param, originals.get(param.original), value));
   }
 
   const renders = profile.captures.renders;
@@ -56,7 +61,7 @@ export async function verifyDynamicsClone(
     renders: renders.map((r) => ({
       id: r.id,
       output: `out/${r.id}.wav`,
-      params: r.params.flatMap((p) => (toClone.has(p.index) ? [{ index: toClone.get(p.index)!, value: p.value }] : [])),
+      params: r.params.flatMap((p) => (toClone.has(p.index) ? [{ index: toClone.get(p.index)!, value: convert.get(p.index)!(p.value) }] : [])),
     })),
   };
 
@@ -79,7 +84,7 @@ export async function verifyDynamicsClone(
       rows.push({ label: o.label, purpose: o.purpose, errors: compare(cloneDb, o.measuredDb) });
 
       // reference: the TypeScript model applied sample by sample (exactly what the plugin must do)
-      const params = predictModel(model, new Map(o.params.map((p) => [p.index, p.value])));
+      const params = predictModel(model, new Map(o.params.map((p) => [p.index, asModel.get(p.index)?.(p.value) ?? p.value])));
       const gains = simulateGain(input.levels[model.structure.detector], params, model.structure, sampleRate);
       const reference = windowRmsDb(renderModel(signal, gains, params), input.windowDb.length).map((v, w) => v - input.windowDb[w]!);
       const engine = compare(cloneDb, o.measuredDb.map((m, w) => (Number.isNaN(m) ? NaN : reference[w]!)));

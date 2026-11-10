@@ -39,12 +39,14 @@ export function parameterLines(params: CloneParam[]): string[] {
     "    const ParamPoint* points; int numPoints; bool log; const char* unit;",
     "    const char* const* choices; int numChoices;",
     "    int decimals; // −1: automatic",
+    "    const float* stepValues; int numStepValues; // original's normalised value per option (or nullptr)",
     "};",
     "",
   ];
   params.forEach((p, i) => {
     if (p.points) lines.push(`inline const ParamPoint points${i}[] = { ${p.points.map(([n, v]) => `{ ${cppNumber(n)}f, ${cppNumber(v)}f }`).join(", ")} };`);
     if (p.choices) lines.push(`inline const char* const choices${i}[] = { ${p.choices.map(cppString).join(", ")} };`);
+    if (p.stepValues) lines.push(`inline const float stepValues${i}[] = { ${p.stepValues.map((v) => `${cppNumber(v)}f`).join(", ")} };`);
   });
   lines.push("", "inline const ParamInfo params[] =", "{");
   params.forEach((p, i) => {
@@ -52,7 +54,8 @@ export function parameterLines(params: CloneParam[]): string[] {
     lines.push(
       `    { ${cppString(p.id)}, ${cppString(p.name)}, ParamKind::${kind}, ${cppNumber(p.defaultValue)}f, ` +
         `${p.points ? `points${i}` : "nullptr"}, ${p.points?.length ?? 0}, ${p.log ? "true" : "false"}, ${cppString(p.unit ?? "")}, ` +
-        `${p.choices ? `choices${i}` : "nullptr"}, ${p.choices?.length ?? 0}, ${p.decimals ?? -1} },`,
+        `${p.choices ? `choices${i}` : "nullptr"}, ${p.choices?.length ?? 0}, ${p.decimals ?? -1}, ` +
+        `${p.stepValues ? `stepValues${i}` : "nullptr"}, ${p.stepValues?.length ?? 0} },`,
     );
   });
   lines.push("};", `inline constexpr int numParams = ${params.length};`, "");
