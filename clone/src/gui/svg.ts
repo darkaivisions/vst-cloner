@@ -76,7 +76,8 @@ function renderControl(c: Control, value: number, fill: (f: Fill) => string): st
   if (c.readout) {
     const r = c.readout;
     if (r.background) parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" fill="${r.background}"${r.border ? ` stroke="${r.border}" stroke-width="1"` : ""}/>`);
-    parts.push(`<text x="${r.x + r.w / 2}" y="${r.y + r.h / 2}" font-size="${r.size}" fill="${r.color}" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif">${(value * 100).toFixed(2)}</text>`);
+    const text = c.valueText && value === c.value ? c.valueText : (value * 100).toFixed(2);
+    parts.push(`<text x="${r.x + r.w / 2}" y="${r.y + r.h / 2}" font-size="${Math.min(r.size, r.h * 0.85)}" fill="${r.color}" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" textLength="${Math.min(r.w - 4, esc(text).length * r.size * 0.55)}" lengthAdjust="spacingAndGlyphs">${esc(text)}</text>`);
   }
 
   if (c.kind === "rotary" && c.rotary) {
@@ -110,10 +111,13 @@ function renderControl(c: Control, value: number, fill: (f: Fill) => string): st
   } else if (c.kind === "toggle" && c.toggle) {
     parts.push(`<rect x="${c.x}" y="${c.y}" width="${c.w}" height="${c.h}" rx="${c.toggle.radius}" fill="${value > 0.5 ? c.toggle.on : c.toggle.off}"/>`);
   } else if (c.kind === "value" && c.choice) {
-    parts.push(`<text x="${c.x + c.w / 2}" y="${c.y + c.h / 2}" font-size="${c.choice.size}" fill="${c.choice.text}" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif">${(value * 100).toFixed(1)}</text>`);
+    parts.push(`<text x="${c.x + c.w / 2}" y="${c.y + c.h / 2}" font-size="${c.choice.size}" fill="${c.choice.text}" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif">${esc(c.valueText && value === c.value ? c.valueText : (value * 100).toFixed(1))}</text>`);
   } else if (c.kind === "choice" && c.choice) {
     parts.push(`<rect x="${c.x}" y="${c.y}" width="${c.w}" height="${c.h}" rx="3" fill="${c.choice.background}"/>`);
-    parts.push(`<text x="${c.x + c.w / 2}" y="${c.y + c.h / 2}" font-size="${c.choice.size}" fill="${c.choice.text}" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif">${esc(c.name)}</text>`);
+    // current option (as the plugin's combo box shows it), fitted into the box
+    const option = c.options?.length ? c.options[Math.min(c.options.length - 1, Math.max(0, Math.round(value * (c.options.length - 1))))]! : c.valueText ?? c.name;
+    const size = Math.min(c.choice.size, c.h * 0.85);
+    parts.push(`<text x="${c.x + c.w / 2}" y="${c.y + c.h / 2}" font-size="${size}" fill="${c.choice.text}" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif"${option.length * size * 0.55 > c.w - 4 ? ` textLength="${c.w - 4}" lengthAdjust="spacingAndGlyphs"` : ""}>${esc(option)}</text>`);
   }
   return parts.join("");
 }

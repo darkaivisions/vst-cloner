@@ -102,19 +102,49 @@ function eqContext(parameters: Parameter[]): EqProbeContext | undefined {
   return { mapping, roles, context, ...(frequencyValues ? { frequencyValues } : {}), ...(gainValues ? { gainValues } : {}) };
 }
 
+/** a value text that is a plain number with an optional unit (continuous controls) */
+const NUMERIC_TEXT = /^\s*[+-]?(\d+([.,]\d+)?|inf)\s*(db|%|ms|s|hz|khz|°|:\s*1|x)?\s*$/i;
+
+/**
+ * Steps of a parameter: declared steps, or – for plugins that report switches and menus as continuous –
+ * the plateaus of its value texts (OFF/ON, Full/Masked/Unmasked …). Values are the middle of each plateau.
+ */
+export function parameterSteps(p: Parameter): { values: number[]; labels: string[] } | undefined {
+  if (p.discrete && p.numSteps >= 2 && p.numSteps < 1000) {
+    const values = Array.from({ length: p.numSteps }, (_, i) => i / (p.numSteps - 1));
+    const labels = values.map((v) => p.texts?.reduce((best, t) => (Math.abs(t.value - v) < Math.abs(best.value - v) ? t : best)).text ?? String(v));
+    return { values, labels };
+  }
+  const texts = [...(p.texts ?? [])].sort((a, b) => a.value - b.value);
+  if (texts.length < 3) return undefined;
+  const distinct = [...new Set(texts.map((t) => t.text))];
+  const repeats = distinct.length < texts.length;
+  if (!repeats || distinct.length > 12 || distinct.every((t) => NUMERIC_TEXT.test(t))) return undefined;
+  const plateaus: { label: string; from: number; to: number }[] = [];
+  for (const t of texts) {
+    const last = plateaus[plateaus.length - 1];
+    if (last && last.label === t.text) last.to = t.value;
+    else plateaus.push({ label: t.text, from: t.value, to: t.value });
+  }
+  return { values: plateaus.map((q) => (q.from + q.to) / 2), labels: plateaus.map((q) => q.label) };
+}
+
 function alternative(p: Parameter): number {
   const v = baseValue(p);
-  if (p.discrete && p.numSteps >= 2 && p.numSteps < 1000) {
-    const step = 1 / (p.numSteps - 1);
-    return v + step <= 1 + 1e-6 ? Math.min(1, v + step) : Math.max(0, v - step);
+  const steps = parameterSteps(p);
+  if (steps) {
+    // the next step that differs from the current one
+    const current = steps.values.reduce((best, x, i) => (Math.abs(x - v) < Math.abs(steps.values[best]! - v) ? i : best), 0);
+    return steps.values[current + 1 < steps.values.length ? current + 1 : current - 1] ?? (v < 0.5 ? 0.85 : 0.15);
   }
   return v < 0.5 ? 0.85 : 0.15;
 }
 
 function sweep(p: Parameter): number[] {
-  if (p.discrete && p.numSteps >= 2 && p.numSteps < 1000) {
-    const count = Math.min(p.numSteps, 8);
-    return Array.from({ length: count }, (_, i) => Math.round((i / (count - 1)) * (p.numSteps - 1)) / (p.numSteps - 1));
+  const steps = parameterSteps(p);
+  if (steps) {
+    const count = Math.min(steps.values.length, 8);
+    return Array.from({ length: count }, (_, i) => steps.values[Math.round((i / Math.max(1, count - 1)) * (steps.values.length - 1))]!);
   }
   return [0, 0.25, 0.5, 0.75, 1];
 }
@@ -210,8 +240,8 @@ export async function probeGui(options: ProbeOptions): Promise<GuiProbe> {
       index: param.index,
       name: param.name,
       ...(eq?.roles.has(param.index) ? { bandRole: eq.roles.get(param.index)!, ...(bandReference ? { reference: bandReference } : {}) } : {}),
-      discrete: param.discrete && param.numSteps >= 2 && param.numSteps < 1000,
-      ...(param.texts && param.discrete ? { options: param.texts.map((t) => t.text) } : {}),
+      discrete: parameterSteps(param) !== undefined,
+      ...(parameterSteps(param) ? { options: parameterSteps(param)!.labels } : {}),
       pixels,
       frames: sweepOf(param).map((value, k) => ({ value, file: second!.shots.get(`p${param.index}_${k}`)!.file })),
     }));

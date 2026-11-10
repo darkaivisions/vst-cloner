@@ -174,6 +174,8 @@ interface Footprint {
   readout?: Box;
   /** normalized value in the base image */
   value: number;
+  /** value text of the original at `value` */
+  valueText?: string;
 }
 
 function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryStyle | undefined {
@@ -184,7 +186,9 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
   if (indicator.flat().length < 6) return undefined;
 
   // Value arcs: if most changing pixels lie on a ring, that ring is centred on the knob axis.
-  const ring = fitRing(indicator.flat());
+  // a ring larger than the control itself belongs to something else (value text, neighbouring display)
+  const fittedRing = fitRing(indicator.flat());
+  const ring = fittedRing && fittedRing.r <= Math.max(main.w, main.h) * 0.6 ? fittedRing : undefined;
   // The centroid of a rotating pointer moves on a circle around the knob axis.
   let cx = ring ? ring.cx : main.x + main.w / 2;
   let cy = ring ? ring.cy : main.y + main.h / 2;
@@ -403,7 +407,12 @@ function analyzeControl(fp: Footprint, noise: Uint8Array): Control | undefined {
   const median = medianImage(frames, clampBox(grow(fp.region, 8), frames[0]!));
   const name = prettifyName(param.name);
   const readout = readoutStyle(fp, median);
-  const base = { param: param.index, name, value: fp.value, x: main.x, y: main.y, w: main.w, h: main.h, ...(readout ? { readout } : {}) };
+  const base = {
+    param: param.index, name, value: fp.value,
+    ...(fp.valueText ? { valueText: fp.valueText } : {}),
+    ...(param.options?.length ? { options: param.options } : {}),
+    x: main.x, y: main.y, w: main.w, h: main.h, ...(readout ? { readout } : {}),
+  };
 
   if (param.discrete && frames.length === 2) {
     const off = dominantColor(frames[0]!, main);
@@ -413,10 +422,15 @@ function analyzeControl(fp: Footprint, noise: Uint8Array): Control | undefined {
   }
 
   if (param.discrete) {
-    const textPoints = frames.flatMap((f) => maskPoints(diffMask(f, median, 30, noise), f.width, main));
+    // the option text is always there: pixels clearly apart from the box colour in the first frame
+    const background = dominantColor(median, main);
+    const frame = frames[0]!;
+    const ink: [number, number][] = [];
+    for (let y = main.y; y < main.y + main.h; y++) for (let x = main.x; x < main.x + main.w; x++) if (colorDistance(pixel(frame, x, y), background) > 80) ink.push([x, y]);
+    const text = ink.length >= 4 ? dominantAt(frame, ink) : luminance(background) > 128 ? ([20, 20, 20] as Rgb) : ([235, 235, 235] as Rgb);
     return {
       ...base, kind: "choice",
-      choice: { background: hex(dominantColor(median, main)), text: hex(dominantAt(frames[0]!, textPoints)), size: Math.max(9, Math.round(main.h * 0.55)) },
+      choice: { background: hex(background), text: hex(text), size: Math.max(9, Math.round(main.h * 0.55)) },
     };
   }
 
@@ -489,6 +503,57 @@ function splitSharedValues(controls: Control[]): void {
       done.add(o);
     });
   }
+}
+
+/** Value text of a parameter at a normalised value: interpolated between numeric texts, otherwise the nearest. */
+export function textAtValue(p: Parameter, value: number): string | undefined {
+  const texts = [...(p.texts ?? [])].sort((a, b) => a.value - b.value);
+  if (!texts.length) return undefined;
+  const number = (t: string) => /^\s*[+-]?\d+(?:[.,]\d+)?/.exec(t)?.[0];
+  const upper = texts.findIndex((t) => t.value >= value);
+  const a = texts[Math.max(0, upper - 1)]!, b = texts[upper < 0 ? texts.length - 1 : upper]!;
+  const na = number(a.text), nb = number(b.text);
+  if (na === undefined || nb === undefined || b.value === a.value || a.text.slice(na.length) !== b.text.slice(nb.length)) {
+    return (Math.abs(a.value - value) <= Math.abs(b.value - value) ? a : b).text;
+  }
+  const decimals = (na.split(/[.,]/)[1] ?? "").length;
+  const v = Number(na.replace(",", ".")) + ((value - a.value) / (b.value - a.value)) * (Number(nb.replace(",", ".")) - Number(na.replace(",", ".")));
+  return `${v.toFixed(decimals)}${a.text.slice(na.length)}`;
+}
+
+/**
+ * Splits a changed area into a control and a value text stacked above or below it: the rows of the
+ * (undilated) change mask fall into blocks separated by empty rows; a flat, wide block is the value text.
+ */
+function splitStack(changed: Uint8Array, width: number, box: Box): { control: Box; readout: Box } | undefined {
+  const rows: number[] = [];
+  for (let y = box.y; y < box.y + box.h; y++) {
+    let n = 0;
+    for (let x = box.x; x < box.x + box.w; x++) n += changed[y * width + x]!;
+    rows.push(n);
+  }
+  const blocks: { from: number; to: number }[] = [];
+  let gap = 2;
+  rows.forEach((n, i) => {
+    if (n > 0) {
+      if (gap >= 2 || !blocks.length) blocks.push({ from: i, to: i });
+      else blocks[blocks.length - 1]!.to = i;
+      gap = 0;
+    } else gap++;
+  });
+  if (blocks.length < 2) return undefined;
+  const boxOf = (b: { from: number; to: number }): Box => {
+    let minX = Infinity, maxX = -Infinity;
+    for (let y = box.y + b.from; y <= box.y + b.to; y++) {
+      for (let x = box.x; x < box.x + box.w; x++) if (changed[y * width + x]) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); }
+    }
+    return { x: minX, y: box.y + b.from, w: maxX - minX + 1, h: b.to - b.from + 1 };
+  };
+  const boxes = blocks.map(boxOf);
+  const isText = (b: Box) => b.h <= 24 && b.w >= b.h * 1.3;
+  const control = boxes.reduce((best, b) => (area(b) > area(best) && !isText(b) ? b : best), boxes.find((b) => !isText(b)) ?? boxes[0]!);
+  const readout = boxes.filter((b) => b !== control && isText(b)).sort((a, b) => Math.abs(a.y - control.y) - Math.abs(b.y - control.y))[0];
+  return readout && !isText(control) ? { control: grow(control, 3), readout: grow(readout, 3) } : undefined;
 }
 
 // ---- EQ display -------------------------------------------------------------------------------
@@ -1103,7 +1168,7 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   const displayRegions: { box: Box; eq: boolean; params: ProbedParameter[]; frames: Image[] }[] = [];
 
   const bandFootprints: { param: ProbedParameter; frames: Image[] }[] = [];
-  const pending: { param: ProbedParameter; frames: Image[]; parts: ReturnType<typeof components> }[] = [];
+  const pending: { param: ProbedParameter; frames: Image[]; parts: ReturnType<typeof components>; changed: Uint8Array }[] = [];
   const hiddenSwitches: number[] = [];
   const contains = (outer: Box, inner: Box) =>
     inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
@@ -1132,16 +1197,19 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     const parts = allParts.filter((p) => !large.includes(p) && !(displayBox && contains(displayBox, p)));
     if (!parts.length) continue;
     if (displayBox && !(parts[0]!.w <= width * 0.3 && parts[0]!.h <= height * 0.3)) continue;
-    const pendingParam = { param, frames, parts };
+    const pendingParam = { param, frames, parts, changed };
     pending.push(pendingParam);
   }
 
   // Switches often also dim the control they enable – their own footprint is the part that is not another control.
   const continuousBoxes = pending.filter((p) => !p.param.discrete).map((p) => p.parts[0]!);
-  for (const { param, frames, parts: candidates } of pending) {
+  for (const { param, frames, parts: candidates, changed } of pending) {
     let parts = candidates;
     if (param.discrete) {
-      const own = parts.filter((p) => !continuousBoxes.some((b) => overlaps(b, p, 2)));
+      // a part covered substantially by a continuous control is that control dimmed by the switch (touching is not enough)
+      const covered = (b: Box, p: Box) =>
+        Math.max(0, Math.min(b.x + b.w, p.x + p.w) - Math.max(b.x, p.x)) * Math.max(0, Math.min(b.y + b.h, p.y + p.h) - Math.max(b.y, p.y)) > area(p) * 0.3;
+      const own = parts.filter((p) => !continuousBoxes.some((b) => covered(b, p)));
       if (!own.length) {
         hiddenSwitches.push(param.index);
         continue;
@@ -1152,13 +1220,18 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     const main0 = parts[0]!;
     const nearby = parts.filter((p) => Math.hypot(p.cx - main0.cx, p.cy - main0.cy) < Math.max(main0.w, main0.h) * 2.5 + 40);
     const region = union(nearby);
-    const main = main0;
+    // knob and value box directly below/above it often merge into one changed area: split them at an empty row
+    const stacked = splitStack(changed, width, main0);
+    const main = stacked?.control ?? main0;
     const textLike = nearby.slice(1).filter((p) => p.h >= 6 && p.h <= 32 && p.w >= p.h * 1.2 &&
       (p.y >= main0.y + main0.h - 2 || p.y + p.h <= main0.y + 2) && p.x < main0.x + main0.w && p.x + p.w > main0.x && frames.filter((f, i) => i > 0 && diffMask(f, frames[i - 1]!, 30, noise).some((v, q) => v === 1 && (q % width) >= p.x && (q % width) < p.x + p.w && Math.floor(q / width) >= p.y && Math.floor(q / width) < p.y + p.h)).length >= Math.min(3, frames.length - 1));
-    const near = textLike.sort((a, b) => Math.hypot(a.cx - main.cx, a.cy - main.cy) - Math.hypot(b.cx - main.cx, b.cy - main.cy))[0];
+    const mcx = main.x + main.w / 2, mcy = main.y + main.h / 2;
+    const near = stacked?.readout ?? textLike.sort((a, b) => Math.hypot(a.cx - mcx, a.cy - mcy) - Math.hypot(b.cx - mcx, b.cy - mcy))[0];
     const parameter = parameters.find((p) => p.index === param.index);
+    const value = parameter ? parameter.value ?? parameter.default : 0.5;
+    const valueText = parameter ? textAtValue(parameter, value) : undefined;
     footprints.push({
-      param, frames, region, value: parameter ? parameter.value ?? parameter.default : 0.5,
+      param, frames, region, value, ...(valueText ? { valueText } : {}),
       main: clampBox(grow({ x: main.x, y: main.y, w: main.w, h: main.h }, -3), base),
       ...(near ? { readout: clampBox(grow({ x: near.x, y: near.y, w: near.w, h: near.h }, -3), base) } : {}),
     });

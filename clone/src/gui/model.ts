@@ -102,6 +102,10 @@ export interface Control {
   kind: ControlKind;
   /** normalized parameter value when the editor was captured */
   value?: number;
+  /** value text of the original at that value (previews; the plugin shows its own) */
+  valueText?: string;
+  /** options of a choice or switch (labels in step order) */
+  options?: string[];
   x: number;
   y: number;
   w: number;
