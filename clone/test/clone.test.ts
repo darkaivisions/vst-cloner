@@ -253,3 +253,26 @@ test("gui labels: parameter names are prettified and fitted to the measured text
   assert.equal(fitLabel("Limit", 127, 56, false), "Limit");
   assert.equal(fitLabel("Limit", 300, 12, false), undefined);
 });
+
+test("gui ocr: tesseract TSV is parsed, icons at the edges are dropped, noise is rejected", async () => {
+  const { parseTsv, plausibleText } = await import("../src/gui/ocr.ts");
+  const header = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext";
+  const word = (left: number, conf: number, text: string) => `5\t1\t1\t1\t1\t1\t${left}\t12\t40\t30\t${conf}\t${text}`;
+  const result = parseTsv([header, word(12, 90, "()"), word(60, 95, "Bypass")].join("\n"));
+  assert.equal(result?.text, "Bypass");
+  assert.deepEqual(result?.box, { x: 60, y: 12, w: 40, h: 30 });
+  assert.equal(parseTsv(header), undefined);
+  assert.ok(plausibleText({ text: "COMPRESS / LIMIT", confidence: 91 }));
+  assert.ok(plausibleText({ text: "-24", confidence: 80 }));
+  assert.ok(plausibleText({ text: "0.0 dB", confidence: 80 }));
+  assert.ok(!plausibleText({ text: "ält", confidence: 80 }));
+  assert.ok(!plausibleText({ text: "Help", confidence: 50 }));
+  assert.ok(!plausibleText({ text: "—", confidence: 95 }));
+});
+
+test("gui text: font size follows the ink height and the letter shapes", async () => {
+  const { fontSize } = await import("../src/gui/analyze.ts");
+  assert.equal(fontSize("GAIN", 10), 14);        // capitals: ink ≈ 0.72 × size
+  assert.equal(fontSize("Bypass", 12), 13);      // capitals + descenders ≈ 0.94
+  assert.equal(fontSize("x", 2), 7);             // minimum
+});

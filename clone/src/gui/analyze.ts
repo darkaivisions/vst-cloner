@@ -19,6 +19,7 @@ import {
 } from "./image.ts";
 import type { Control, Display, Fill, GuiModel, Line, Panel, Readout, RotaryStyle, TextItem } from "./model.ts";
 import type { GuiProbe, ProbedParameter } from "./probe.ts";
+import { plausibleText, recognizeBlocks } from "./ocr.ts";
 
 const TAU = Math.PI * 2;
 
@@ -837,7 +838,18 @@ function cornerRadius(r: Region, width: number): number {
 }
 
 /** Text blocks: high local contrast, merged horizontally. */
-function textBlocks(img: Image, exclude: Uint8Array): { box: Box; color: Rgb; bold: boolean; uppercase: boolean }[] {
+/** Median colour of the 1-px ring just outside a box (the background around a text). */
+function ringColor(img: Image, box: Box): Rgb {
+  const ring: Rgb[] = [];
+  const x0 = box.x - 2, y0 = box.y - 2, x1 = box.x + box.w + 1, y1 = box.y + box.h + 1;
+  const add = (x: number, y: number) => { if (x >= 0 && y >= 0 && x < img.width && y < img.height) ring.push(pixel(img, x, y)); };
+  for (let x = x0; x <= x1; x++) { add(x, y0); add(x, y1); }
+  for (let y = y0 + 1; y < y1; y++) { add(x0, y); add(x1, y); }
+  const median = (i: 0 | 1 | 2) => percentile(ring.map((c) => c[i]), 0.5);
+  return ring.length ? [median(0), median(1), median(2)] : [128, 128, 128];
+}
+
+function textBlocks(img: Image, exclude: Uint8Array): { box: Box; color: Rgb; background: Rgb; bold: boolean; uppercase: boolean }[] {
   const { width, height } = img;
   const lum = new Float64Array(width * height);
   for (let p = 0; p < lum.length; p++) lum[p] = luminance([img.data[p * 4]!, img.data[p * 4 + 1]!, img.data[p * 4 + 2]!]);
@@ -875,8 +887,21 @@ function textBlocks(img: Image, exclude: Uint8Array): { box: Box; color: Rgb; bo
       const middleColumns = columnsWith(0.4, 0.65);
       const ratio = middleColumns > 0 ? topColumns / middleColumns : 0;
       const uppercase = inkHeight >= 7 && ratio > 0.8;
-      return { box, color: dominantAt(img, points), bold: points.length / area(box) > 0.3, uppercase };
+      const background = ringColor(img, box);
+      const inkPoints = points.filter(([x, y]) => colorDistance(pixel(img, x, y), background) > 40);
+      return { box, color: dominantAt(img, inkPoints.length ? inkPoints : points), background, bold: points.length / area(box) > 0.3, uppercase };
     });
+}
+
+/**
+ * Font size (px) for a text whose ink is `inkHeight` px tall: capitals/digits reach ~0.72 of the font size,
+ * lower case without ascenders ~0.53, descenders add ~0.22.
+ */
+export function fontSize(text: string, inkHeight: number): number {
+  const tall = /[A-Z0-9bdfhklt|ÄÖÜß%/()]/.test(text);
+  const descender = /[gjpqy,;]/.test(text);
+  const fraction = (tall ? 0.72 : 0.53) + (descender ? 0.22 : 0);
+  return Math.max(7, Math.round(inkHeight / fraction));
 }
 
 // ---- main ---------------------------------------------------------------------------------------
@@ -1019,6 +1044,11 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
 
   // texts and labels
   const blocks = textBlocks(base, occupied);
+  // read the texts (tesseract, optional); without it labels are derived from parameter names
+  const ocr = await recognizeBlocks(base, blocks.map((b) => ({ box: clampBox(grow(b.box, 1), base), color: b.color, background: b.background })));
+  const readText = (i: number, minConfidence = 70) => (plausibleText(ocr[i], minConfidence) ? ocr[i]!.text : undefined);
+  /** box of the recognised words (icons next to the text are left out) */
+  const readBox = (i: number) => (plausibleText(ocr[i]) && ocr[i]!.box ? ocr[i]!.box! : blocks[i]!.box);
   const wordCounts = new Map<string, number>();
   for (const c of controls) for (const w of new Set(c.name.toLowerCase().split(/\s+/))) wordCounts.set(w, (wordCounts.get(w) ?? 0) + 1);
   const texts: TextItem[] = [];
@@ -1040,13 +1070,14 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
         return { ...b, score, align: (side === score ? "left" : "center") as "left" | "center" };
       })
       .filter((b) => Number.isFinite(b.score))
-      .map((b) => ({ ...b, text: fitLabel(c.name, b.box.w, b.box.h, b.uppercase, wordCounts) }))
+      .map((b) => ({ ...b, text: readText(b.i) ?? fitLabel(c.name, b.box.w, b.box.h, b.uppercase, wordCounts) }))
       .filter((b): b is typeof b & { text: string } => b.text !== undefined);
     const best = candidates.sort((a, b) => a.score - b.score)[0];
     if (!best) continue;
     used.add(best.i);
     const text = best.text;
-    texts.push({ ...best.box, text, color: hex(best.color), size: Math.round(best.box.h * 1.25), bold: best.bold, align: best.align, role: "label" });
+    const labelBox = readText(best.i) ? readBox(best.i) : best.box;
+    texts.push({ ...labelBox, text, color: hex(best.color), size: fontSize(text, labelBox.h), bold: best.bold, align: best.align, role: "label" });
   }
   const titleCandidate = blocks
     .map((b, i) => ({ ...b, i }))
@@ -1069,11 +1100,24 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     }
     used.add(titleCandidate.i);
     const title = pluginName.replace(/\s+clone$/i, "");
+    const [read] = await recognizeBlocks(base, [{ box: clampBox(grow(box, 1), base), color: titleCandidate.color, background: titleCandidate.background }]);
     const estimate = title.length * box.h * (titleCandidate.uppercase ? 0.78 : 0.62);
-    if (Math.abs(Math.log(estimate / box.w)) < 0.6) {
-      texts.push({ ...box, text: titleCandidate.uppercase ? title.toUpperCase() : title, color: hex(titleCandidate.color), size: Math.round(box.h * 1.2), bold: titleCandidate.bold, align: "left", role: "title" });
+    const text = plausibleText(read, 60) ? read.text : Math.abs(Math.log(estimate / box.w)) < 0.6 ? (titleCandidate.uppercase ? title.toUpperCase() : title) : undefined;
+    if (text) {
+      const textBox = plausibleText(read, 60) && read.box ? read.box : box;
+      texts.push({ ...textBox, text, color: hex(titleCandidate.color), size: fontSize(text, textBox.h), bold: titleCandidate.bold, align: "left", role: "title" });
     }
   }
+
+  // all other readable texts (subtitles, section names, notes)
+  blocks.forEach((b, i) => {
+    if (used.has(i)) return;
+    const text = readText(i, 75);
+    if (!text) return;
+    used.add(i);
+    const box = readBox(i);
+    texts.push({ ...box, text, color: hex(b.color), size: fontSize(text, box.h), bold: b.bold, align: "left", role: "text" });
+  });
 
   // background, panels and lines
   for (const b of blocks) mark(b.box, 2);

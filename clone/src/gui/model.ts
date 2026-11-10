@@ -36,7 +36,8 @@ export interface TextItem {
   size: number;
   bold: boolean;
   align: "left" | "center" | "right";
-  role: "title" | "label";
+  /** title, label of a control, or other static text */
+  role: "title" | "label" | "text";
 }
 
 export interface RotaryStyle {

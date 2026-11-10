@@ -141,8 +141,10 @@ vst-cloner/
      fremde Fenster werden aus dem Aufnahmebereich geschoben, Testversions-Hinweis von FabFilter wird per
      Klick auf „Evaluate“ geschlossen; EQ-Anzeige: Frequenzachse an Rasterlinien eingerastet, Plotgrenzen aus
      den Rasterlinien, dB-Schrittweite, Lage/Farbe der dB-Beschriftung, Kurvenfarbe; Wertanzeigen (Typ „value“)
-   - Pro-Q 3: Klon-Editor 75 % Struktur-, 98 % Farbähnlichkeit
-   - Offen: freie Texte (Untertitel, Skalen, Kopf-/Fußleiste) brauchen OCR (tesseract); Zeigerinstrumente;
+   - Pro-Q 3: Klon-Editor 76 % Struktur-, 98 % Farbähnlichkeit
+   - Texterkennung mit tesseract (optional, eng+deu): Beschriftungen, Titel und freie Texte werden gelesen
+     statt aus Parameternamen geraten; Schriftgröße aus Tintenhöhe und Buchstabenformen
+   - Offen: Zeigerinstrumente;
      Analyzer-Skala/Pegelmesser; Bänder direkt in der Kurve bedienen (Pro-Q-Stil) im Klon-Editor prüfen
 5. **Kompressor + Distortion** (inkl. lokalem NAM-Training, CPU/GPU) ← als Nächstes
 6. **Delay + Reverb**

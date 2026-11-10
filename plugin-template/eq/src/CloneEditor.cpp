@@ -24,15 +24,21 @@ namespace
     }
 
     /** Draws text squeezed or stretched to the measured width of the original text block. */
-    void drawFitted (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> box, float capHeight, bool bold, int align)
+    void drawFitted (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> box, float capHeight, bool bold, int align, float size = 0.0f)
     {
-        auto font = makeFont (capHeight / 0.72f, bold);
+        auto font = makeFont (size > 0.0f ? size : capHeight / 0.72f, bold);
         const float natural = juce::GlyphArrangement::getStringWidth (font, text);
         if (natural > 0.0f && box.getWidth() > 0.0f)
             font = font.withHorizontalScale (juce::jlimit (0.55f, 1.6f, box.getWidth() / natural));
         g.setFont (font);
         const auto justification = align == 0 ? juce::Justification::centredLeft : align == 2 ? juce::Justification::centredRight : juce::Justification::centred;
-        g.drawText (text, box.expanded (box.getWidth() * 0.2f, capHeight), justification, false);
+        // extra room only on the side the text may grow to – the anchored edge stays where it was measured
+        const float extra = box.getWidth() * 0.2f;
+        auto area = box.expanded (0.0f, capHeight);
+        area = align == 0 ? area.withWidth (area.getWidth() + extra)
+             : align == 2 ? area.withLeft (area.getX() - extra)
+                          : area.expanded (extra, 0.0f);
+        g.drawText (text, area, justification, false);
     }
 
     juce::Point<float> polar (float cx, float cy, float r, float angle)
@@ -481,7 +487,7 @@ public:
         {
             const auto& t = clonegui::texts[i];
             g.setColour (colour (t.color));
-            drawFitted (g, juce::String::fromUTF8 (t.text), { t.x, t.y, t.w, t.h }, t.h, t.bold, t.align);
+            drawFitted (g, juce::String::fromUTF8 (t.text), { t.x, t.y, t.w, t.h }, t.h, t.bold, t.align, t.size);
         }
 
         for (int i = 0; i < clonegui::numControls; ++i)

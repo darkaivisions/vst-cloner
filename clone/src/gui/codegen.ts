@@ -58,7 +58,7 @@ export function generateGuiHeader(gui: GuiModel | undefined, params: CloneParam[
 
   array("panels", "Panel", gui.panels.map((p) => `{ ${f(p.x)}, ${f(p.y)}, ${f(p.w)}, ${f(p.h)}, ${f(p.radius)}, ${fill(p.fill)}, ${argb(p.border)}, ${p.border ? "true" : "false"} }`));
   array("lines", "Line", gui.lines.map((l) => `{ ${f(l.x1)}, ${f(l.y1)}, ${f(l.x2)}, ${f(l.y2)}, ${f(l.thickness)}, ${argb(l.color)} }`));
-  array("texts", "Text", gui.texts.map((t) => `{ ${f(t.x)}, ${f(t.y)}, ${f(t.w)}, ${f(t.h)}, ${cppString(t.text)}, ${argb(t.color)}, ${t.bold}, ${t.align === "left" ? 0 : t.align === "right" ? 2 : 1} }`));
+  array("texts", "Text", gui.texts.map((t) => `{ ${f(t.x)}, ${f(t.y)}, ${f(t.w)}, ${f(t.h)}, ${cppString(t.text)}, ${argb(t.color)}, ${t.bold}, ${t.align === "left" ? 0 : t.align === "right" ? 2 : 1}, ${f(t.size)} }`));
 
   controls.forEach((c, i) => {
     if (c.rotary?.ticks) lines.push(`inline const float ticks${i}[] = { ${c.rotary.ticks.angles.map(f).join(", ")} };`);
