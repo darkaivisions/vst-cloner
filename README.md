@@ -1,5 +1,7 @@
 # vst-cloner
 
+![vst-cloner: Plugin wählen, als Kompressor erkannt, Kompressor-Messung](docs/images/app.png)
+
 Gekaufte Effekt-Plugins unter Linux nutzen: Plugins werden als Black Box vermessen,
 als offenes Profil (`.vcprofile`) gespeichert und daraus als freier Klon (LV2/VST3/CLAP)
 neu gebaut. Kein dekompilierter Code, keine extrahierten Samples – nur gemessenes Klangverhalten.
