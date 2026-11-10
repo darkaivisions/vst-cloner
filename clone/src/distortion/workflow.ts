@@ -92,7 +92,7 @@ export async function cloneDistortionProfile(options: DistortionCloneOptions): P
   if (model) log("info", "Im Profil gespeichertes Modell wird verwendet");
   else {
     log("info", `${profile.captures.renders.length} Messungen von ${profile.manifest.plugin.name} werden analysiert (alle Kerne) …`);
-    model = await fitDistortion(profile, options.onProgress);
+    model = await fitDistortion(profile, options.onProgress, options.signal);
   }
   for (const line of formatDistortionModel(model)) log("info", line);
 

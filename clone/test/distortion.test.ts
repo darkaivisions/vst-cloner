@@ -46,3 +46,17 @@ test("distortion plugins are recognised by their controls or category", () => {
   assert.ok(detectDistortion([parameter(0, "Volume")], "Fx|Distortion"));
   assert.throws(() => detectDistortion([parameter(0, "Frequency")]), NotDistortionError);
 });
+
+test("distortion detection: drive control or category, other effect classes excluded", async () => {
+  const { detectDistortion } = await import("../src/distortion/plan.ts");
+  const { detectDynamics } = await import("../src/dynamics/plan.ts");
+  const param = (index: number, name: string) =>
+    ({ index, id: String(index), name, default: 0.5, numSteps: 0, discrete: false, boolean: false, automatable: true, meta: false }) as unknown as import("@vst-cloner/profile").Parameter;
+  const pedal = [param(0, "DRIVE"), param(1, "TONE"), param(2, "LEVEL")];
+  assert.deepEqual(detectDistortion(pedal, "Distortion Plugin").roles, { drive: 0, tone: 1, level: 2 });
+  assert.throws(() => detectDistortion([param(0, "Drive"), param(1, "Feedback"), param(2, "Time")], "Delay Plugin"));
+  assert.throws(() => detectDistortion([param(0, "Mix")], ""));
+  const ducker = [param(0, "Threshold"), param(1, "Release"), param(2, "Time")];
+  assert.ok(detectDynamics(ducker));
+  assert.throws(() => detectDynamics(ducker, "Delay Plugin"));
+});

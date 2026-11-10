@@ -9,8 +9,8 @@ neu gebaut. Kein dekompilierter Code, keine extrahierten Samples – nur gemesse
 Gesamtplan und Meilensteine: [PLAN.md](PLAN.md) · Profilformat: [docs/profile-format.md](docs/profile-format.md)
 
 **Stand: Meilenstein 5 in Arbeit** – Desktop-App, Capture-Host, Profilformat und LLM-Anbindung funktionieren.
-Klone (VST3/LV2) gibt es für **parametrische EQs**, **Kompressoren/Limiter** und **Verzerrer** (Overdrive/
-Distortion, zunächst über die Kommandozeile), jeweils mit nachgebauter Oberfläche des Originals.
+Klone (VST3/LV2) gibt es für **parametrische EQs**, **Kompressoren/Limiter** und **Verzerrer**
+(Overdrive/Distortion), jeweils mit nachgebauter Oberfläche des Originals.
 Amp-Simulationen mit NAM folgen.
 Getestet unter Linux mit nativen VST3-Plugins und Windows-Plugins über yabridge.
 
@@ -47,8 +47,9 @@ Klon neu bauen ohne Original, exportieren, importieren) und **KI-Modelle** (Anbi
 Test). Unten zeigt das **Protokoll** jeden Schritt, nach Phasen gegliedert; „Details“ blendet auch die
 Ausgaben von Compiler und Host ein.
 
-Im Bereich Klonen wählt die App den Messmodus passend zum Plugin: **EQ-Messung**, **Kompressor-Messung**
-oder **Allgemein**. Beim Klonen kann sie außerdem die **Oberfläche des Originals nachbauen** (das Original
+Im Bereich Klonen wählt die App den Messmodus passend zum Plugin: **EQ-Messung**, **Kompressor-Messung**,
+**Verzerrer-Messung** oder **Allgemein**. Plugins, deren Kategorie eine andere Effektklasse nennt
+(Delay, Hall, Modulation …), werden dabei nicht als Kompressor oder Verzerrer eingestuft. Beim Klonen kann sie außerdem die **Oberfläche des Originals nachbauen** (das Original
 wird dafür einmal unsichtbar geöffnet, siehe unten).
 
 Profile und Klone liegen unter `~/.local/share/vst-cloner/` (Windows: `%APPDATA%\vst-cloner`).

@@ -6,6 +6,8 @@ import { Progress } from "../progress.ts";
 import type { CaptureResult, CloneResult, PluginEntry, PluginInfo, ProfileSummary } from "../types.ts";
 
 /** Main workflow: 1 choose plugin → 2 capture → 3 build the clone. */
+type Mode = "eq" | "dynamics" | "distortion" | "generic";
+
 export class CloneView {
   readonly element: HTMLElement;
 
@@ -13,7 +15,7 @@ export class CloneView {
   private selected?: PluginEntry;
   private info?: PluginInfo;
   private profile?: { path: string; name: string; renders: number };
-  private mode: "eq" | "dynamics" | "generic" = "eq";
+  private mode: Mode = "eq";
   private captureJob?: JobHandle<CaptureResult>;
   private cloneJob?: JobHandle<CloneResult>;
 
@@ -120,7 +122,7 @@ export class CloneView {
     this.update();
     try {
       this.info = await call<PluginInfo>("plugins.info", { path: plugin.path });
-      this.mode = this.info.eq ? "eq" : this.info.dynamics ? "dynamics" : "generic";
+      this.mode = this.info.eq ? "eq" : this.info.dynamics ? "dynamics" : this.info.distortion ? "distortion" : "generic";
     } catch (error) {
       clear(this.details);
       this.details.appendChild(h("div.error-box", {}, `Plugin konnte nicht geladen werden: ${(error as Error).message}`));
@@ -145,7 +147,9 @@ export class CloneView {
           ? h("span.badge.good", {}, `EQ erkannt: ${info.eq.bands} Bänder, ${info.eq.shapes.length} Formen`)
           : info.dynamics
             ? h("span.badge.good", {}, "Kompressor erkannt")
-            : h("span.badge.muted", {}, "weder EQ noch Kompressor erkannt")),
+            : info.distortion
+              ? h("span.badge.good", {}, "Verzerrer erkannt")
+              : h("span.badge.muted", {}, "weder EQ, Kompressor noch Verzerrer erkannt")),
     );
   }
 
@@ -155,11 +159,12 @@ export class CloneView {
 
     // step 2
     clear(this.modeBox);
-    const option = (mode: "eq" | "dynamics" | "generic", label: string, enabled: boolean) =>
+    const option = (mode: Mode, label: string, enabled: boolean) =>
       h("button", { class: this.mode === mode ? "active" : "", disabled: !enabled || busy, onclick: () => { this.mode = mode; this.update(); } }, label);
     this.modeBox.append(
       option("eq", "EQ-Messung", Boolean(info?.eq)),
       option("dynamics", "Kompressor-Messung", Boolean(info?.dynamics)),
+      option("distortion", "Verzerrer-Messung", Boolean(info?.distortion)),
       option("generic", "Allgemein", Boolean(info)),
     );
     this.captureHint.textContent = !info
@@ -168,7 +173,9 @@ export class CloneView {
         ? `${info.eq.renders} Einstellungen – jede Filterform bei mehreren Frequenzen, Gains und Güten. Dauert meist nur Sekunden.`
         : this.mode === "dynamics" && info.dynamics
           ? `${info.dynamics.renders} Einstellungen à ~27 s Messsignal (Pegeltreppe, Bursts, lange Pausen für langsames Release) – jeder Regler einzeln und in Zufallskombinationen. Dauert meist unter einer Minute.`
-          : `${info.genericRenders} Einstellungen – jeder Parameter einzeln und in Zufallskombinationen. Klone sind bisher nur für EQs und Kompressoren möglich.`;
+          : this.mode === "distortion" && info.distortion
+            ? `${info.distortion.renders} Einstellungen à ~${info.distortion.signalSeconds} s Messsignal (Sinus-Pegeltreppen bei mehreren Frequenzen, Rauschen, leiser Sweep) – jeder Regler einzeln und in Zufallskombinationen. Das Analysieren beim Klonen dauert danach etwa 2 Minuten.`
+            : `${info.genericRenders} Einstellungen – jeder Parameter einzeln und in Zufallskombinationen. Klone sind bisher nur für EQs, Kompressoren und Verzerrer möglich.`;
     this.captureButton.disabled = !info || Boolean(this.cloneJob);
     this.captureButton.textContent = this.captureJob ? "Abbrechen" : "Messen starten";
     this.captureButton.classList.toggle("danger", Boolean(this.captureJob));
@@ -259,6 +266,24 @@ export class CloneView {
         const table = h("table.shape-table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Größte Abweichungen"), h("th", {}, "Mittel"), h("th", {}, "Spitze"))));
         const body = h("tbody");
         for (const w of d.worst) body.appendChild(h("tr", {}, h("td", {}, w.label), h("td.num", {}, formatDb(w.rmsDb)), h("td.num", {}, formatDb(w.maxDb))));
+        table.appendChild(body);
+        this.result.appendChild(table);
+      }
+    }
+    const x = result.distortion;
+    if (result.kind === "distortion" && x) {
+      this.result.append(
+        h("div.verdict", { class: verdictClass(x.verdict) },
+          h("div.verdict-main", {}, x.verdict),
+          h("div.verdict-sub", {}, `Grundton ${formatDb(x.overall.gainDb)}, Oberwellen ${formatDb(x.overall.harmonicsDb)}, Kleinsignal ${formatDb(x.overall.smallDb)} Abweichung im Mittel · ` +
+            `${x.renders} Einstellungen geprüft` + (x.validate ? ` · unbekannte Kombinationen ${x.validate.total.toFixed(2)}` : ""))),
+        h("ul.model-summary", {}, ...(result.summary ?? []).map((line) => h("li", {}, line)),
+          h("li", {}, `Signalvergleich mit lautem Rauschen: Fehler/Signal ${x.esrDb.toFixed(1)} dB`)),
+      );
+      if (x.worst.length) {
+        const table = h("table.shape-table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Größte Abweichungen"), h("th", {}, "Fehler"), h("th", {}, "Fehler/Signal"))));
+        const body = h("tbody");
+        for (const w of x.worst) body.appendChild(h("tr", {}, h("td", {}, w.label), h("td.num", {}, w.total.toFixed(2)), h("td.num", {}, `${w.esrDb.toFixed(1)} dB`)));
         table.appendChild(body);
         this.result.appendChild(table);
       }

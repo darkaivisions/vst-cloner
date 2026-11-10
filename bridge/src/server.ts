@@ -8,13 +8,18 @@ import {
   CancelledError,
   DEFAULT_PLAN,
   findHost,
+  generateTestSignal,
   hostVersion,
   planCaptures,
   pluginInfo,
   type CaptureProgress,
 } from "@vst-cloner/capture";
 import {
+  cloneDistortionProfile,
   cloneDynamicsProfile,
+  detectDistortion,
+  distortionPlanner,
+  planDistortion,
   cloneProfile,
   detectDynamics,
   detectEq,
@@ -156,7 +161,16 @@ const svgDataUrl = (svg: string) => `data:image/svg+xml;base64,${Buffer.from(svg
 const SEGMENT_NAMES: Record<string, string> = {
   silence: "Pause", impulse: "Impuls", logSweep: "Sweep", noise: "Rauschen", levelSteps: "Pegeltreppe", toneBurst: "Ton-Burst",
 };
-const PLANNER_NAMES: Record<string, string> = { eq: "EQ-Messung", dynamics: "Kompressor-Messung", distortion: "Distortion-Messung", generic: "Allgemeine Messung" };
+async function guiResult(gui: { controls: number; comparison?: { similarity: number; colorSimilarity: number; comparePng?: string } } | undefined) {
+  if (!gui) return undefined;
+  const c = gui.comparison;
+  return {
+    controls: gui.controls,
+    ...(c ? { similarity: c.similarity, colorSimilarity: c.colorSimilarity, ...(c.comparePng ? { comparePng: c.comparePng, preview: await imageDataUrl(c.comparePng) } : {}) } : {}),
+  };
+}
+
+const PLANNER_NAMES: Record<string, string> = { eq: "EQ-Messung", dynamics: "Kompressor-Messung", distortion: "Verzerrer-Messung", generic: "Allgemeine Messung" };
 
 /** Everything the library shows about a profile: plugin, capture, signal, model, editor layout. */
 async function profileDetails(path: string) {
@@ -347,10 +361,23 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
     let dynamics: { roles: string[]; renders: number } | undefined;
     if (!eq) {
       try {
-        const mapping = detectDynamics(info.parameters);
+        const mapping = detectDynamics(info.parameters, info.plugin.category);
         dynamics = { roles: Object.keys(mapping.roles), renders: planDynamics(info.parameters, { ...DEFAULT_PLAN }).renders.length };
       } catch {
         dynamics = undefined;
+      }
+    }
+    let distortion: { roles: string[]; renders: number; signalSeconds: number } | undefined;
+    if (!eq && !dynamics) {
+      try {
+        const mapping = detectDistortion(info.parameters, info.plugin.category);
+        distortion = {
+          roles: Object.keys(mapping.roles),
+          renders: planDistortion(info.parameters, { ...DEFAULT_PLAN }, info.plugin.category).renders.length,
+          signalSeconds: Math.round(generateTestSignal({ sampleRate: 1000, channels: 1, preset: "distortion" }).set.length / 1000),
+        };
+      } catch {
+        distortion = undefined;
       }
     }
     let genericRenders: number;
@@ -372,13 +399,14 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
       parameters: info.parameters.length,
       eq,
       dynamics,
+      distortion,
       genericRenders,
     };
   },
 
   "capture.start"(params) {
     const plugin = str(params, "path");
-    const mode = params.mode === "generic" ? "generic" : params.mode === "dynamics" ? "dynamics" : "eq";
+    const mode = params.mode === "generic" ? "generic" : params.mode === "dynamics" ? "dynamics" : params.mode === "distortion" ? "distortion" : "eq";
     return startJob("capture", async (ctx) => {
       ctx.stage("capture", "Messen");
       await mkdir(profilesDir(), { recursive: true });
@@ -388,7 +416,9 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
         ? "EQ-Messplan: jede Filterform bei mehreren Frequenzen, Gains und Güten"
         : mode === "dynamics"
           ? "Kompressor-Messplan: jeder Regler einzeln (dicht an den Enden) + Zufallskombinationen zur Gegenprobe, Messsignal mit Pegeltreppe, Bursts und langen Pausen"
-          : "Allgemeiner Messplan: jeder Parameter einzeln + Zufallskombinationen");
+          : mode === "distortion"
+            ? "Verzerrer-Messplan: jeder Regler einzeln + Zufallskombinationen zur Gegenprobe, Messsignal mit Sinus-Pegeltreppen bei mehreren Frequenzen, Rauschen und leisem Sweep"
+            : "Allgemeiner Messplan: jeder Parameter einzeln + Zufallskombinationen");
 
       const started = Date.now();
       const profile = await capture({
@@ -400,7 +430,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
         prerollSeconds: 0.5,
         tailSeconds: mode === "eq" ? 0.25 : 2,
         plan: { ...DEFAULT_PLAN },
-        ...(mode === "eq" ? { planner: eqPlanner } : mode === "dynamics" ? { planner: dynamicsPlanner } : {}),
+        ...(mode === "eq" ? { planner: eqPlanner } : mode === "dynamics" ? { planner: dynamicsPlanner } : mode === "distortion" ? { planner: distortionPlanner } : {}),
         signal: ctx.signal,
         onProgress: (event) => {
           if (event.stage === "render") ctx.progress(event.done, event.total, event.id);
@@ -465,6 +495,43 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
     return startJob("clone", async (ctx) => {
       const summary = await summarizeProfile(profilePath);
       const pluginName = `${summary.name} Clone`;
+      if (summary.planner === "distortion") {
+        const result = await cloneDistortionProfile({
+          profilePath,
+          outputDir: join(clonesDir(), slugify(pluginName)),
+          pluginName,
+          ...(install ? { install: true } : {}),
+          ...(refit ? { refit: true } : {}),
+          gui,
+          ...(pluginPath ? { pluginPath } : {}),
+          signal: ctx.signal,
+          onStage: (stage) => ctx.stage(stage, STAGE_TITLES[stage]),
+          onProgress: (done, total, label) => ctx.progress(done, total, label),
+          log: (level, message) => ctx.log(level, message),
+        });
+        const v = result.verify;
+        if (v) ctx.log("success", `Klon fertig – Abweichung zum Original ${v.overall.total.toFixed(2)} (${distortionVerdict(v.overall.total)})`);
+        return {
+          kind: "distortion",
+          pluginName,
+          vst3: result.build.vst3,
+          lv2: result.build.lv2,
+          installed: result.build.installed,
+          shapes: [],
+          summary: formatDistortionModel(result.model),
+          distortion: v
+            ? {
+                overall: v.overall,
+                ...(v.validate ? { validate: v.validate } : {}),
+                esrDb: v.esrDb,
+                worst: v.worst,
+                verdict: distortionVerdict(v.overall.total),
+                renders: v.renders,
+              }
+            : undefined,
+          gui: await guiResult(result.gui),
+        };
+      }
       if (summary.planner === "dynamics") {
         const result = await cloneDynamicsProfile({
           profilePath,

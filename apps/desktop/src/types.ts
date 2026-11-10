@@ -32,6 +32,8 @@ export interface PluginInfo {
   eq?: { bands: number; shapes: string[]; renders: number };
   /** compressor/limiter recognised by its parameter names */
   dynamics?: { roles: string[]; renders: number };
+  /** overdrive/distortion recognised by a drive control or its category */
+  distortion?: { roles: string[]; renders: number; signalSeconds: number };
   genericRenders: number;
 }
 
@@ -59,7 +61,7 @@ export interface ProfileSummary {
 }
 
 export interface CloneResult {
-  kind: "eq" | "dynamics";
+  kind: "eq" | "dynamics" | "distortion";
   pluginName: string;
   vst3: string;
   lv2: string;
@@ -71,6 +73,16 @@ export interface CloneResult {
     overall: { rmsDb: number; maxDb: number };
     validate?: { rmsDb: number; maxDb: number };
     worst: { label: string; rmsDb: number; maxDb: number }[];
+    verdict: string;
+    renders: number;
+  };
+  /** distortion: errors of the characteristics (small signal and fundamental in dB, harmonics in dB) */
+  distortion?: {
+    overall: DistortionErrors;
+    validate?: DistortionErrors;
+    /** time-domain error-to-signal ratio on loud noise (dB) */
+    esrDb: number;
+    worst: { label: string; total: number; esrDb: number }[];
     verdict: string;
     renders: number;
   };
@@ -111,4 +123,11 @@ export interface ProfileDetails {
   verdict?: { value: number; text: string; pluginName?: string };
   /** editor layout as SVG data URL; comparison original | clone (PNG data URL) if it is in the local cache */
   gui?: { layout: string; controls: number; width: number; height: number; compare?: string };
+}
+
+export interface DistortionErrors {
+  smallDb: number;
+  gainDb: number;
+  harmonicsDb: number;
+  total: number;
 }

@@ -179,7 +179,10 @@ vst-cloner/
      pro Regler automatisch gewählt, welche Modellteile er verändert; Laufzeit des Originals übernommen;
      Fit parallel in Worker-Threads (~110 s); C++-Vorlage `plugin-template/distortion` sample-genau
    - GxBoss DS1: Grundton 0,68 dB, Oberwellen 1,8 dB, Kleinsignal 1,23 dB, Fehler/Signal −6,8 dB
-   - Offen: Distortion-Modus in der App, Zeitbereichs-Term im Fit (Fehler/Signal), Fit-Zeit Kompressor (~60 s),
+   - Desktop-App: Verzerrer-Erkennung (Drive-Regler oder Kategorie; Delay/Hall/Modulation ausgeschlossen),
+     Verzerrer-Messung, Klon mit Ergebnis (Grundton/Oberwellen/Kleinsignal, Fehler/Signal), Abbruch beendet
+     die Fit-Worker sofort; GxBoss DS1 in der App: Messen 6 s, Klonen ~2,5 min, „sehr gut“
+   - Offen: Zeitbereichs-Term im Fit (Fehler/Signal), Fit-Zeit Kompressor (~60 s),
      Rahmen/Dekor; danach Amps mit NAM (Swanky Amp, TONE3000)
 6. **Delay + Reverb**
 7. **REA-Integration** (Analyst-Agent, `spec.md`, Clean-Room-Trennung) + **yabridge-Check**

@@ -1,4 +1,4 @@
-import { regenerateTestSignal } from "@vst-cloner/capture";
+import { CancelledError, regenerateTestSignal } from "@vst-cloner/capture";
 import { decodeWav, type Profile } from "@vst-cloner/profile";
 import { cascadeDb } from "../dsp/biquad.ts";
 import { fft, nextPowerOfTwo } from "../dsp/fft.ts";
@@ -397,14 +397,27 @@ export interface JobResult {
 }
 
 /** Runs jobs on worker threads (one per core, at most `jobs.length`). */
-async function runJobs(input: DistortionInput, jobs: DistortionJob[], onDone: (done: number) => void): Promise<JobResult[]> {
+async function runJobs(input: DistortionInput, jobs: DistortionJob[], onDone: (done: number) => void, signal?: AbortSignal): Promise<JobResult[]> {
+  if (signal?.aborted) throw new CancelledError();
   const { Worker } = await import("node:worker_threads");
   const { availableParallelism } = await import("node:os");
   const count = Math.max(1, Math.min(jobs.length, availableParallelism() - 1));
   const results: JobResult[] = new Array(jobs.length);
   let next = 0, done = 0;
-  await Promise.all(Array.from({ length: count }, () => new Promise<void>((resolve, reject) => {
+  const workers: import("node:worker_threads").Worker[] = [];
+  // cancelling stops every worker at once
+  let cancel: () => void = () => {};
+  const cancelled = new Promise<never>((_, reject) => {
+    cancel = () => {
+      for (const w of workers) void w.terminate();
+      reject(new CancelledError());
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
+  });
+  cancelled.catch(() => {});
+  const all = Promise.all(Array.from({ length: count }, () => new Promise<void>((resolve, reject) => {
     const worker = new Worker(new URL("./worker.ts", import.meta.url), { workerData: input });
+    workers.push(worker);
     const feed = () => {
       if (next >= jobs.length) {
         void worker.terminate();
@@ -422,11 +435,20 @@ async function runJobs(input: DistortionInput, jobs: DistortionJob[], onDone: (d
     worker.once("error", reject);
     feed();
   })));
+  try {
+    await Promise.race([all, cancelled]);
+  } finally {
+    signal?.removeEventListener("abort", cancel);
+  }
   return results;
 }
 
 /** Base model (best of several starts), every sweep render (penalised change from the base), tables, predictions. */
-export async function fitDistortion(profile: Profile, onProgress?: (done: number, total: number, label: string) => void): Promise<DistortionModel> {
+export async function fitDistortion(
+  profile: Profile,
+  onProgress?: (done: number, total: number, label: string) => void,
+  signal?: AbortSignal,
+): Promise<DistortionModel> {
   const input = distortionInput(profile);
   const observations = distortionObservations(profile, input);
   const parameters = profile.parameters.parameters;
@@ -436,7 +458,7 @@ export async function fitDistortion(profile: Profile, onProgress?: (done: number
   const total = starts.length + train.length;
 
   onProgress?.(0, total, "Grundeinstellung");
-  const baseResults = await runJobs(input, starts.map((start) => ({ kind: "base", observation: base, start })), (d) => onProgress?.(d, total, "Grundeinstellung"));
+  const baseResults = await runJobs(input, starts.map((start) => ({ kind: "base", observation: base, start })), (d) => onProgress?.(d, total, "Grundeinstellung"), signal);
   const x0 = baseResults.reduce((best, r) => (r.error < best.error ? r : best)).x;
   const baseParams = unpackDistortion(x0);
 
@@ -444,7 +466,7 @@ export async function fitDistortion(profile: Profile, onProgress?: (done: number
   const jobs: { o: DistortionObservation; candidate: number }[] = [];
   for (const o of train) GROUP_CANDIDATES.forEach((_, candidate) => jobs.push({ o, candidate }));
   const fits = await runJobs(input, jobs.map((j) => ({ kind: "sweep", observation: j.o, x0, groups: GROUP_CANDIDATES[j.candidate]! })),
-    (d) => onProgress?.(starts.length + Math.round((d / jobs.length) * train.length), total, "Regler"));
+    (d) => onProgress?.(starts.length + Math.round((d / jobs.length) * train.length), total, "Regler"), signal);
 
   const baseValues = new Map(parameters.map((p) => [p.index, p.value ?? p.default]));
   const tables = new Map<number, ParamTable>();

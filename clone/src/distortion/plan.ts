@@ -1,6 +1,6 @@
 import { DEFAULT_PLAN, type CapturePlan, type CapturePlanner, type HostInfo, type PlanOptions } from "@vst-cloner/capture";
 import type { Parameter } from "@vst-cloner/profile";
-import { IGNORED, planSweeps } from "../dynamics/plan.ts";
+import { IGNORED, OTHER_CLASS_CATEGORY, planSweeps } from "../dynamics/plan.ts";
 
 /** Roles of distortion parameters, recognised by name. */
 export type DistortionRole = "drive" | "tone" | "level" | "bass" | "mid" | "treble" | "presence" | "mix" | "model";
@@ -31,6 +31,7 @@ export class NotDistortionError extends Error {
 
 /** Recognises a distortion/overdrive/amp by its category or parameter names (a drive-like control is required). */
 export function detectDistortion(parameters: Parameter[], category = ""): DistortionMapping {
+  if (OTHER_CLASS_CATEGORY.test(category)) throw new NotDistortionError(`Plugin-Kategorie „${category}“ ist kein Verzerrer`);
   const roles: DistortionMapping["roles"] = {};
   const other: number[] = [];
   for (const p of parameters) {

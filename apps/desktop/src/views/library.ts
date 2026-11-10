@@ -5,6 +5,9 @@ import { clear, formatBytes, formatDate, formatDb, h, toast, verdictClass } from
 import type { ProfileSummary } from "../types.ts";
 import { ProfileDetailsDialog } from "./details.ts";
 
+/** measurement types a clone can be built from */
+const CLONEABLE = new Set(["eq", "dynamics", "distortion"]);
+
 /** Saved profiles: rebuild clones without the original, export, import, delete. */
 export class LibraryView {
   readonly element: HTMLElement;
@@ -47,7 +50,7 @@ export class LibraryView {
             h("div.profile-meta", {},
               h("span", {}, formatDate(p.createdAt)),
               h("span", {}, `${p.renders} Messungen`),
-              h("span", {}, { eq: "EQ-Messung", dynamics: "Kompressor-Messung", distortion: "Distortion-Messung" }[p.planner] ?? "allgemein"),
+              h("span", {}, { eq: "EQ-Messung", dynamics: "Kompressor-Messung", distortion: "Verzerrer-Messung" }[p.planner] ?? "allgemein"),
               h("span", {}, formatBytes(p.bytes)))),
           p.verdict
             ? h("span.pill", { class: verdictClass(p.verdict), title: `Abweichung ${formatDb(p.rmsDb ?? 0)}` }, `Klon: ${p.verdict}`)
@@ -55,8 +58,8 @@ export class LibraryView {
           h("div.profile-actions", {},
             h("button.ghost.small", { onclick: () => this.details.show(p.path) }, "Details"),
             h("button.primary.small", {
-              disabled: p.planner !== "eq" && p.planner !== "dynamics",
-              title: p.planner !== "eq" && p.planner !== "dynamics" ? "Klone sind bisher nur für EQ- und Kompressor-Messungen möglich" : "",
+              disabled: !CLONEABLE.has(p.planner),
+              title: CLONEABLE.has(p.planner) ? "" : "Klone sind bisher nur für EQ-, Kompressor- und Verzerrer-Messungen möglich",
               onclick: () => this.onBuild(p),
             }, "Klon bauen"),
             h("button.ghost.small", { onclick: () => this.exportProfile(p) }, "Exportieren …"),

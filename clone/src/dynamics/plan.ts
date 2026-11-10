@@ -50,7 +50,11 @@ export class NotDynamicsError extends Error {
 }
 
 /** Recognises a compressor/limiter by its parameter names. */
-export function detectDynamics(parameters: Parameter[]): DynamicsMapping {
+/** Plugin categories of other effect classes: their "drive", "threshold" … controls do not make them a compressor or distortion. */
+export const OTHER_CLASS_CATEGORY = /delay|echo|reverb|chorus|flanger|phaser|modulat|pitch|shift|wah|tremolo|vibrato/i;
+
+export function detectDynamics(parameters: Parameter[], category = ""): DynamicsMapping {
+  if (OTHER_CLASS_CATEGORY.test(category)) throw new NotDynamicsError(`Plugin-Kategorie „${category}“ ist kein Kompressor`);
   const roles: DynamicsMapping["roles"] = {};
   const other: number[] = [];
   for (const p of parameters) {
