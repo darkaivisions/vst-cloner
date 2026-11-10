@@ -98,12 +98,13 @@ class Chain {
 }
 
 /** Runs the model over a signal (from silence). */
-export function processDistortion(signal: Float32Array | Float64Array, p: DistortionParams, sampleRate: number): Float64Array {
+export function processDistortion(signal: Float32Array | Float64Array, p: DistortionParams, sampleRate: number, delay = 0): Float64Array {
   const pre = new Chain(preSections(p, sampleRate));
   const post = new Chain(postSections(p, sampleRate));
   const gIn = 10 ** (p.inputDb / 20), gOut = 10 ** (p.outputDb / 20);
   const out = new Float64Array(signal.length);
-  for (let i = 0; i < signal.length; i++) out[i] = gOut * post.process(clip(pre.process(signal[i]! * gIn), p));
+  // the delay of the original is applied at the input (the model is time-invariant)
+  for (let i = delay; i < signal.length; i++) out[i] = gOut * post.process(clip(pre.process(signal[i - delay]! * gIn), p));
   return out;
 }
 

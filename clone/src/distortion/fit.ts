@@ -127,6 +127,11 @@ function stepsOf(input: DistortionInput, output: ArrayLike<number>): StepMeasure
   return result;
 }
 
+/** Measurements of any output of the test signal (original or clone). */
+export function measureOutput(input: DistortionInput, output: Float32Array): { smallDb: Float64Array; steps: StepMeasurement[] } {
+  return { smallDb: smallSignalDb(input, output), steps: stepsOf(input, output) };
+}
+
 export function distortionObservations(profile: Profile, input: DistortionInput): DistortionObservation[] {
   return profile.captures.renders.map((r) => {
     const output = decodeWav(profile.files.get(r.file)!).channels[0]!;
@@ -273,6 +278,8 @@ export interface DistortionModel {
   type: "distortion";
   version: 1;
   sampleRate: number;
+  /** delay of the original (samples) – not reported as latency by it, so the clone does not either */
+  delay: number;
   base: DistortionParams;
   baseValues: { index: number; value: number }[];
   tables: ParamTable[];
@@ -304,6 +311,21 @@ const meanErrors = (rows: DistortionErrors[]): DistortionErrors | undefined => {
   const avg = (k: keyof DistortionErrors) => rows.reduce((s, r) => s + r[k], 0) / rows.length;
   return { smallDb: avg("smallDb"), gainDb: avg("gainDb"), harmonicsDb: avg("harmonicsDb"), total: avg("total") };
 };
+
+/** Delay of the original against the model: lag of the best correlation on the quiet sweep and the noise. */
+export function estimateDelay(profile: Profile, input: DistortionInput, base: DistortionObservation, p: DistortionParams, maxLag = 2048): number {
+  const render = profile.captures.renders.find((r) => r.id === base.renderId)!;
+  const original = decodeWav(profile.files.get(render.file)!).channels[0]!;
+  const model = processDistortion(input.signal, p, input.sampleRate);
+  const ranges = profile.testSignals.segments.filter((s) => s.id === "sweep-quiet" || s.id.startsWith("noise")).map((s) => [s.start, s.start + s.length] as const);
+  let best = { lag: 0, c: -Infinity };
+  for (let lag = 0; lag <= maxLag; lag++) {
+    let xy = 0;
+    for (const [from, to] of ranges) for (let i = from + maxLag; i < to; i++) xy += original[i]! * model[i - lag]!;
+    if (xy > best.c) best = { lag, c: xy };
+  }
+  return best.lag;
+}
 
 /** Groups of packed model values: a control usually acts on one part of the circuit only. */
 export const GROUPS = {
@@ -446,6 +468,7 @@ export async function fitDistortion(profile: Profile, onProgress?: (done: number
     type: "distortion",
     version: 1,
     sampleRate: input.sampleRate,
+    delay: estimateDelay(profile, input, base, baseParams),
     base: baseParams,
     baseValues: [...tables.keys()].map((index) => ({ index, value: baseValues.get(index)! })),
     tables: [...tables.values()],

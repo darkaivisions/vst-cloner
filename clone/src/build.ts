@@ -20,7 +20,7 @@ export interface BuildResult {
 const TEMPLATES_DIR = fileURLToPath(new URL("../../plugin-template/", import.meta.url));
 
 /** Plugin templates: parametric EQ engine, compressor engine. */
-export type PluginTemplate = "eq" | "dynamics";
+export type PluginTemplate = "eq" | "dynamics" | "distortion";
 const REPO_DIR = fileURLToPath(new URL("../../", import.meta.url));
 
 function cacheRoot(): string {

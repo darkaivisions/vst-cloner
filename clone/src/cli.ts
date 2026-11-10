@@ -6,6 +6,7 @@ import type { Logger } from "./build.ts";
 import { verifyClone } from "./verify.ts";
 import { analyze, cloneProfile, formatModelReport, formatVerifyReport, MODEL_FILE, storedModel } from "./workflow.ts";
 import { cloneDynamicsProfile, isDynamicsProfile } from "./dynamics/workflow.ts";
+import { cloneDistortionProfile, isDistortionProfile } from "./distortion/workflow.ts";
 
 export const USAGE = `Cloning:
   vch clone   <profile> [-o <dir>] [--name <text>] [--install] [--refit] [--no-verify]
@@ -60,8 +61,10 @@ export async function main(command: string, argv: string[]): Promise<number> {
   try {
     switch (command) {
       case "clone": {
-        if (isDynamicsProfile(await readProfile(profilePath))) {
-          const result = await cloneDynamicsProfile({
+        const loaded = await readProfile(profilePath);
+        if (isDistortionProfile(loaded) || isDynamicsProfile(loaded)) {
+          const clone = isDistortionProfile(loaded) ? cloneDistortionProfile : cloneDynamicsProfile;
+          const result = await clone({
             profilePath,
             ...(values.output ? { outputDir: resolve(values.output) } : {}),
             ...(values.name ? { pluginName: values.name } : {}),

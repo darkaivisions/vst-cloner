@@ -3,6 +3,8 @@
 // Compressor engine driven by a fitted model (see clone/src/dynamics/model.ts and fit.ts).
 // IMPORTANT: every step must stay identical to the TypeScript reference implementation.
 
+#include "ParamTables.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -47,70 +49,12 @@ inline CompressorParams unpack (const double* x)
     return p;
 }
 
-/** Model parameters at the sweep points of one plugin parameter (see ParamTable in fit.ts). */
-struct ParamTable
-{
-    int param;                 // clone parameter index
-    bool discrete;
-    int numPoints;
-    const double* values;      // normalised plugin values, ascending
-    const double* packed;      // numPoints × numPacked
-    double baseValue;          // value in the initial state
-};
-
-/** pchip() in fit.ts: monotone cubic interpolation (Fritsch–Carlson) of one component, constant outside. */
-inline double pchip (const double* xs, const double* ys, int stride, int n, double x)
-{
-    const auto y = [&] (int i) { return ys[i * stride]; };
-    if (x <= xs[0]) return y (0);
-    if (x >= xs[n - 1]) return y (n - 1);
-    int k = 0;
-    while (xs[k + 1] < x) ++k;
-    const auto h = [&] (int i) { return xs[i + 1] - xs[i]; };
-    const auto d = [&] (int i) { return (y (i + 1) - y (i)) / h (i); };
-    const auto slope = [&] (int i)
-    {
-        if (i == 0) return d (0);
-        if (i == n - 1) return d (n - 2);
-        const double a = d (i - 1), b = d (i);
-        if (a * b <= 0) return 0.0;
-        const double w1 = 2 * h (i) + h (i - 1), w2 = h (i) + 2 * h (i - 1);
-        return (w1 + w2) / (w1 / a + w2 / b);
-    };
-    const double hk = h (k), t = (x - xs[k]) / hk, t2 = t * t, t3 = t2 * t;
-    return (2 * t3 - 3 * t2 + 1) * y (k) + (t3 - 2 * t2 + t) * hk * slope (k)
-         + (-2 * t3 + 3 * t2) * y (k + 1) + (t3 - t2) * hk * slope (k + 1);
-}
-
-/** tableAt() in fit.ts: nearest point for discrete parameters, PCHIP otherwise */
-inline void tableAt (const ParamTable& t, double value, double* out)
-{
-    if (t.discrete || t.numPoints == 1)
-    {
-        int best = 0;
-        for (int k = 1; k < t.numPoints; ++k)
-            if (std::abs (t.values[k] - value) < std::abs (t.values[best] - value))
-                best = k;
-        std::copy (t.packed + best * numPacked, t.packed + (best + 1) * numPacked, out);
-        return;
-    }
-    for (int i = 0; i < numPacked; ++i)
-        out[i] = pchip (t.values, t.packed + i, numPacked, t.numPoints, value);
-}
-
 /** predictParams() in fit.ts: base model plus the change each parameter causes on its own. */
 template <typename ValueOf>
 CompressorParams predict (const double* basePacked, const ParamTable* tables, int numTables, ValueOf valueOf)
 {
-    double packed[numPacked], at[numPacked], ref[numPacked];
-    std::copy (basePacked, basePacked + numPacked, packed);
-    for (int t = 0; t < numTables; ++t)
-    {
-        tableAt (tables[t], valueOf (tables[t].param), at);
-        tableAt (tables[t], tables[t].baseValue, ref);
-        for (int i = 0; i < numPacked; ++i)
-            packed[i] += at[i] - ref[i];
-    }
+    double packed[numPacked];
+    predictPacked (basePacked, numPacked, tables, numTables, valueOf, packed);
     return unpack (packed);
 }
 

@@ -10,7 +10,7 @@ const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "_").re
  * display table (normalised ↔ physical) and options. The normalised values equal the original's, so the
  * model tables (indexed by normalised values) apply directly.
  */
-export function dynamicsCloneParameters(model: DynamicsModel, parameters: Parameter[], renders: CaptureRender[] = []): CloneParam[] {
+export function dynamicsCloneParameters(model: Pick<DynamicsModel, "tables">, parameters: Parameter[], renders: CaptureRender[] = []): CloneParam[] {
   const byIndex = new Map(parameters.map((p) => [p.index, p]));
   const used = new Set<string>();
   return model.tables.map((table) => {
