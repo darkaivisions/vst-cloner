@@ -62,6 +62,8 @@ export interface CloneResult {
   lv2: string;
   installed: string[];
   shapes: { label: string; kind: string; supported: boolean; note?: string; check?: number }[];
+  /** rebuilt editor: number of controls, similarity with the original editor (0…1) */
+  gui?: { controls: number; similarity?: number; colorSimilarity?: number; comparePng?: string };
   verify?: {
     overall: { renders: number; rmsDb: number; maxDb: number };
     limited?: { renders: number; rmsDb: number; maxDb: number; labels: string[] };

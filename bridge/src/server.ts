@@ -305,6 +305,9 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
     const profilePath = str(params, "profile");
     const install = params.install === true;
     const refit = params.refit === true;
+    // rebuild the editor of the original unless switched off (needs the original plugin once)
+    const gui = params.gui !== false;
+    const pluginPath = typeof params.plugin === "string" && params.plugin ? params.plugin : undefined;
     return startJob("clone", async (ctx) => {
       const summary = await summarizeProfile(profilePath);
       const pluginName = `${summary.name} Clone`;
@@ -314,8 +317,11 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
         pluginName,
         install,
         refit,
+        gui,
+        ...(pluginPath ? { pluginPath } : {}),
         signal: ctx.signal,
         onStage: (stage) => ctx.stage(stage, STAGE_TITLES[stage]),
+        onProgress: (done, total, label) => ctx.progress(done, total, label),
         log: (level, message) => ctx.log(level, message),
       });
       const overall = result.verify?.overall;
@@ -332,6 +338,18 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
           note: s.note,
           check: (s.validate ?? s.train)?.rmsDb,
         })),
+        gui: result.gui
+          ? {
+              controls: result.gui.controls,
+              ...(result.gui.comparison
+                ? {
+                    similarity: result.gui.comparison.similarity,
+                    colorSimilarity: result.gui.comparison.colorSimilarity,
+                    comparePng: result.gui.comparison.comparePng,
+                  }
+                : {}),
+            }
+          : undefined,
         verify: result.verify
           ? {
               overall: result.verify.overall,

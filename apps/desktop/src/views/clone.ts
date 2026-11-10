@@ -26,6 +26,7 @@ export class CloneView {
   private readonly captureProgress = new Progress();
   private readonly profileLine = h("div.profile-line");
   private readonly installBox = h("input", { type: "checkbox", checked: true });
+  private readonly guiBox = h("input", { type: "checkbox", checked: true });
   private readonly cloneButton = h("button.primary", {}, "Klon bauen");
   private readonly cloneProgress = new Progress();
   private readonly result = h("div.result");
@@ -52,6 +53,8 @@ export class CloneView {
       h("header.step-header", {}, h("span.step-number", {}, "3"), h("h2", {}, "Klon bauen")),
       this.profileLine,
       h("label.check", {}, this.installBox, "Nach dem Bau installieren (für die DAW sichtbar)"),
+      h("label.check", { title: "Das Original-Plugin wird dafür kurz unsichtbar geöffnet und jeder Regler einmal bewegt" },
+        this.guiBox, "Oberfläche des Originals nachbauen"),
       h("div.actions", {}, this.cloneButton), this.cloneProgress.element, this.result);
 
     this.steps = [step1, step2, step3];
@@ -173,6 +176,7 @@ export class CloneView {
     this.cloneButton.textContent = this.cloneJob ? "Abbrechen" : "Klon bauen";
     this.cloneButton.classList.toggle("danger", Boolean(this.cloneJob));
     this.installBox.disabled = busy;
+    this.guiBox.disabled = busy;
     this.steps[2]!.classList.toggle("disabled", !this.profile);
   }
 
@@ -202,11 +206,18 @@ export class CloneView {
     if (!this.profile) return;
     clear(this.result);
     this.cloneProgress.busy("Analyse …");
-    const titles: Record<string, string> = { analyse: "Analyse …", build: "Plugin wird kompiliert …", verify: "Vergleich mit dem Original …", save: "Speichern …" };
+    const titles: Record<string, string> = {
+      analyse: "Analyse …", gui: "Oberfläche des Originals wird erfasst …", build: "Plugin wird kompiliert …",
+      verify: "Vergleich mit dem Original …", "gui-verify": "Oberflächen-Vergleich …", save: "Speichern …",
+    };
+    // the original plugin is known when the profile was measured in this session
+    const plugin = this.info && this.profile.name === this.info.name ? this.info.path : undefined;
     try {
-      this.cloneJob = await startJob<CloneResult>("clone.start", { profile: this.profile.path, install: this.installBox.checked }, (event) => {
-        if (event.kind === "stage") this.cloneProgress.busy(titles[event.stage] ?? event.title);
-      });
+      this.cloneJob = await startJob<CloneResult>("clone.start",
+        { profile: this.profile.path, install: this.installBox.checked, gui: this.guiBox.checked, ...(plugin ? { plugin } : {}) }, (event) => {
+          if (event.kind === "stage") this.cloneProgress.busy(titles[event.stage] ?? event.title);
+          else if (event.kind === "progress") this.cloneProgress.set(event.done, event.total, event.label ?? `${event.done} / ${event.total}`);
+        });
       this.update();
       const result = await this.cloneJob.result;
       this.cloneProgress.hide();
@@ -245,6 +256,15 @@ export class CloneView {
       if (v.limited) {
         this.result.appendChild(h("p.hint", {}, `Nicht exakt nachgebildet: ${v.limited.labels.join(", ")} (${v.limited.renders} Einstellungen, ${formatDb(v.limited.rmsDb)}).`));
       }
+    }
+    if (result.gui) {
+      const g = result.gui;
+      this.result.append(
+        h("div.result-gui", {},
+          h("strong", {}, "Oberfläche nachgebaut"),
+          h("span.muted", {}, ` · ${g.controls} Bedienelemente${g.similarity !== undefined ? ` · ${Math.round(g.similarity * 100)} % Struktur-, ${Math.round((g.colorSimilarity ?? 0) * 100)} % Farbähnlichkeit` : ""}`),
+          g.comparePng ? h("button.link", { onclick: () => openPath(g.comparePng!) }, " Vergleichsbild öffnen") : ""),
+      );
     }
     const folder = result.vst3.replace(/[\\/][^\\/]+$/, "");
     this.result.append(

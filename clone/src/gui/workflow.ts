@@ -125,6 +125,8 @@ export interface GuiComparison {
   colorSimilarity: number;
   originalPng: string;
   clonePng: string;
+  /** original and clone side by side */
+  comparePng?: string;
 }
 
 /** Captures the clone's editor and compares it pixel by pixel with the original. */
@@ -167,5 +169,5 @@ export async function compareGui(
   }
   await writeFile(join(guiCacheDir(profile), "compare.png"), encodePng(side));
   options.log("info", `Oberfläche: Struktur-Ähnlichkeit ${Math.round(similarity * 100)} %, Farb-Ähnlichkeit ${Math.round(colorSimilarity * 100)} % (Vergleichsbild: ${join(guiCacheDir(profile), "compare.png")})`);
-  return { similarity, colorSimilarity, originalPng, clonePng };
+  return { similarity, colorSimilarity, originalPng, clonePng, comparePng: join(guiCacheDir(profile), "compare.png") };
 }
