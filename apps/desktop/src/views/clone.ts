@@ -13,7 +13,7 @@ export class CloneView {
   private selected?: PluginEntry;
   private info?: PluginInfo;
   private profile?: { path: string; name: string; renders: number };
-  private mode: "eq" | "generic" = "eq";
+  private mode: "eq" | "dynamics" | "generic" = "eq";
   private captureJob?: JobHandle<CaptureResult>;
   private cloneJob?: JobHandle<CloneResult>;
 
@@ -120,7 +120,7 @@ export class CloneView {
     this.update();
     try {
       this.info = await call<PluginInfo>("plugins.info", { path: plugin.path });
-      this.mode = this.info.eq ? "eq" : "generic";
+      this.mode = this.info.eq ? "eq" : this.info.dynamics ? "dynamics" : "generic";
     } catch (error) {
       clear(this.details);
       this.details.appendChild(h("div.error-box", {}, `Plugin konnte nicht geladen werden: ${(error as Error).message}`));
@@ -141,7 +141,11 @@ export class CloneView {
         h("span", {}, `${info.parameters} Parameter`),
         h("span", {}, `${info.inputs} → ${info.outputs} Kanäle`),
         info.latency > 0 && h("span", {}, `Latenz ${info.latency} Samples`),
-        info.eq ? h("span.badge.good", {}, `EQ erkannt: ${info.eq.bands} Bänder, ${info.eq.shapes.length} Formen`) : h("span.badge.muted", {}, "kein parametrischer EQ erkannt")),
+        info.eq
+          ? h("span.badge.good", {}, `EQ erkannt: ${info.eq.bands} Bänder, ${info.eq.shapes.length} Formen`)
+          : info.dynamics
+            ? h("span.badge.good", {}, "Kompressor erkannt")
+            : h("span.badge.muted", {}, "weder EQ noch Kompressor erkannt")),
     );
   }
 
@@ -151,14 +155,20 @@ export class CloneView {
 
     // step 2
     clear(this.modeBox);
-    const option = (mode: "eq" | "generic", label: string, enabled: boolean) =>
+    const option = (mode: "eq" | "dynamics" | "generic", label: string, enabled: boolean) =>
       h("button", { class: this.mode === mode ? "active" : "", disabled: !enabled || busy, onclick: () => { this.mode = mode; this.update(); } }, label);
-    this.modeBox.append(option("eq", "EQ-Messung", Boolean(info?.eq)), option("generic", "Allgemein", Boolean(info)));
+    this.modeBox.append(
+      option("eq", "EQ-Messung", Boolean(info?.eq)),
+      option("dynamics", "Kompressor-Messung", Boolean(info?.dynamics)),
+      option("generic", "Allgemein", Boolean(info)),
+    );
     this.captureHint.textContent = !info
       ? "Zuerst ein Plugin wählen."
       : this.mode === "eq" && info.eq
         ? `${info.eq.renders} Einstellungen – jede Filterform bei mehreren Frequenzen, Gains und Güten. Dauert meist nur Sekunden.`
-        : `${info.genericRenders} Einstellungen – jeder Parameter einzeln und in Zufallskombinationen. Klone sind bisher nur für EQs möglich.`;
+        : this.mode === "dynamics" && info.dynamics
+          ? `${info.dynamics.renders} Einstellungen à ~27 s Messsignal (Pegeltreppe, Bursts, lange Pausen für langsames Release) – jeder Regler einzeln und in Zufallskombinationen. Dauert meist unter einer Minute.`
+          : `${info.genericRenders} Einstellungen – jeder Parameter einzeln und in Zufallskombinationen. Klone sind bisher nur für EQs und Kompressoren möglich.`;
     this.captureButton.disabled = !info || Boolean(this.cloneJob);
     this.captureButton.textContent = this.captureJob ? "Abbrechen" : "Messen starten";
     this.captureButton.classList.toggle("danger", Boolean(this.captureJob));
@@ -236,6 +246,23 @@ export class CloneView {
 
   private renderResult(result: CloneResult) {
     clear(this.result);
+    const d = result.dynamics;
+    if (result.kind === "dynamics" && d) {
+      this.result.append(
+        h("div.verdict", { class: verdictClass(d.verdict) },
+          h("div.verdict-main", {}, d.verdict),
+          h("div.verdict-sub", {}, `Pegelverlauf weicht im Mittel ${formatDb(d.overall.rmsDb)} vom Original ab · ${d.renders} Einstellungen geprüft` +
+            (d.validate ? ` · unbekannte Kombinationen ${formatDb(d.validate.rmsDb)}` : ""))),
+        h("ul.model-summary", {}, ...(result.summary ?? []).map((line) => h("li", {}, line))),
+      );
+      if (d.worst.length) {
+        const table = h("table.shape-table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Größte Abweichungen"), h("th", {}, "Mittel"), h("th", {}, "Spitze"))));
+        const body = h("tbody");
+        for (const w of d.worst) body.appendChild(h("tr", {}, h("td", {}, w.label), h("td.num", {}, formatDb(w.rmsDb)), h("td.num", {}, formatDb(w.maxDb))));
+        table.appendChild(body);
+        this.result.appendChild(table);
+      }
+    }
     const v = result.verify;
     if (v) {
       this.result.append(

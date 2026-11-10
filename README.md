@@ -6,8 +6,15 @@ neu gebaut. Kein dekompilierter Code, keine extrahierten Samples – nur gemesse
 
 Gesamtplan und Meilensteine: [PLAN.md](PLAN.md) · Profilformat: [docs/profile-format.md](docs/profile-format.md)
 
-**Stand: Meilenstein 4** – Desktop-App, Capture-Host, Profilformat, LLM-Anbindung und EQ-Klone (VST3/LV2) funktionieren.
+**Stand: Meilenstein 5 in Arbeit** – Desktop-App, Capture-Host, Profilformat und LLM-Anbindung funktionieren.
+Klone (VST3/LV2) gibt es für **parametrische EQs** und **Kompressoren/Limiter**, jeweils mit nachgebauter
+Oberfläche des Originals. Distortion/Amp (NAM) folgt.
 Getestet unter Linux mit nativen VST3-Plugins und Windows-Plugins über yabridge.
+
+| Klon | Original | Abweichung | Oberfläche |
+|---|---|---|---|
+| Pro-Q 3 Clone | FabFilter Pro-Q 3 (yabridge) | 0,10 dB über 149 Einstellungen | 74 % Struktur, 98 % Farbe |
+| Open Optical Clone | Open Optical (Opto-Kompressor) | 0,50 dB Pegelverlauf über 44 Einstellungen, Oberwellen meist ±2 dB | 82 % Struktur, 95 % Farbe |
 
 ## Voraussetzungen
 
@@ -34,6 +41,10 @@ Drei Bereiche: **Klonen** (Plugin wählen → Messen → Klon bauen), **Biblioth
 Klon neu bauen ohne Original, exportieren, importieren) und **KI-Modelle** (Anbieter, Schlüssel, Rollen,
 Test). Unten zeigt das **Protokoll** jeden Schritt, nach Phasen gegliedert; „Details“ blendet auch die
 Ausgaben von Compiler und Host ein.
+
+Im Bereich Klonen wählt die App den Messmodus passend zum Plugin: **EQ-Messung**, **Kompressor-Messung**
+oder **Allgemein**. Beim Klonen kann sie außerdem die **Oberfläche des Originals nachbauen** (das Original
+wird dafür einmal unsichtbar geöffnet, siehe unten).
 
 Profile und Klone liegen unter `~/.local/share/vst-cloner/` (Windows: `%APPDATA%\vst-cloner`).
 Voraussetzung zusätzlich zu oben: Rust (`cargo`) und unter Linux WebKitGTK 4.1.
@@ -81,9 +92,44 @@ wie das Original (gleiche normierte Werte → gleiche Einstellung). Ablauf:
 Modell und Bericht werden im Profil gespeichert (`model/eq.json`, `report.json`); ein erneutes
 `vch clone` baut den Klon dann ohne neue Analyse. Einzelschritte: `vch analyze`, `vch verify`.
 
-Unterstützte Formen: Bell, Low/High Shelf, Low/High Cut (6–96 dB/Okt.), Notch, Band Pass, Tilt Shelf.
-Linearphasige „Brickwall“-Flanken werden angenähert, andere Formen vorerst durchgeleitet – der Bericht
-weist beides getrennt aus.
+Unterstützte Formen: Bell, Low/High Shelf, Low/High Cut (6–96 dB/Okt. und „Brickwall“ als gefittetes
+elliptisches Filter), Notch, Band Pass, Tilt Shelf, Flat Tilt. Parameteränderungen werden geglättet
+(kein Knacken beim Drehen). Nicht unterstützte Formen leitet der Klon durch; der Bericht weist sie aus.
+
+Im Klon-Editor legt ein Klick in die Kurve ein Band an; ziehen ändert Frequenz/Gain, das Mausrad die Güte,
+Rechtsklick entfernt das Band. Für das gewählte Band erscheint eine Leiste mit Form, Frequenz, Gain, Güte
+und Flanke.
+
+### Kompressor klonen
+
+```bash
+# 1. Kompressor vermessen (Pegeltreppe, Bursts, lange Pausen; jeder Regler einzeln + Zufallskombinationen)
+npm run vch -- capture ~/.vst3/MeinKompressor.vst3 --class dynamics -o mein-comp.vcprofile
+
+# 2. Klon bauen (vch clone erkennt Kompressor-Profile selbst), mit Oberfläche
+npm run vch -- clone mein-comp.vcprofile -o ./mein-comp-clone --gui --install
+```
+
+Das Modell bildet einen Kompressor im Steuertakt (32 Samples, kausal) nach: Detektor (RMS oder Spitze,
+Feed-forward oder Feedback, mit Energie-Mittelung), Kennlinie mit weichem Knick, Attack, schnelles
+Release und einen programmabhängigen langsamen Speicher (Opto-Verhalten). Dazu kommt die Klangfarbe:
+eine tanh-Sättigung und die Welligkeit des Detektors, die komprimierte Signale mit Oberwellen färbt.
+Der Fit wählt die Variante selbst; jeder Regler wird über eine Tabelle auf die Modellwerte abgebildet.
+Zufallskombinationen, die nie zum Fitten benutzt werden, dienen als Gegenprobe. Das Plugin
+(`plugin-template/dynamics`) rechnet sample-genau wie das TypeScript-Modell.
+
+### Oberfläche nachbauen
+
+Mit `--gui` (bzw. der Option in der App) öffnet `vch-gui` den Editor des Originals unsichtbar (unter
+Linux in Xvfb), bewegt jeden Regler einzeln und leitet aus den Bildern ein Layout ab: Drehregler,
+Schieber, Schalter, Auswahlfelder, Wertanzeigen, EQ-Kurve, Flächen, Linien und Texte (mit tesseract
+gelesen, falls installiert). Bei Kompressoren läuft zusätzlich ein Testton durch das Original, um die
+Pegelreduktions-Nadel zu finden und zu kalibrieren. Gespeichert wird nur das Layout (`model/gui.json`),
+keine Grafik des Originals. Der Vergleich Klon ↔ Original landet als Bild im Cache.
+
+Zusätzlich nötig: `xorg-server-xvfb`, optional `tesseract` mit `tesseract-data-eng`/`-deu`.
+Hinweise, die ein Plugin beim Öffnen in seinen Editor zeichnet (z. B. FabFilter-Testversion), schließt
+`vch-gui` über einen Klick auf „Evaluate“.
 
 ### Plugins mit vielen Parametern
 
@@ -140,9 +186,14 @@ host/      vch-host: C++20/JUCE 9, headless. Lädt VST3/LV2, rendert offline.
 profile/   JSON-Schemas, Reader/Writer mit Prüfsummen, WAV-I/O
 capture/   Testsignale, Messplan, Ansteuerung von vch-host, CLI `vch`
 agent/     LLM-Anbieter (Vercel AI SDK), models.dev-Katalog, Schlüsselbund, Fähigkeitstests, Rollen
-clone/     Frequenzgang-Analyse, EQ-Erkennung, Messplan, Filter-Fit, Plugin-Build, Vergleich
-plugin-template/eq/
-           C++/JUCE-EQ-Engine für Klone (Formeln identisch mit clone/src/dsp/biquad.ts)
+clone/     Analyse, Messpläne, Fits und Codegeneratoren: eq/ (Filter-Fit), dynamics/ (Kompressor-Modell),
+           gui/ (Oberflächen-Analyse, Texterkennung), dsp/ (Biquads, elliptische Filter, Optimierer);
+           Plugin-Build und Vergleich mit dem Original
+plugin-template/
+           eq/        C++/JUCE-EQ-Engine (Formeln identisch mit clone/src/dsp/biquad.ts)
+           dynamics/  C++/JUCE-Kompressor-Engine (identisch mit clone/src/dynamics/model.ts)
+           common/    Parameter und nachgebauter Editor, gemeinsam für alle Vorlagen
+host/      zusätzlich vch-gui: öffnet Plugin-Editoren unsichtbar und nimmt sie auf
 bridge/    JSON-Zeilen-Schnittstelle zwischen Oberfläche und den Paketen (Jobs, Fortschritt, Protokoll)
 apps/desktop/
            Tauri-App: Web-Oberfläche (TypeScript) + Rust-Hülle, die die Bridge startet

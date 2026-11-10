@@ -51,7 +51,9 @@ export function verdictClass(verdict: string | undefined): string {
     case "sehr gut": return "good";
     case "gut": return "ok";
     case "angenähert": return "warn";
+    case "brauchbar": return "warn";
     case "abweichend": return "bad";
+    case "ungenau": return "bad";
     default: return "neutral";
   }
 }

@@ -45,13 +45,17 @@ export class LibraryView {
             h("div.profile-meta", {},
               h("span", {}, formatDate(p.createdAt)),
               h("span", {}, `${p.renders} Messungen`),
-              h("span", {}, p.planner === "eq" ? "EQ-Messung" : "allgemein"),
+              h("span", {}, p.planner === "eq" ? "EQ-Messung" : p.planner === "dynamics" ? "Kompressor-Messung" : "allgemein"),
               h("span", {}, formatBytes(p.bytes)))),
           p.verdict
             ? h("span.pill", { class: verdictClass(p.verdict), title: `Abweichung ${formatDb(p.rmsDb ?? 0)}` }, `Klon: ${p.verdict}`)
             : h("span.pill.neutral", {}, "noch kein Klon"),
           h("div.profile-actions", {},
-            h("button.primary.small", { disabled: p.planner !== "eq", title: p.planner !== "eq" ? "Klone sind bisher nur für EQ-Messungen möglich" : "", onclick: () => this.onBuild(p) }, "Klon bauen"),
+            h("button.primary.small", {
+              disabled: p.planner !== "eq" && p.planner !== "dynamics",
+              title: p.planner !== "eq" && p.planner !== "dynamics" ? "Klone sind bisher nur für EQ- und Kompressor-Messungen möglich" : "",
+              onclick: () => this.onBuild(p),
+            }, "Klon bauen"),
             h("button.ghost.small", { onclick: () => this.exportProfile(p) }, "Exportieren …"),
             h("button.ghost.small", { onclick: () => revealItemInDir(p.path) }, "Zeigen"),
             h("button.ghost.small.danger-text", { onclick: () => this.deleteProfile(p) }, "Löschen"))),

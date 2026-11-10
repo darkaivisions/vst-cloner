@@ -30,7 +30,9 @@ export function storedDynamicsModel(profile: Profile): DynamicsModel | undefined
 }
 
 const db = (v: number) => `${v.toFixed(2)} dB`;
-const verdict = (rms: number) => (rms < 0.5 ? "ausgezeichnet" : rms < 1 ? "sehr gut" : rms < 2 ? "gut" : rms < 4 ? "brauchbar" : "ungenau");
+/** Rating of a compressor clone (level over time; naturally less exact than an EQ's frequency response). */
+export const dynamicsVerdict = (rms: number) => (rms < 0.5 ? "ausgezeichnet" : rms < 1 ? "sehr gut" : rms < 2 ? "gut" : rms < 4 ? "brauchbar" : "ungenau");
+const verdict = dynamicsVerdict;
 
 export function formatDynamicsModel(model: DynamicsModel): string[] {
   const p = model.base;

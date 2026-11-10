@@ -13,7 +13,22 @@ import {
   pluginInfo,
   type CaptureProgress,
 } from "@vst-cloner/capture";
-import { cloneProfile, detectEq, eqPlanner, planEq, slugify, verdict, type CloneStage, type LogLevel } from "@vst-cloner/clone";
+import {
+  cloneDynamicsProfile,
+  cloneProfile,
+  detectDynamics,
+  detectEq,
+  dynamicsPlanner,
+  dynamicsVerdict,
+  eqPlanner,
+  formatDynamicsModel,
+  planDynamics,
+  planEq,
+  slugify,
+  verdict,
+  type CloneStage,
+  type LogLevel,
+} from "@vst-cloner/clone";
 import {
   configPath,
   discoverProviders,
@@ -143,8 +158,8 @@ async function summarizeProfile(path: string): Promise<ProfileSummary> {
     createdAt: manifest?.createdAt ?? "",
     renders: captures?.renders?.length ?? 0,
     planner: manifest?.capture?.plan?.planner ?? "generic",
-    hasModel: Boolean(entries["model/eq.json"]),
-    ...(rms !== undefined ? { rmsDb: rms, verdict: verdict(rms) } : {}),
+    hasModel: Boolean(entries["model/eq.json"] || entries["model/dynamics.json"]),
+    ...(rms !== undefined ? { rmsDb: rms, verdict: (manifest?.capture?.plan?.planner === "dynamics" ? dynamicsVerdict : verdict)(rms) } : {}),
     ...(report?.pluginName ? { pluginName: report.pluginName } : {}),
   };
 }
@@ -206,6 +221,15 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
     } catch {
       eq = undefined;
     }
+    let dynamics: { roles: string[]; renders: number } | undefined;
+    if (!eq) {
+      try {
+        const mapping = detectDynamics(info.parameters);
+        dynamics = { roles: Object.keys(mapping.roles), renders: planDynamics(info.parameters, { ...DEFAULT_PLAN }).renders.length };
+      } catch {
+        dynamics = undefined;
+      }
+    }
     let genericRenders: number;
     try {
       genericRenders = planCaptures(info.parameters, { ...DEFAULT_PLAN, maxRenders: Number.MAX_SAFE_INTEGER }).renders.length;
@@ -224,19 +248,24 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
       latency: info.latencySamples,
       parameters: info.parameters.length,
       eq,
+      dynamics,
       genericRenders,
     };
   },
 
   "capture.start"(params) {
     const plugin = str(params, "path");
-    const mode = params.mode === "generic" ? "generic" : "eq";
+    const mode = params.mode === "generic" ? "generic" : params.mode === "dynamics" ? "dynamics" : "eq";
     return startJob("capture", async (ctx) => {
       ctx.stage("capture", "Messen");
       await mkdir(profilesDir(), { recursive: true });
       const info = await pluginInfo(plugin, { signal: ctx.signal });
       const output = join(profilesDir(), `${slugify(info.plugin.name)}-${timestamp()}.vcprofile`);
-      ctx.log("info", mode === "eq" ? "EQ-Messplan: jede Filterform bei mehreren Frequenzen, Gains und Güten" : "Allgemeiner Messplan: jeder Parameter einzeln + Zufallskombinationen");
+      ctx.log("info", mode === "eq"
+        ? "EQ-Messplan: jede Filterform bei mehreren Frequenzen, Gains und Güten"
+        : mode === "dynamics"
+          ? "Kompressor-Messplan: jeder Regler einzeln (dicht an den Enden) + Zufallskombinationen zur Gegenprobe, Messsignal mit Pegeltreppe, Bursts und langen Pausen"
+          : "Allgemeiner Messplan: jeder Parameter einzeln + Zufallskombinationen");
 
       const started = Date.now();
       const profile = await capture({
@@ -248,7 +277,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
         prerollSeconds: 0.5,
         tailSeconds: mode === "eq" ? 0.25 : 2,
         plan: { ...DEFAULT_PLAN },
-        ...(mode === "eq" ? { planner: eqPlanner } : {}),
+        ...(mode === "eq" ? { planner: eqPlanner } : mode === "dynamics" ? { planner: dynamicsPlanner } : {}),
         signal: ctx.signal,
         onProgress: (event) => {
           if (event.stage === "render") ctx.progress(event.done, event.total, event.id);
@@ -311,6 +340,49 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
     return startJob("clone", async (ctx) => {
       const summary = await summarizeProfile(profilePath);
       const pluginName = `${summary.name} Clone`;
+      if (summary.planner === "dynamics") {
+        const result = await cloneDynamicsProfile({
+          profilePath,
+          outputDir: join(clonesDir(), slugify(pluginName)),
+          pluginName,
+          ...(install ? { install: true } : {}),
+          ...(refit ? { refit: true } : {}),
+          gui,
+          ...(pluginPath ? { pluginPath } : {}),
+          signal: ctx.signal,
+          onStage: (stage) => ctx.stage(stage, STAGE_TITLES[stage]),
+          onProgress: (done, total, label) => ctx.progress(done, total, label),
+          log: (level, message) => ctx.log(level, message),
+        });
+        const v = result.verify;
+        if (v) ctx.log("success", `Klon fertig – Abweichung zum Original ${v.overall.rmsDb.toFixed(2)} dB (${dynamicsVerdict(v.overall.rmsDb)})`);
+        return {
+          kind: "dynamics",
+          pluginName,
+          vst3: result.build.vst3,
+          lv2: result.build.lv2,
+          installed: result.build.installed,
+          shapes: [],
+          summary: formatDynamicsModel(result.model),
+          dynamics: v
+            ? {
+                overall: v.overall,
+                ...(v.validate ? { validate: v.validate } : {}),
+                worst: v.worst,
+                verdict: dynamicsVerdict(v.overall.rmsDb),
+                renders: v.renders,
+              }
+            : undefined,
+          gui: result.gui
+            ? {
+                controls: result.gui.controls,
+                ...(result.gui.comparison
+                  ? { similarity: result.gui.comparison.similarity, colorSimilarity: result.gui.comparison.colorSimilarity, comparePng: result.gui.comparison.comparePng }
+                  : {}),
+              }
+            : undefined,
+        };
+      }
       const result = await cloneProfile({
         profilePath,
         outputDir: join(clonesDir(), slugify(pluginName)),
@@ -327,6 +399,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
       const overall = result.verify?.overall;
       if (overall) ctx.log("success", `Klon fertig – Abweichung zum Original ${overall.rmsDb.toFixed(2)} dB (${verdict(overall.rmsDb)})`);
       return {
+        kind: "eq",
         pluginName,
         vst3: result.build.vst3,
         lv2: result.build.lv2,

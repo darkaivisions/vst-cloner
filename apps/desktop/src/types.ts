@@ -30,6 +30,8 @@ export interface PluginInfo {
   latency: number;
   parameters: number;
   eq?: { bands: number; shapes: string[]; renders: number };
+  /** compressor/limiter recognised by its parameter names */
+  dynamics?: { roles: string[]; renders: number };
   genericRenders: number;
 }
 
@@ -57,11 +59,21 @@ export interface ProfileSummary {
 }
 
 export interface CloneResult {
+  kind: "eq" | "dynamics";
   pluginName: string;
   vst3: string;
   lv2: string;
   installed: string[];
   shapes: { label: string; kind: string; supported: boolean; note?: string; check?: number }[];
+  /** compressors: description of the model and comparison with the original */
+  summary?: string[];
+  dynamics?: {
+    overall: { rmsDb: number; maxDb: number };
+    validate?: { rmsDb: number; maxDb: number };
+    worst: { label: string; rmsDb: number; maxDb: number }[];
+    verdict: string;
+    renders: number;
+  };
   /** rebuilt editor: number of controls, similarity with the original editor (0…1) */
   gui?: { controls: number; similarity?: number; colorSimilarity?: number; comparePng?: string };
   verify?: {
