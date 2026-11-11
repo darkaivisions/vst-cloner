@@ -25,6 +25,8 @@ Usage:
   vch analyze <profile> [--save] [--json]
                                         Fit the EQ model and show how well it matches
   vch verify  <profile> <clone.vst3>    Compare a built clone with the original measurements
+  vch batch   --class <eq|dynamics|distortion> -o <dir>
+                                        Capture and clone every installed plugin of one class
 
 Capture options:
   -o, --output <file>       Output profile (.vcprofile)
@@ -323,7 +325,7 @@ export async function main(argv: string[]): Promise<number> {
     const llm = await import("@vst-cloner/agent/cli");
     return llm.main(argv.slice(1));
   }
-  if (argv[0] === "clone" || argv[0] === "analyze" || argv[0] === "verify") {
+  if (argv[0] === "clone" || argv[0] === "analyze" || argv[0] === "verify" || argv[0] === "batch") {
     const cloning = await import("@vst-cloner/clone/cli");
     return cloning.main(argv[0], argv.slice(1));
   }

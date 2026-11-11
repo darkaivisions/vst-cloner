@@ -30,3 +30,4 @@ export * from "./gui/analyze.ts";
 export * from "./gui/svg.ts";
 export * from "./gui/codegen.ts";
 export * from "./gui/workflow.ts";
+export * from "./batch.ts";

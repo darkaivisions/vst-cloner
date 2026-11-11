@@ -1,8 +1,9 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { readProfile, writeProfile } from "@vst-cloner/profile";
 import { strToU8 } from "fflate";
 import type { Logger } from "./build.ts";
+import { EFFECT_CLASSES, runBatch, type EffectClass } from "./batch.ts";
 import { verifyClone } from "./verify.ts";
 import { analyze, cloneProfile, formatModelReport, formatVerifyReport, MODEL_FILE, storedModel } from "./workflow.ts";
 import { cloneDynamicsProfile, isDynamicsProfile } from "./dynamics/workflow.ts";
@@ -16,6 +17,10 @@ export const USAGE = `Cloning:
   vch analyze <profile> [--save] [--json]
                                         Fit the model and show how well it matches
   vch verify  <profile> <clone.vst3>    Compare a built clone with the original measurements
+  vch batch   --class <eq|dynamics|distortion> -o <dir> [--match <regex>] [--limit <n>] [--gui]
+              [--force] [--yabridge] [--all-formats] [--timeout <s>] [plugin …]
+                                        Capture and clone every installed plugin of one class (nothing is
+                                        installed); report in <dir>/report.md, one log per plugin
 `;
 
 const OPTIONS = {
@@ -27,6 +32,13 @@ const OPTIONS = {
   gui: { type: "boolean" },
   "refit-gui": { type: "boolean" },
   plugin: { type: "string" },
+  class: { type: "string" },
+  match: { type: "string" },
+  limit: { type: "string" },
+  force: { type: "boolean" },
+  yabridge: { type: "boolean" },
+  "all-formats": { type: "boolean" },
+  timeout: { type: "string" },
   save: { type: "boolean" },
   json: { type: "boolean" },
   verbose: { type: "boolean", short: "v" },
@@ -52,6 +64,7 @@ export async function main(command: string, argv: string[]): Promise<number> {
   }
   const { values, positionals } = parsed;
   const log = logger(values.verbose ?? false);
+  if (command === "batch") return batchCommand(values, positionals, log);
   const profilePath = positionals[0] ? resolve(positionals[0]) : undefined;
   if (!profilePath) {
     console.error(`Error: missing profile path\n\n${USAGE}`);
@@ -127,5 +140,40 @@ export async function main(command: string, argv: string[]): Promise<number> {
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);
     return 1;
+  }
+}
+
+async function batchCommand(values: Record<string, string | boolean | undefined>, positionals: string[], log: Logger): Promise<number> {
+  const effectClass = values.class as EffectClass | undefined;
+  if (!effectClass || !EFFECT_CLASSES.includes(effectClass) || typeof values.output !== "string") {
+    console.error(`Error: batch needs --class <${EFFECT_CLASSES.join("|")}> and -o <dir>\n\n${USAGE}`);
+    return 2;
+  }
+  const controller = new AbortController();
+  process.once("SIGINT", () => {
+    log("warn", "Abbruch – der Bericht enthält alle fertigen Plugins, ein neuer Start setzt dort fort");
+    controller.abort();
+  });
+  try {
+    const report = await runBatch({
+      effectClass,
+      outputDir: resolve(values.output),
+      ...(positionals.length ? { plugins: positionals.map((p) => resolve(p)) } : {}),
+      ...(typeof values.match === "string" ? { match: new RegExp(values.match, "i") } : {}),
+      ...(typeof values.limit === "string" ? { limit: Number(values.limit) } : {}),
+      ...(typeof values.timeout === "string" ? { timeoutSeconds: Number(values.timeout) } : {}),
+      gui: values.gui === true,
+      force: values.force === true,
+      yabridge: values.yabridge === true,
+      allFormats: values["all-formats"] === true,
+      log,
+      signal: controller.signal,
+    });
+    const tried = report.rows.filter((r) => r.status !== "skipped");
+    console.log(`${tried.filter((r) => r.status === "ok").length} von ${tried.length} geklont – ${join(resolve(values.output), "report.md")}`);
+    return 0;
+  } catch (error) {
+    if (controller.signal.aborted) return 130;
+    throw error;
   }
 }
