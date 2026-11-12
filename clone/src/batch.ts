@@ -11,9 +11,11 @@ import { cloneDynamicsProfile, dynamicsVerdict } from "./dynamics/workflow.ts";
 import { measuredCompression } from "./dynamics/fit.ts";
 import { detectDistortion, distortionPlanner } from "./distortion/plan.ts";
 import { cloneDistortionProfile, distortionVerdict } from "./distortion/workflow.ts";
+import { delayPlanner, detectDelay } from "./delay/plan.ts";
+import { cloneDelayProfile, delayVerdict } from "./delay/workflow.ts";
 
-export type EffectClass = "eq" | "dynamics" | "distortion";
-export const EFFECT_CLASSES: EffectClass[] = ["eq", "dynamics", "distortion"];
+export type EffectClass = "eq" | "dynamics" | "distortion" | "delay";
+export const EFFECT_CLASSES: EffectClass[] = ["eq", "dynamics", "distortion", "delay"];
 
 /**
  * Effect class of a plugin – the same order as the app uses: EQ (band parameters), compressor
@@ -23,6 +25,13 @@ export function classifyPlugin(info: Pick<HostInfo, "parameters" | "plugin"> & P
   // synths have attack/release/drive controls too, but nothing to measure: they do not process an input
   if (info.plugin.isInstrument || info.mainInputChannels === 0 || /instrument|synth|generator/i.test(info.plugin.category)) {
     return { reason: "Instrument (verarbeitet kein Eingangssignal)" };
+  }
+  // delays and echoes say so in their category or name; their filter and level controls fit no other class
+  try {
+    detectDelay(info.parameters, info.plugin.category, info.plugin.name);
+    return { effectClass: "delay", reason: "Delay erkannt" };
+  } catch {
+    // not a delay: the other classes follow
   }
   // per-band thresholds and ratios look like EQ bands or a compressor, but neither model fits
   const multiband = multibandReason(info.parameters);
@@ -215,7 +224,7 @@ async function runOne(entry: Pick<PluginEntry, "path" | "name" | "format">, opti
 
     row.stage = "capture";
     const profilePath = join(options.outputDir, "profiles", `${slug}.vcprofile`);
-    const planner = { eq: eqPlanner, dynamics: dynamicsPlanner, distortion: distortionPlanner }[options.effectClass];
+    const planner = { eq: eqPlanner, dynamics: dynamicsPlanner, distortion: distortionPlanner, delay: delayPlanner }[options.effectClass];
     await capture({
       plugin: entry.path,
       output: profilePath,
@@ -258,6 +267,14 @@ async function runOne(entry: Pick<PluginEntry, "path" | "name" | "format">, opti
         };
       }
       if (result.gui) row.gui = { controls: result.gui.controls, ...(result.gui.comparison ? { similarity: result.gui.comparison.similarity } : {}) };
+    } else if (options.effectClass === "delay") {
+      const result = await cloneDelayProfile(common);
+      const v = result.verify;
+      if (v) {
+        // without an echo in the base render there was nothing to measure: the error says nothing about a delay
+        const judged = result.model.report.echoes > 0 ? delayVerdict(v.overall.rmsDb) : "kein Echo gemessen";
+        row.quality = { value: v.overall.rmsDb, verdict: judged, text: `${v.overall.rmsDb.toFixed(2)} dB (${judged})`, ...(v.validate ? { validate: v.validate.rmsDb } : {}) };
+      }
     } else {
       const result = await cloneDistortionProfile(common);
       const v = result.verify;

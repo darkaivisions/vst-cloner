@@ -12,9 +12,9 @@ interface SegmentSpec {
   params?: Record<string, number>;
 }
 
-export type SignalPreset = "full" | "eq" | "dynamics" | "distortion";
+export type SignalPreset = "full" | "eq" | "dynamics" | "distortion" | "delay";
 
-export const SIGNAL_PRESETS: SignalPreset[] = ["full", "eq", "dynamics", "distortion"];
+export const SIGNAL_PRESETS: SignalPreset[] = ["full", "eq", "dynamics", "distortion", "delay"];
 
 /** Short sequence for linear, time-invariant effects (EQs, filters): impulse response + sweep as cross-check. */
 export function eqSegmentSpecs(sampleRate: number): SegmentSpec[] {
@@ -95,8 +95,23 @@ export function distortionSegmentSpecs(sampleRate: number, seed = 1): SegmentSpe
   ];
 }
 
+/**
+ * Sequence for delays and echoes (linear effects with a long memory): an impulse followed by a long silence shows
+ * every repeat – its time, level and colour – and a short noise burst with its own silence is the cross-check
+ * with real material.
+ */
+export function delaySegmentSpecs(seed = 1): SegmentSpec[] {
+  return [
+    { id: "lead", kind: "silence", seconds: 0.1 },
+    { id: "impulse", kind: "impulse", seconds: 6, params: { amplitude: 0.5 } },
+    { id: "noise", kind: "noise", seconds: 0.25, params: { seed, rmsDb: -18 } },
+    { id: "gap-1", kind: "silence", seconds: 5 },
+  ];
+}
+
 export function segmentSpecs(preset: SignalPreset, sampleRate: number, seed = 1): SegmentSpec[] {
   if (preset === "eq") return eqSegmentSpecs(sampleRate);
+  if (preset === "delay") return delaySegmentSpecs(seed);
   if (preset === "distortion") return distortionSegmentSpecs(sampleRate, seed);
   if (preset === "dynamics") return dynamicsSegmentSpecs(sampleRate, seed);
   return defaultSegmentSpecs(sampleRate, seed);

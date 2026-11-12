@@ -8,6 +8,7 @@ import { verifyClone } from "./verify.ts";
 import { analyze, cloneProfile, formatModelReport, formatVerifyReport, MODEL_FILE, storedModel } from "./workflow.ts";
 import { cloneDynamicsProfile, isDynamicsProfile } from "./dynamics/workflow.ts";
 import { cloneDistortionProfile, isDistortionProfile } from "./distortion/workflow.ts";
+import { cloneDelayProfile, isDelayProfile } from "./delay/workflow.ts";
 
 export const USAGE = `Cloning:
   vch clone   <profile> [-o <dir>] [--name <text>] [--install] [--refit] [--no-verify]
@@ -17,7 +18,7 @@ export const USAGE = `Cloning:
   vch analyze <profile> [--save] [--json]
                                         Fit the model and show how well it matches
   vch verify  <profile> <clone.vst3>    Compare a built clone with the original measurements
-  vch batch   --class <eq|dynamics|distortion> -o <dir> [--match <regex>] [--limit <n>] [--gui]
+  vch batch   --class <eq|dynamics|distortion|delay> -o <dir> [--match <regex>] [--limit <n>] [--gui]
               [--force] [--yabridge] [--all-formats] [--timeout <s>] [plugin …]
                                         Capture and clone every installed plugin of one class (nothing is
                                         installed); report in <dir>/report.md, one log per plugin
@@ -75,8 +76,8 @@ export async function main(command: string, argv: string[]): Promise<number> {
     switch (command) {
       case "clone": {
         const loaded = await readProfile(profilePath);
-        if (isDistortionProfile(loaded) || isDynamicsProfile(loaded)) {
-          const clone = isDistortionProfile(loaded) ? cloneDistortionProfile : cloneDynamicsProfile;
+        if (isDelayProfile(loaded) || isDistortionProfile(loaded) || isDynamicsProfile(loaded)) {
+          const clone = isDelayProfile(loaded) ? cloneDelayProfile : isDistortionProfile(loaded) ? cloneDistortionProfile : cloneDynamicsProfile;
           const result = await clone({
             profilePath,
             ...(values.output ? { outputDir: resolve(values.output) } : {}),
