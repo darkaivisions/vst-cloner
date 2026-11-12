@@ -4,7 +4,7 @@ import { strFromU8, strToU8 } from "fflate";
 import { buildPlugin, slugify, type BuildResult, type Logger } from "../build.ts";
 import { generateDynamicsHeader } from "./codegen.ts";
 import { CancelledError } from "@vst-cloner/capture";
-import { predictModel, type DynamicsModel } from "./fit.ts";
+import { measuredCompression, predictModel, type DynamicsModel } from "./fit.ts";
 import { staticReduction } from "./model.ts";
 import { verifyDynamicsClone, type DynamicsVerifyReport } from "./verify.ts";
 import { existsSync } from "node:fs";
@@ -47,6 +47,9 @@ export function formatDynamicsModel(model: DynamicsModel): string[] {
   ];
   if (model.report.train) lines.push(`Modell vs. Original (Einzelparameter): ${db(model.report.train.rmsDb)} (max ${model.report.train.maxDb.toFixed(1)}) – ${verdict(model.report.train.rmsDb)}`);
   if (model.report.validate) lines.push(`Vorhersage unbekannter Kombinationen: ${db(model.report.validate.rmsDb)} (max ${model.report.validate.maxDb.toFixed(1)}) – ${verdict(model.report.validate.rmsDb)}`);
+  if (!measuredCompression(model)) {
+    lines.push(`Achtung: am Arbeitspunkt der Messung wird nicht komprimiert (${db(model.report.compressionDb ?? 0)}) – der Klon ändert fast nur den Pegel, die Fehlerwerte sagen wenig über den Kompressor aus`);
+  }
   return lines;
 }
 

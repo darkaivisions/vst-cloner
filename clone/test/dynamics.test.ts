@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { Parameter } from "@vst-cloner/profile";
 import { nelderMead } from "../src/dsp/optimize.ts";
 import { BLOCK, simulateGain, staticReduction, type CompressorParams } from "../src/dynamics/model.ts";
-import { fitInteraction, fromLatent, pack, predictParams, tableAt, toLatent, type ParamTable } from "../src/dynamics/fit.ts";
+import { gainSpreadDb, fitInteraction, fromLatent, pack, predictParams, tableAt, toLatent, type ParamTable } from "../src/dynamics/fit.ts";
 import { detectDynamics, NotDynamicsError } from "../src/dynamics/plan.ts";
 
 const params: CompressorParams = {
@@ -97,6 +97,13 @@ test("interaction: automatic makeup and input gain are found and combine like th
     assert.ok(Math.abs(predicted.ratio - expected.ratio) < 1e-6);
     assert.ok(Math.abs(predicted.makeupDb - expected.makeupDb) < 0.01, `makeup ${predicted.makeupDb} vs ${expected.makeupDb}`);
   }
+});
+
+test("gain spread: zero for a level change, the reduction for a compressed render", () => {
+  const observation = (gain: (w: number) => number) => ({ renderId: "r", label: "r", purpose: "train" as const, params: [], measuredDb: Float64Array.from({ length: 200 }, (_, w) => gain(w)) });
+  assert.equal(gainSpreadDb(observation(() => -6)), 0);
+  assert.ok(Math.abs(gainSpreadDb(observation((w) => (w < 100 ? 0 : -8))) - 8) < 1e-9);
+  assert.equal(gainSpreadDb(observation((w) => (w === 7 ? -30 : 0))), 0); // a single outlier window does not count
 });
 
 test("dynamics header: parameters with the original's names, tables in clone indices", async () => {

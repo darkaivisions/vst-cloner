@@ -8,6 +8,7 @@ import { eqPlanner } from "./eq/plan.ts";
 import { cloneProfile, verdict } from "./workflow.ts";
 import { detectDynamics, dynamicsPlanner } from "./dynamics/plan.ts";
 import { cloneDynamicsProfile, dynamicsVerdict } from "./dynamics/workflow.ts";
+import { measuredCompression } from "./dynamics/fit.ts";
 import { detectDistortion, distortionPlanner } from "./distortion/plan.ts";
 import { cloneDistortionProfile, distortionVerdict } from "./distortion/workflow.ts";
 
@@ -243,9 +244,11 @@ async function runOne(entry: Pick<PluginEntry, "path" | "name" | "format">, opti
       const result = await cloneDynamicsProfile(common);
       const v = result.verify;
       if (v) {
+        // nothing compressed at the centre of the measurement: the small error is that of a level change, not of a compressor
+        const judged = measuredCompression(result.model) ? dynamicsVerdict(v.overall.rmsDb) : "keine Kompression gemessen";
         row.quality = {
-          value: v.overall.rmsDb, verdict: dynamicsVerdict(v.overall.rmsDb),
-          text: `${v.overall.rmsDb.toFixed(2)} dB (${dynamicsVerdict(v.overall.rmsDb)})`,
+          value: v.overall.rmsDb, verdict: judged,
+          text: `${v.overall.rmsDb.toFixed(2)} dB (${judged})`,
           ...(v.validate ? { validate: v.validate.rmsDb } : {}),
         };
       }

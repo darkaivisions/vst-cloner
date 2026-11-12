@@ -328,6 +328,20 @@ export function compressedShare(o: DynamicsObservation, makeupDb: number): numbe
   return valid ? compressed / valid : 0;
 }
 
+/**
+ * How much a render changes the gain with the level: spread between the least and the most reduced windows
+ * (dB). A plugin that only changes the level gives 0.
+ */
+export function gainSpreadDb(o: DynamicsObservation): number {
+  const gains = [...o.measuredDb].filter((g) => !Number.isNaN(g)).sort((a, b) => a - b);
+  if (gains.length < 20) return 0;
+  const at = (q: number) => gains[Math.min(gains.length - 1, Math.floor(q * gains.length))]!;
+  return at(0.98) - at(0.02);
+}
+
+/** Below this spread at the centre of the measurement nothing is compressed there: the sweeps of the controls then show (almost) only level changes. */
+export const MIN_MEASURED_COMPRESSION_DB = 1.5;
+
 export const STRUCTURES: CompressorStructure[] = (["peak", "rms"] as Detector[]).flatMap((detector) =>
   (["feedforward", "feedback"] as Topology[]).map((topology) => ({ detector, topology })));
 
@@ -516,8 +530,14 @@ export interface DynamicsModel {
     renders: DynamicsRenderReport[];
     train?: Errors;
     validate?: Errors;
+    /** compression at the centre of the measurement: gainSpreadDb of the base render */
+    compressionDb?: number;
   };
 }
+
+/** False when the base render does not compress: the clone then matches trivially and its error says nothing. */
+export const measuredCompression = (model: DynamicsModel): boolean =>
+  model.report.compressionDb === undefined || model.report.compressionDb >= MIN_MEASURED_COMPRESSION_DB;
 
 const summarize = (rows: DynamicsRenderReport[]): Errors | undefined =>
   rows.length ? { rmsDb: rows.reduce((s, r) => s + r.rmsDb, 0) / rows.length, maxDb: Math.max(...rows.map((r) => r.maxDb)) } : undefined;
@@ -614,6 +634,7 @@ export function fitDynamics(profile: Profile, onProgress?: (done: number, total:
   });
   const trainStats = summarize(model.report.renders.filter((r) => r.purpose === "train"));
   const validateStats = summarize(model.report.renders.filter((r) => r.purpose === "validate"));
+  model.report.compressionDb = gainSpreadDb(base);
   if (trainStats) model.report.train = trainStats;
   if (validateStats) model.report.validate = validateStats;
   return model;
