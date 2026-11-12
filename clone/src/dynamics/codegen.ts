@@ -29,6 +29,7 @@ export function generateDynamicsHeader(
     ...parameterLines(params),
     `inline constexpr vch::Detector detector = vch::Detector::${model.structure.detector};`,
     `inline constexpr vch::Topology topology = vch::Topology::${model.structure.topology};`,
+    `inline constexpr vch::Curve curve = vch::Curve::${model.structure.curve ?? "compressor"};`,
     `inline constexpr double baseLatent[vch::numLatent] = { ${list(toLatent(pack(model.base), 0, interaction))} };`,
     `inline constexpr vch::Interaction interaction = { ${cppNumber(interaction.autoMakeup)}, ${cppNumber(interaction.referenceDb)} };`,
     "",

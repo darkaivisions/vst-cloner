@@ -13,6 +13,7 @@ import {
   type Detector,
   type Topology,
 } from "./model.ts";
+import { detectDynamics } from "./plan.ts";
 
 /** Comparison windows: 8 blocks = 256 samples (5.3 ms at 48 kHz). */
 export const WINDOW_BLOCKS = 8;
@@ -127,14 +128,36 @@ export function dynamicsObservations(profile: Profile, input: DynamicsInput): Dy
   });
 }
 
-/** Model gain per comparison window (dB, including makeup). */
+/**
+ * Model gain per comparison window (dB, including makeup): output power over input power, like the measurement.
+ * Blocks therefore count by their energy – in a window where the signal sets in after a pause, the gain during
+ * the silent blocks (a closed gate) is inaudible and must not count.
+ */
 export function modelWindowDb(input: DynamicsInput, p: CompressorParams, s: CompressorStructure): Float64Array {
   const applied = appliedBlockGains(simulateGain(input.levels[s.detector], p, s, input.sampleRate, input.energies[s.detector]));
+  const energies = input.energies.rms;
   const out = new Float64Array(input.windowDb.length);
   for (let w = 0; w < out.length; w++) {
-    let sum = 0;
-    for (let b = w * WINDOW_BLOCKS; b < (w + 1) * WINDOW_BLOCKS; b++) sum += applied[b] ?? 0;
-    out[w] = sum / WINDOW_BLOCKS + p.makeupDb;
+    const first = w * WINDOW_BLOCKS;
+    let lo = Infinity, hi = -Infinity, sum = 0;
+    for (let b = first; b < first + WINDOW_BLOCKS; b++) {
+      const g = applied[b] ?? 0;
+      sum += g;
+      if (g < lo) lo = g;
+      if (g > hi) hi = g;
+    }
+    // (almost) constant gain: the plain mean is the same and needs no powers
+    if (hi - lo < 0.05) {
+      out[w] = sum / WINDOW_BLOCKS + p.makeupDb;
+      continue;
+    }
+    let power = 0, energy = 0;
+    for (let b = first; b < first + WINDOW_BLOCKS; b++) {
+      const e = energies[b] ?? 0;
+      energy += e;
+      power += e * 10 ** ((applied[b] ?? 0) / 10);
+    }
+    out[w] = (energy > 0 && power > 0 ? 10 * Math.log10(power / energy) : sum / WINDOW_BLOCKS) + p.makeupDb;
   }
   return out;
 }
@@ -144,12 +167,18 @@ export interface Errors {
   maxDb: number;
 }
 
+/**
+ * Gains below this (dB) count as "closed": a shut gate puts out silence (−180 dB and less), and how far below
+ * audibility a gain lies must not decide a fit or an error value.
+ */
+export const GAIN_FLOOR_DB = -60;
+
 export function compare(model: Float64Array, measured: Float64Array): Errors {
   let sum = 0, n = 0, max = 0;
   for (let w = 0; w < measured.length; w++) {
     const m = measured[w]!;
     if (Number.isNaN(m)) continue;
-    const d = Math.abs(model[w]! - m);
+    const d = Math.abs(Math.max(model[w]!, GAIN_FLOOR_DB) - Math.max(m, GAIN_FLOOR_DB));
     sum += d * d;
     n++;
     if (d > max) max = d;
@@ -182,6 +211,25 @@ export function initialGuess(o: DynamicsObservation, input: DynamicsInput, s: Co
   const valid: [number, number][] = [];
   o.measuredDb.forEach((g, w) => { if (!Number.isNaN(g)) valid.push([input.windowDb[w]!, g]); });
   valid.sort((a, b) => a[0] - b[0]);
+  if (s.curve === "expander") {
+    // open at the loud end; closed below the loudest window that is clearly reduced
+    const loud = valid.filter(([l]) => l > -15).map(([, g]) => g).sort((a, b) => a - b);
+    const makeupDb = loud.length ? loud[loud.length >> 1]! : 0;
+    const reduced = valid.filter(([, g]) => g < makeupDb - 1);
+    const thresholdDb = reduced.length ? Math.max(...reduced.map(([l]) => l)) - 3 : -50;
+    // a range shows as a plateau: the same gain, above the floor, over many dB of input level. An expander
+    // without one reduces without limit
+    const quietest = reduced.slice(0, Math.ceil(reduced.length * 0.4));
+    const gains = quietest.map(([, g]) => g).sort((x, y) => x - y);
+    const at = (q: number) => gains[Math.min(gains.length - 1, Math.floor(q * gains.length))]!;
+    const plateau = quietest.length >= 20 && quietest[quietest.length - 1]![0] - quietest[0]![0] >= 8
+      && at(0.1) > GAIN_FLOOR_DB + 3 && at(0.9) - at(0.1) < 1.5;
+    const rangeDb = plateau ? makeupDb - at(0.5) : NO_RANGE_DB;
+    return {
+      thresholdDb, ratio: 3, kneeDb: 2, makeupDb,
+      attack: 0.002, release: 0.002, charge: 0.05, slow: 4, slowKneeDb: Math.max(rangeDb, 3), detectorTime: 0.002, drive: 0, rippleTime: 0.0015, ripple: 0,
+    };
+  }
   const quiet = valid.filter(([l]) => l < -45).map(([, g]) => g);
   const makeupDb = quiet.length ? quiet.sort((a, b) => a - b)[quiet.length >> 1]! : 0;
   const compressed = valid.filter(([, g]) => g < makeupDb - 1);
@@ -201,17 +249,38 @@ const STEP = [6, 0.7, 0.7, 2, 0.7, 0.7, 0.7, 0.7, 1, 1];
  * log domain – when controls are combined.
  */
 export const ANCHOR_WEIGHT = 0.05;
-const anchorPenalty = (x: number[], anchor: number[] | undefined) =>
-  anchor ? ANCHOR_WEIGHT * x.reduce((sum, v, i) => sum + Math.abs(v - anchor[i]!) / STEP[i]!, 0) : 0;
+const anchorPenalty = (x: number[], anchor: number[] | undefined, weights?: number[]) =>
+  anchor ? ANCHOR_WEIGHT * x.reduce((sum, v, i) => sum + (weights?.[i] ?? 1) * Math.abs(v - anchor[i]!) / STEP[i]!, 0) : 0;
+/** how much stronger the range of an expander is held than other values: it is invisible while the measurement
+ *  stays above it, and single windows in which the signal sets in after a pause must not pull it down */
+const RANGE_HOLD = 10;
+/** range of an expander without a limit: far below the floor, so that a slow closing time is not slowed further */
+const NO_RANGE_DB = 300;
+/** packed index of the expander's range (slowKneeDb) */
+const RANGE = 8;
 
 export function fitRender(o: DynamicsObservation, input: DynamicsInput, s: CompressorStructure, start?: CompressorParams, maxEvaluations = 600, anchor?: CompressorParams) {
   const initial = start ?? initialGuess(o, input, s);
+  // an expander's range is invisible while the measurement stays above it: without a start value to hold on to,
+  // the fit would let it drift down to the largest reduction that happened to be measured
+  let weights: number[] | undefined;
+  let from = initial;
+  if (s.curve === "expander") {
+    weights = STEP.map((_, i) => (i === RANGE ? RANGE_HOLD : anchor ? 1 : 0));
+    anchor ??= initial;
+    // a range that shows in this render (a plateau of the closed gate) is taken from it, not from the anchor
+    const seen = start ? initialGuess(o, input, s).slowKneeDb : NO_RANGE_DB;
+    if (seen < NO_RANGE_DB) {
+      from = { ...initial, slowKneeDb: seen };
+      anchor = { ...anchor, slowKneeDb: seen };
+    }
+  }
   // the colouration (last packed values) hardly changes the level over time – it is fitted separately
-  const packed = pack(initial);
+  const packed = pack(from);
   const colour = packed.slice(-COLOUR);
   const full = (x: number[]) => unpack([...x, ...colour]);
   const anchored = anchor ? pack(anchor) : undefined;
-  const cost = (x: number[]) => compare(modelWindowDb(input, full(x), s), o.measuredDb).rmsDb + anchorPenalty(x, anchored);
+  const cost = (x: number[]) => compare(modelWindowDb(input, full(x), s), o.measuredDb).rmsDb + anchorPenalty(x, anchored, weights);
   const result = nelderMead(cost, packed.slice(0, -COLOUR), { step: STEP, maxEvaluations });
   // a restart from the result escapes most early collapses of the simplex
   const again = nelderMead(cost, result.x, { step: [2, 0.3, 0.3, 0.5, 0.3, 0.3, 0.3, 0.3, 0.5, 0.5], maxEvaluations: maxEvaluations / 2 });
@@ -347,7 +416,7 @@ export function compressedShare(o: DynamicsObservation, makeupDb: number): numbe
  * (dB). A plugin that only changes the level gives 0.
  */
 export function gainSpreadDb(o: DynamicsObservation): number {
-  const gains = [...o.measuredDb].filter((g) => !Number.isNaN(g)).sort((a, b) => a - b);
+  const gains = [...o.measuredDb].filter((g) => !Number.isNaN(g)).map((g) => Math.max(g, GAIN_FLOOR_DB)).sort((a, b) => a - b);
   if (gains.length < 20) return 0;
   const at = (q: number) => gains[Math.min(gains.length - 1, Math.floor(q * gains.length))]!;
   return at(0.98) - at(0.02);
@@ -356,8 +425,11 @@ export function gainSpreadDb(o: DynamicsObservation): number {
 /** Below this spread at the centre of the measurement nothing is compressed there: the sweeps of the controls then show (almost) only level changes. */
 export const MIN_MEASURED_COMPRESSION_DB = 1.5;
 
-export const STRUCTURES: CompressorStructure[] = (["peak", "rms"] as Detector[]).flatMap((detector) =>
-  (["feedforward", "feedback"] as Topology[]).map((topology) => ({ detector, topology })));
+export const STRUCTURES: CompressorStructure[] = [
+  ...(["peak", "rms"] as Detector[]).flatMap((detector) => (["feedforward", "feedback"] as Topology[]).map((topology) => ({ detector, topology }))),
+  // gates and downward expanders (a feedback detector would never open again)
+  ...(["peak", "rms"] as Detector[]).map((detector) => ({ detector, topology: "feedforward" as Topology, curve: "expander" as const })),
+];
 
 // ---- parameter conditioning ------------------------------------------------------------------
 
@@ -475,7 +547,7 @@ export function predictParams(
  * latent form. A control counts as input gain when that removes most of its makeup changes; automatic makeup
  * is only assumed when it at least halves what is left over all tables.
  */
-export function fitInteraction(base: CompressorParams, tables: ParamTable[]): Interaction {
+export function fitInteraction(base: CompressorParams, tables: ParamTable[], autoMakeup = true): Interaction {
   const baseE = pack(base);
   const preOf = (packed: number[], gain: boolean) => (gain ? baseE[THRESHOLD]! - packed[THRESHOLD]! : 0);
   const residual = (table: ParamTable, gain: boolean, it: Interaction) => {
@@ -496,9 +568,9 @@ export function fitInteraction(base: CompressorParams, tables: ParamTable[]): In
   };
   const none = assess(NO_INTERACTION);
   let best = none;
-  for (const autoMakeup of [0.25, 0.5, 0.75, 1]) {
+  for (const amount of autoMakeup ? [0.25, 0.5, 0.75, 1] : []) {
     for (let referenceDb = -40; referenceDb <= 12; referenceDb++) {
-      const candidate = assess({ autoMakeup, referenceDb });
+      const candidate = assess({ autoMakeup: amount, referenceDb });
       if (candidate.cost < best.cost) best = candidate;
     }
   }
@@ -510,6 +582,12 @@ export function fitInteraction(base: CompressorParams, tables: ParamTable[]): In
   }
   return best.it;
 }
+
+/**
+ * Expander: model values (packed indices) that explain why a control keeps the gate open, by the control's role.
+ * A gate's "release" is its closing time (the model's attack) or the decay of its detector.
+ */
+const OPEN_BY_ROLE: Record<string, number[]> = { threshold: [0], knee: [0], ratio: [1], release: [4, 6] };
 
 // ---- complete fit ------------------------------------------------------------------------------
 
@@ -580,22 +658,69 @@ export function fitDynamics(profile: Profile, onProgress?: (done: number, total:
   const train = observations.filter((o) => o.purpose === "train" && o !== base && o.kind !== "random" && swept(o) !== undefined);
   const total = STRUCTURES.length + train.length;
 
+  const baseValues = new Map(parameters.map((p) => [p.index, working.get(p.index) ?? p.value ?? p.default]));
   const structures = STRUCTURES.map((structure, i) => {
     onProgress?.(i, total, `Struktur ${structure.detector}/${structure.topology}`);
     return { structure, ...fitRender(base, input, structure) };
   }).sort((a, b) => a.errors.rmsDb - b.errors.rmsDb);
+  // feedback with a huge ratio and feedforward with a small one are nearly the same curve; on a near tie the
+  // feedforward structure is taken – its ratio is the one that is identifiable, and tables of it combine better
+  const tied = structures.findIndex((x) => x.structure.topology === "feedforward" && x.errors.rmsDb <= structures[0]!.errors.rmsDb * 1.1 + 0.02);
+  if (tied > 0) structures.unshift(...structures.splice(tied, 1));
   const structure = structures[0]!.structure;
-  // reference in the same regime as the sweep points (static refit with the base timing)
-  const baseFit = fitStatic(base, input, structure, structures[0]!.params);
+  const expander = structure.curve === "expander";
+  // reference in the same regime as the sweep points (compressor: static refit with the base timing)
+  const baseFit = expander ? { params: structures[0]!.params, errors: structures[0]!.errors } : fitStatic(base, input, structure, structures[0]!.params);
   baseFit.params = fitColour(base, input, baseFit.params, structure, true).params;
 
-  const baseValues = new Map(parameters.map((p) => [p.index, working.get(p.index) ?? p.value ?? p.default]));
   const tables = new Map<number, ParamTable>();
   const points: { o: DynamicsObservation; params: CompressorParams }[] = [];
-  train.forEach((o, i) => {
+  // Expander: a render in which the gate never closes only says "open", not why (threshold below the signal,
+  // a long decay …). The points of a sweep are therefore fitted from the base outwards, each one starting from
+  // and anchored to its neighbour: what the control did so far is continued.
+  let roleOf = new Map<number, string>();
+  try {
+    roleOf = new Map(Object.entries(detectDynamics(parameters).roles).map(([role, index]) => [index, role]));
+  } catch {
+    // no roles: the trend of the sweep decides alone
+  }
+  const distance = (o: DynamicsObservation) => Math.abs(swept(o)!.value - baseValues.get(swept(o)!.index)!);
+  const ordered = expander ? [...train].sort((a, b) => distance(a) - distance(b)) : train;
+  /** per parameter and direction: the points (from the base outwards) at which the gate does close */
+  const closing = new Map<string, { value: number; packed: number[] }[]>();
+  ordered.forEach((o, i) => {
     onProgress?.(STRUCTURES.length + i, total, o.label);
-    let fit = fitStatic(o, input, structure, baseFit.params, undefined, baseFit.params);
-    if (compressedShare(o, fit.params.makeupDb) > MIN_COMPRESSED_FOR_TIMING) {
+    const side = `${swept(o)!.index}${swept(o)!.value < baseValues.get(swept(o)!.index)! ? "-" : "+"}`;
+    const history = closing.get(side) ?? [{ value: baseValues.get(swept(o)!.index)!, packed: pack(baseFit.params) }];
+    closing.set(side, history);
+    const previous = unpack(history[history.length - 1]!.packed);
+    let fit = expander ? fitRender(o, input, structure, previous, undefined, previous) : fitStatic(o, input, structure, baseFit.params, undefined, baseFit.params);
+    if (expander) {
+      if (compressedShare(o, fit.params.makeupDb) > 0.005) history.push({ value: swept(o)!.value, packed: pack(fit.params) });
+      else {
+        // open: the smallest change of one model value that keeps the gate open – first the value the control
+        // stands for by its name, then those it changed most so far
+        const last = history[history.length - 1]!.packed, origin = history[0]!.packed;
+        const moved = (k: number) => Math.abs(last[k]! - origin[k]!) / STEP[k]!;
+        const byTrend = STEP.map((_, k) => k).filter((k) => moved(k) > 0.2).sort((x, y) => moved(y) - moved(x)).slice(0, 3);
+        const candidates = [...new Set([...(OPEN_BY_ROLE[roleOf.get(swept(o)!.index) ?? ""] ?? []), ...byTrend])];
+        search: for (const k of candidates) {
+          for (let n = 1; n <= 12; n++) {
+            for (const direction of [-1, 1]) {
+              const packed = [...last];
+              packed[k] = last[k]! + direction * n * STEP[k]!;
+              const continued = unpack(packed);
+              const errors = compare(modelWindowDb(input, continued, structure), o.measuredDb);
+              if (errors.rmsDb < fit.errors.rmsDb + 0.3) {
+                fit = { params: continued, errors };
+                break search;
+              }
+            }
+          }
+        }
+      }
+    }
+    if (!expander && compressedShare(o, fit.params.makeupDb) > MIN_COMPRESSED_FOR_TIMING) {
       const full = fitRender(o, input, structure, fit.params, undefined, baseFit.params);
       if (full.errors.rmsDb < fit.errors.rmsDb * 0.8 && fit.errors.rmsDb - full.errors.rmsDb > MIN_TIMING_GAIN_DB) fit = full;
     }
@@ -629,7 +754,8 @@ export function fitDynamics(profile: Profile, onProgress?: (done: number, total:
     if (table.points.length < 2) tables.delete(index);
     else table.points.sort((a, b) => a.value - b.value);
   }
-  const interaction = fitInteraction(baseFit.params, [...tables.values()]);
+  // automatic makeup follows the compressor curve; a gate has none
+  const interaction = fitInteraction(baseFit.params, [...tables.values()], structure.curve !== "expander");
 
   const model: DynamicsModel = {
     type: "compressor",

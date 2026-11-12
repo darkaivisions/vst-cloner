@@ -47,7 +47,7 @@ void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     // model parameters from the current plugin parameters (normalised values of the original)
     const auto params = vch::predict (clonemodel::baseLatent, clonemodel::tables, clonemodel::numTables, clonemodel::interaction,
                                       [this] (int index) { return vch::originalValue (clonemodel::params[index], *parameters[(size_t) index]); });
-    computer.setParams (params, currentSampleRate);
+    computer.setParams (params, currentSampleRate, clonemodel::curve);
     if (! initialised)
     {
         makeupDb = params.makeupDb;

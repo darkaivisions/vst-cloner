@@ -62,8 +62,8 @@ export class NotDynamicsError extends Error {
 export const OTHER_CLASS_CATEGORY = /delay|echo|reverb|chorus|flanger|phaser|modulat|pitch|shift|wah|tremolo|vibrato/i;
 
 /** Dynamics processors the compressor model cannot represent: they have a threshold and timing controls too. */
-const NOT_COMPRESSOR_CATEGORY = /expander|gate|envelope|\beq\b|equali[sz]er/i;
-const NOT_COMPRESSOR_NAME = /expander|gate|dynamic\s*eq|envelope/i;
+const NOT_COMPRESSOR_CATEGORY = /envelope|\beq\b|equali[sz]er/i;
+const NOT_COMPRESSOR_NAME = /dynamic\s*eq|envelope/i;
 const GATE_PARAMETER = /gate/i;
 
 /**
@@ -81,21 +81,23 @@ export function multibandReason(parameters: Parameter[]): string | undefined {
   return undefined;
 }
 
-/** Recognises a compressor/limiter by its parameter names (and rules out other processors by category and name). */
+/**
+ * Recognises a compressor, limiter, gate or expander by its parameter names (and rules out other processors by
+ * category and name). Which curve it has is decided by the fit, on the measurement.
+ */
 export function detectDynamics(parameters: Parameter[], category = "", name = ""): DynamicsMapping {
   if (OTHER_CLASS_CATEGORY.test(category)) throw new NotDynamicsError(`Plugin-Kategorie „${category}“ ist kein Kompressor`);
   if (NOT_COMPRESSOR_CATEGORY.test(category)) throw new NotDynamicsError(`Plugin-Kategorie „${category}“ ist kein Kompressor`, true);
-  if (NOT_COMPRESSOR_NAME.test(name)) throw new NotDynamicsError(`„${name}“ ist ein Gate, Expander oder dynamischer EQ, kein Kompressor`, true);
+  if (NOT_COMPRESSOR_NAME.test(name)) throw new NotDynamicsError(`„${name}“ ist ein dynamischer EQ oder Hüllkurvenfolger, kein Kompressor`, true);
   const multiband = multibandReason(parameters);
   if (multiband) throw new NotDynamicsError(multiband, true);
   const roles: DynamicsMapping["roles"] = {};
   const other: number[] = [];
-  let gate = false;
   for (const p of parameters) {
     if (!p.automatable || p.meta || IGNORED.test(p.name)) continue;
-    // the controls of a built-in noise gate ("gateThreshold", "gate release") are not the compressor's
+    // "gateThreshold", "gate release": the controls of a noise gate built into another effect are not a
+    // compressor's (a gate plugin calls them just "Threshold", "Release")
     if (GATE_PARAMETER.test(p.name)) {
-      gate = true;
       other.push(p.index);
       continue;
     }
@@ -107,10 +109,6 @@ export function detectDynamics(parameters: Parameter[], category = "", name = ""
   const behaviour = roles.ratio !== undefined || roles.attack !== undefined || roles.release !== undefined || roles.limit !== undefined || roles.reduction !== undefined;
   if (!level || !behaviour) {
     throw new NotDynamicsError("Keine Kompressor-Parameter erkannt (Threshold/Peak Reduction und Ratio/Attack/Release)");
-  }
-  // gate controls next to a threshold but no ratio, reduction or limiter: the plugin is the gate
-  if (gate && roles.ratio === undefined && roles.reduction === undefined && roles.limit === undefined) {
-    throw new NotDynamicsError("Gate-Parameter ohne Ratio erkannt – ein Gate, kein Kompressor", true);
   }
   return { roles, other };
 }
@@ -185,7 +183,8 @@ export function compressionDepthDb(output: Float32Array, input: Float32Array, sa
     }
     const inDb = 10 * Math.log10(inSum / size + 1e-20);
     if (inDb < -60) continue;
-    gains.push(10 * Math.log10(outSum / size + 1e-20) - inDb);
+    // a closed gate: silence counts as "closed", not as hundreds of dB
+    gains.push(Math.max(-60, 10 * Math.log10(outSum / size + 1e-20) - inDb));
   }
   if (gains.length < 10) return 0;
   gains.sort((x, y) => x - y);

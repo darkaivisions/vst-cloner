@@ -14,6 +14,8 @@ namespace vch
 
 enum class Detector { peak, rms };
 enum class Topology { feedforward, feedback };
+/** compressor: reduction above the threshold; expander: below it (downward expander, gate) */
+enum class Curve { compressor, expander };
 
 /** control rate: one gain computer step per block of this many samples */
 constexpr int dynamicsBlock = 32;
@@ -50,11 +52,20 @@ inline CompressorParams unpack (const double* x)
 }
 
 /** staticReduction() in model.ts */
-inline double staticReduction (double levelDb, const CompressorParams& p)
+inline double staticReduction (double levelDb, const CompressorParams& p, Curve curve = Curve::compressor)
 {
+    const double half = p.kneeDb / 2.0;
+    if (curve == Curve::expander)
+    {
+        // (ratio − 1) dB per dB below the threshold, at most the range (stored in slowKneeDb)
+        const double under = p.thresholdDb - levelDb;
+        const double steep = std::max (p.ratio, 1.0) - 1.0;
+        if (under <= -half) return 0.0;
+        if (under >= half || p.kneeDb <= 0.0) return std::min (p.slowKneeDb, steep * under);
+        return std::min (p.slowKneeDb, steep * (under + half) * (under + half) / (2.0 * p.kneeDb));
+    }
     const double over = levelDb - p.thresholdDb;
     const double slope = 1.0 - 1.0 / std::max (p.ratio, 1.0);
-    const double half = p.kneeDb / 2.0;
     if (over <= -half) return 0.0;
     if (over >= half || p.kneeDb <= 0.0) return slope * over;
     return slope * (over + half) * (over + half) / (2.0 * p.kneeDb);
@@ -89,9 +100,10 @@ CompressorParams predict (const double* baseLatent, const ParamTable* tables, in
 class GainComputer
 {
 public:
-    void setParams (const CompressorParams& p, double sampleRate)
+    void setParams (const CompressorParams& p, double sampleRate, Curve curveToUse = Curve::compressor)
     {
         params = p;
+        curve = curveToUse;
         const auto coefficient = [sampleRate] (double seconds) { return seconds > 0 ? std::exp (-dynamicsBlock / (seconds * sampleRate)) : 0.0; };
         attack = coefficient (p.attack);
         release = coefficient (p.release);
@@ -99,7 +111,7 @@ public:
         slowStep = p.slow * dynamicsBlock / sampleRate;
         smoothing = coefficient (p.detectorTime);
         rippleSmoothing = coefficient (p.rippleTime);
-        kneeStart = std::pow (10.0, (p.thresholdDb - p.kneeDb / 2.0) / 10.0);
+        kneeEdge = std::pow (10.0, (p.thresholdDb + (curve == Curve::expander ? p.kneeDb / 2.0 : -p.kneeDb / 2.0)) / 10.0);
     }
 
     void reset() { fast = slow = reduction = energy = rippleEnergy = 0.0; }
@@ -109,12 +121,14 @@ public:
     {
         // detector averaging in the energy domain (simulateGain() in model.ts)
         const double e = std::pow (10.0, levelDb / 10.0);
-        const double raw = topology == Topology::feedback && reduction > 0 ? e * std::pow (10.0, -reduction / 10.0) : e;
-        energy = smoothing * energy + (1 - smoothing) * raw;
+        const bool expander = curve == Curve::expander;
+        const double raw = topology == Topology::feedback && ! expander && reduction > 0 ? e * std::pow (10.0, -reduction / 10.0) : e;
+        // expander: the detector follows a falling level with its own (slower) time constant
+        energy = expander && raw < energy ? charge * energy + (1 - charge) * raw : smoothing * energy + (1 - smoothing) * raw;
         rippleEnergy = rippleSmoothing * rippleEnergy + (1 - rippleSmoothing) * raw;
-        const double target = energy <= kneeStart ? 0.0 : staticReduction (10.0 * std::log10 (energy + 1e-24), params);
+        const double target = curveAt (energy);
         fast = target > fast ? attack * fast + (1 - attack) * target : release * fast + (1 - release) * target;
-        if (params.charge > 0)
+        if (params.charge > 0 && ! expander)
         {
             if (fast > slow) slow = charge * slow + (1 - charge) * fast;
             else slow = std::max (fast, slow - (slowStep * slow) / std::max (slow + params.slowKneeDb, 1e-9));
@@ -123,8 +137,7 @@ public:
         double applied = reduction;
         if (params.ripple > 0)
         {
-            const double rippleTarget = rippleEnergy <= kneeStart ? 0.0 : staticReduction (10.0 * std::log10 (rippleEnergy + 1e-24), params);
-            applied += params.ripple * (rippleTarget - target);
+            applied += params.ripple * (curveAt (rippleEnergy) - target);
         }
         return -applied;
     }
@@ -132,8 +145,16 @@ public:
     const CompressorParams& current() const { return params; }
 
 private:
+    /** outside the knee edge the curve is 0 (compressor: below it, expander: above it) */
+    double curveAt (double e) const
+    {
+        const bool outside = curve == Curve::expander ? e >= kneeEdge : e <= kneeEdge;
+        return outside ? 0.0 : staticReduction (10.0 * std::log10 (e + 1e-24), params, curve);
+    }
+
     CompressorParams params;
-    double attack = 0, release = 0, charge = 0, slowStep = 0, smoothing = 0, rippleSmoothing = 0, kneeStart = 0;
+    Curve curve = Curve::compressor;
+    double attack = 0, release = 0, charge = 0, slowStep = 0, smoothing = 0, rippleSmoothing = 0, kneeEdge = 0;
     double fast = 0, slow = 0, reduction = 0, energy = 0, rippleEnergy = 0;
 };
 

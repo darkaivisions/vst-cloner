@@ -16,7 +16,7 @@ import { captureGuiLayout, compareGui, GUI_MODEL_FILE, guiCacheDir, locatePlugin
 export const DYNAMICS_MODEL_FILE = "model/dynamics.json";
 export const DYNAMICS_REPORT_FILE = "report.json";
 /** Raised whenever the dynamics fit changes; older stored models are fitted again. */
-export const DYNAMICS_FIT_REVISION = 3; // 2: detector averaging time, 3: saturation and detector ripple
+export const DYNAMICS_FIT_REVISION = 4; // 2: detector averaging time, 3: saturation and detector ripple, 4: anchored sweep fits, expander curve
 
 /** Whether a profile was captured with the dynamics plan (or already holds a dynamics model). */
 export function isDynamicsProfile(profile: Profile): boolean {
@@ -37,11 +37,14 @@ const verdict = dynamicsVerdict;
 
 export function formatDynamicsModel(model: DynamicsModel): string[] {
   const p = model.base;
+  const expander = model.structure.curve === "expander";
   const lines = [
-    `Kompressor: ${model.structure.detector === "rms" ? "RMS" : "Spitzenwert"}-Detektor, ${model.structure.topology === "feedforward" ? "Feed-forward" : "Feedback"}`,
-    `Grundeinstellung: Schwelle ${p.thresholdDb.toFixed(1)} dB, Verhältnis ${p.ratio.toFixed(2)}:1, Knick ${p.kneeDb.toFixed(1)} dB, Pegel ${p.makeupDb >= 0 ? "+" : ""}${p.makeupDb.toFixed(1)} dB`,
-    `Zeitverhalten: Detektor ${(p.detectorTime * 1000).toFixed(1)} ms, Attack ${(p.attack * 1000).toFixed(1)} ms, Release ${(p.release * 1000).toFixed(0)} ms` +
-      (p.charge > 0 ? `, Speicher lädt in ${(p.charge * 1000).toFixed(0)} ms, baut mit ${p.slow.toFixed(1)} dB/s ab` : ""),
+    `${expander ? "Gate/Expander" : "Kompressor"}: ${model.structure.detector === "rms" ? "RMS" : "Spitzenwert"}-Detektor${expander ? "" : `, ${model.structure.topology === "feedforward" ? "Feed-forward" : "Feedback"}`}`,
+    `Grundeinstellung: Schwelle ${p.thresholdDb.toFixed(1)} dB, Verhältnis ${expander ? `1:${p.ratio.toFixed(2)}` : `${p.ratio.toFixed(2)}:1`}, Knick ${p.kneeDb.toFixed(1)} dB, ` +
+      `${expander ? `größte Absenkung ${p.slowKneeDb.toFixed(1)} dB, ` : ""}Pegel ${p.makeupDb >= 0 ? "+" : ""}${p.makeupDb.toFixed(1)} dB`,
+    // the model's attack is the time in which the reduction grows: for a gate that is its closing
+    `Zeitverhalten: Detektor ${(p.detectorTime * 1000).toFixed(1)} ms, ${expander ? "Schließen" : "Attack"} ${(p.attack * 1000).toFixed(1)} ms, ${expander ? "Öffnen" : "Release"} ${(p.release * 1000).toFixed(0)} ms` +
+      (p.charge > 0 && !expander ? `, Speicher lädt in ${(p.charge * 1000).toFixed(0)} ms, baut mit ${p.slow.toFixed(1)} dB/s ab` : ""),
     `Klangfarbe: Sättigung ${p.drive > 0 ? `Drive ${p.drive.toFixed(2)}` : "aus"}, Detektor-Welligkeit ${(p.ripple * 100).toFixed(1)} % (${(p.rippleTime * 1000).toFixed(1)} ms)`,
     `Parameter: ${model.tables.map((t) => t.name).join(", ")}`,
   ];
@@ -146,7 +149,7 @@ export async function cloneDynamicsProfile(options: DynamicsCloneOptions): Promi
         const captured = await captureGuiLayout(profile, pluginPath, {
           log,
           // steady state for a sine: the detector level equals its peak level
-          meterReduction: (levelDb) => staticReduction(levelDb, baseParams),
+          meterReduction: (levelDb) => staticReduction(levelDb, baseParams, model.structure.curve),
           ...(options.signal ? { signal: options.signal } : {}),
           ...(options.onProgress ? { onProgress: options.onProgress } : {}),
         });

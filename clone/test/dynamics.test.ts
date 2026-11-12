@@ -42,19 +42,19 @@ const parameter = (index: number, name: string, discrete = false): Parameter => 
 });
 
 
-test("gates, expanders, dynamic EQs and multiband compressors are not cloned as a compressor", () => {
+test("dynamic EQs, envelope followers and multiband compressors are not cloned; gates and expanders are", () => {
   const named = (...names: string[]) => names.map((n, i) => parameter(i, n));
   const comp = named("Attack", "Release", "Knee", "Ratio", "Threshold", "Makeup");
   assert.ok(detectDynamics(comp, "Fx|Dynamics|Mono", "ZamComp"));
+  // gates and expanders are dynamics too (the fit finds their curve)
+  assert.ok(detectDynamics(comp, "Expander Plugin", "GxExpander"));
+  assert.ok(detectDynamics(named("Attack", "Release", "Threshold", "Makeup", "Max gate close"), "Fx|Dynamics", "ZamGate"));
   // by category and by name
-  assert.throws(() => detectDynamics(comp, "Expander Plugin", "GxExpander"), NotDynamicsError);
   assert.throws(() => detectDynamics(comp, "Fx|EQ|Mono", "ZamDynamicEQ"), NotDynamicsError);
-  assert.throws(() => detectDynamics(named("Attack", "Release", "Threshold", "Makeup"), "Fx|Dynamics", "ZamGate"), NotDynamicsError);
-  // a gate by its controls only
-  assert.throws(() => detectDynamics(named("Attack", "Release", "Threshold", "Max gate close")), /Gate/);
-  // the noise gate of an amp is not a compressor threshold …
+  assert.throws(() => detectDynamics(comp, "Envelope Plugin", "follower"), NotDynamicsError);
+  // the noise gate of an amp is not a threshold of its own …
   assert.throws(() => detectDynamics(named("inputLevel", "gateThreshold", "gateRelease", "gateHold")), NotDynamicsError);
-  // … but a compressor may have one
+  // … and a compressor may have one
   assert.equal(detectDynamics(named("Gate Threshold", "Threshold", "Ratio", "Attack")).roles.threshold, 1);
   // one threshold/ratio per band
   const bands = named("RATIO1", "RATIO2", "RATIO3", "ATTACK1", "MAKEUPTHRESHOLD1", "CROSSOVER_B2_B3");
@@ -62,11 +62,30 @@ test("gates, expanders, dynamic EQs and multiband compressors are not cloned as 
   assert.equal(multibandReason(comp), undefined);
   // two compressors without a crossover (dual compressor) stay
   assert.equal(multibandReason(named("Threshold 1", "Ratio 1", "Threshold 2", "Ratio 2")), undefined);
-  // none of them falls through to another class, although "Makeup"/"Gain" would pass as a drive control
+  // none of the excluded ones falls through to another class, although "Makeup"/"Gain" would pass as a drive control
   const plugin = (name: string, category: string) => ({ name, category, isInstrument: false }) as never;
-  assert.equal(classifyPlugin({ parameters: named("Attack", "Release", "Threshold", "Gain"), plugin: plugin("ZamGate", "Fx|Dynamics") }).effectClass, undefined);
+  assert.equal(classifyPlugin({ parameters: [...comp, parameter(9, "Gain")], plugin: plugin("ZamDynamicEQ", "Fx|EQ|Mono") }).effectClass, undefined);
   assert.equal(classifyPlugin({ parameters: [...bands, parameter(9, "Gain")], plugin: plugin("MB", "Fx") }).effectClass, undefined);
-  assert.equal(classifyPlugin({ parameters: comp, plugin: plugin("ZamComp", "Fx|Dynamics") }).effectClass, "dynamics");
+  assert.equal(classifyPlugin({ parameters: named("Attack", "Release", "Threshold", "Gain"), plugin: plugin("ZamGate", "Fx|Dynamics") }).effectClass, "dynamics");
+});
+
+test("expander curve: no reduction above the threshold, (ratio − 1) dB per dB below, limited by the range", () => {
+  const p = { thresholdDb: -40, ratio: 3, kneeDb: 0, slowKneeDb: 30 };
+  assert.equal(staticReduction(-30, p, "expander"), 0);
+  assert.ok(Math.abs(staticReduction(-45, p, "expander") - 10) < 1e-9);
+  assert.equal(staticReduction(-90, p, "expander"), 30);
+  // continuous knee
+  const k = { ...p, kneeDb: 6 };
+  assert.equal(staticReduction(-37, k, "expander"), 0);
+  assert.ok(Math.abs(staticReduction(-43, k, "expander") - 6) < 1e-9);
+  assert.ok(staticReduction(-40, k, "expander") > 0 && staticReduction(-40, k, "expander") < 3);
+  // a gate closes during silence and opens with the signal
+  const levels = new Float64Array(3000).map((_, b) => (b < 1000 ? -20 : b < 2000 ? -80 : -20));
+  const gate = { ...params, thresholdDb: -40, ratio: 50, kneeDb: 0, slowKneeDb: 45, attack: 0.002, release: 0.002, detectorTime: 0 };
+  const gains = simulateGain(levels, gate, { detector: "peak", topology: "feedforward", curve: "expander" }, 48000);
+  assert.ok(Math.abs(gains[900]!) < 1e-6);
+  assert.ok(Math.abs(gains[1900]! + 45) < 0.01);
+  assert.ok(Math.abs(gains[2900]!) < 0.01);
 });
 
 test("compressors are recognised by their parameter names", () => {
