@@ -81,6 +81,10 @@ export async function verifyDynamicsClone(
     for (const o of observations) {
       const output = decodeWav(await readFile(join(workDir, "out", `${o.renderId}.wav`))).channels[0]!;
       const cloneDb = windowRmsDb(output, input.windowDb.length).map((v, w) => v - input.windowDb[w]!);
+      // a clone that puts out NaN/inf must never pass as a result (compare() would skip those windows)
+      if (cloneDb.some((v, w) => !Number.isFinite(v) && !Number.isNaN(o.measuredDb[w]!))) {
+        throw new Error(`Der Klon liefert kein gültiges Signal (NaN/inf) bei „${o.label}“`);
+      }
       rows.push({ label: o.label, purpose: o.purpose, errors: compare(cloneDb, o.measuredDb) });
 
       // reference: the TypeScript model applied sample by sample (exactly what the plugin must do)

@@ -36,7 +36,7 @@ const ROLE_PATTERNS: [DynamicsRole, RegExp][] = [
 ];
 
 /** Parameters that are never measured (they do not change the sound or only switch the plugin off). */
-export const IGNORED = /bypass|meter|display|^program$|preset|oversampl|quality/i;
+export const IGNORED = /bypass|meter|display|\bprogram\b|preset|oversampl|quality/i;
 
 export interface DynamicsMapping {
   roles: Partial<Record<DynamicsRole, number>>;

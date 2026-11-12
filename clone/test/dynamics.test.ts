@@ -46,6 +46,8 @@ test("compressors are recognised by their parameter names", () => {
   assert.equal(m.roles.makeup, 1);
   assert.equal(m.roles.limit, 2);
   assert.throws(() => detectDynamics([parameter(0, "Frequency"), parameter(1, "Gain")]), NotDynamicsError);
+  // program selectors are never measured
+  assert.deepEqual(detectDynamics([parameter(0, "Current Program"), parameter(1, "Threshold"), parameter(2, "Attack"), parameter(3, "Width")]).other, [3]);
   // "Saturation" contains "ratio" but is not one
   const s = detectDynamics([parameter(0, "Threshold"), parameter(1, "Saturation"), parameter(2, "Comp Ratio"), parameter(3, "Attack")]);
   assert.equal(s.roles.saturation, 1);

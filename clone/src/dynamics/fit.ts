@@ -607,7 +607,14 @@ export function fitDynamics(profile: Profile, onProgress?: (done: number, total:
     const entry = table.points.find((e) => e.value === p.value && e !== table.points[0]);
     if (entry) entry.packed[DRIVE] = drives.base + drives.changes[i]!;
   });
-  for (const table of tables.values()) table.points.sort((a, b) => a.value - b.value);
+  // points at the same plugin value (a control with one option, values the plugin snaps together) carry no
+  // information and break the interpolation: the first one (the base point) stays, a table without a second
+  // value is dropped
+  for (const [index, table] of tables) {
+    table.points = table.points.filter((pt, i, all) => all.findIndex((other) => Math.abs(other.value - pt.value) < 1e-9) === i);
+    if (table.points.length < 2) tables.delete(index);
+    else table.points.sort((a, b) => a.value - b.value);
+  }
   const interaction = fitInteraction(baseFit.params, [...tables.values()]);
 
   const model: DynamicsModel = {
