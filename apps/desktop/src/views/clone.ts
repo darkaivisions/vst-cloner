@@ -146,10 +146,10 @@ export class CloneView {
         info.eq
           ? h("span.badge.good", {}, `EQ erkannt: ${info.eq.bands} Bänder, ${info.eq.shapes.length} Formen`)
           : info.dynamics
-            ? h("span.badge.good", {}, "Kompressor erkannt")
+            ? h("span.badge.good", {}, "Kompressor/Gate erkannt")
             : info.distortion
               ? h("span.badge.good", {}, "Verzerrer erkannt")
-              : h("span.badge.muted", {}, "weder EQ, Kompressor noch Verzerrer erkannt")),
+              : h("span.badge.muted", {}, "weder EQ, Kompressor/Gate noch Verzerrer erkannt")),
     );
   }
 
@@ -163,7 +163,7 @@ export class CloneView {
       h("button", { class: this.mode === mode ? "active" : "", disabled: !enabled || busy, onclick: () => { this.mode = mode; this.update(); } }, label);
     this.modeBox.append(
       option("eq", "EQ-Messung", Boolean(info?.eq)),
-      option("dynamics", "Kompressor-Messung", Boolean(info?.dynamics)),
+      option("dynamics", "Dynamik-Messung", Boolean(info?.dynamics)),
       option("distortion", "Verzerrer-Messung", Boolean(info?.distortion)),
       option("generic", "Allgemein", Boolean(info)),
     );
@@ -175,7 +175,7 @@ export class CloneView {
           ? `${info.dynamics.renders} Einstellungen à ~27 s Messsignal (Pegeltreppe, Bursts, lange Pausen für langsames Release) – jeder Regler einzeln und in Zufallskombinationen. Dauert meist unter einer Minute.`
           : this.mode === "distortion" && info.distortion
             ? `${info.distortion.renders} Einstellungen à ~${info.distortion.signalSeconds} s Messsignal (Sinus-Pegeltreppen bei mehreren Frequenzen, Rauschen, leiser Sweep) – jeder Regler einzeln und in Zufallskombinationen. Das Analysieren beim Klonen dauert danach etwa 2 Minuten.`
-            : `${info.genericRenders} Einstellungen – jeder Parameter einzeln und in Zufallskombinationen. Klone sind bisher nur für EQs, Kompressoren und Verzerrer möglich.`;
+            : `${info.genericRenders} Einstellungen – jeder Parameter einzeln und in Zufallskombinationen. Klone sind bisher nur für EQs, Kompressoren, Gates/Expander und Verzerrer möglich.`;
     this.captureButton.disabled = !info || Boolean(this.cloneJob);
     this.captureButton.textContent = this.captureJob ? "Abbrechen" : "Messen starten";
     this.captureButton.classList.toggle("danger", Boolean(this.captureJob));

@@ -50,7 +50,7 @@ export class LibraryView {
             h("div.profile-meta", {},
               h("span", {}, formatDate(p.createdAt)),
               h("span", {}, `${p.renders} Messungen`),
-              h("span", {}, { eq: "EQ-Messung", dynamics: "Kompressor-Messung", distortion: "Verzerrer-Messung" }[p.planner] ?? "allgemein"),
+              h("span", {}, { eq: "EQ-Messung", dynamics: "Dynamik-Messung", distortion: "Verzerrer-Messung" }[p.planner] ?? "allgemein"),
               h("span", {}, formatBytes(p.bytes)))),
           p.verdict
             ? h("span.pill", { class: verdictClass(p.verdict), title: `Abweichung ${formatDb(p.rmsDb ?? 0)}` }, `Klon: ${p.verdict}`)
@@ -59,7 +59,7 @@ export class LibraryView {
             h("button.ghost.small", { onclick: () => this.details.show(p.path) }, "Details"),
             h("button.primary.small", {
               disabled: !CLONEABLE.has(p.planner),
-              title: CLONEABLE.has(p.planner) ? "" : "Klone sind bisher nur für EQ-, Kompressor- und Verzerrer-Messungen möglich",
+              title: CLONEABLE.has(p.planner) ? "" : "Klone sind bisher nur für EQ-, Dynamik- und Verzerrer-Messungen möglich",
               onclick: () => this.onBuild(p),
             }, "Klon bauen"),
             h("button.ghost.small", { onclick: () => this.exportProfile(p) }, "Exportieren …"),

@@ -20,6 +20,7 @@ import {
   detectDistortion,
   distortionPlanner,
   planDistortion,
+  classifyPlugin,
   cloneProfile,
   detectDynamics,
   detectEq,
@@ -351,24 +352,27 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
   async "plugins.info"(params) {
     const path = str(params, "path");
     const info = await pluginInfo(path);
+    // one classification for app and batch: instruments, dynamic EQs, multiband compressors … get no class
+    const effectClass = classifyPlugin(info).effectClass;
     let eq: { bands: number; shapes: string[]; renders: number } | undefined;
     try {
+      if (effectClass !== "eq") throw new Error("kein EQ");
       const mapping = detectEq(info.parameters);
       eq = { bands: mapping.bands.length, shapes: mapping.shapes?.map((s) => s.label) ?? [], renders: planEq(info.parameters, { seed: 1 }).renders.length };
     } catch {
       eq = undefined;
     }
     let dynamics: { roles: string[]; renders: number } | undefined;
-    if (!eq) {
+    if (effectClass === "dynamics") {
       try {
-        const mapping = detectDynamics(info.parameters, info.plugin.category);
+        const mapping = detectDynamics(info.parameters, info.plugin.category, info.plugin.name);
         dynamics = { roles: Object.keys(mapping.roles), renders: planDynamics(info.parameters, { ...DEFAULT_PLAN }).renders.length };
       } catch {
         dynamics = undefined;
       }
     }
     let distortion: { roles: string[]; renders: number; signalSeconds: number } | undefined;
-    if (!eq && !dynamics) {
+    if (effectClass === "distortion") {
       try {
         const mapping = detectDistortion(info.parameters, info.plugin.category);
         distortion = {
