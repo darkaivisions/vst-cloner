@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { arch, platform, release, tmpdir } from "node:os";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -13,7 +13,7 @@ import {
   type Profile,
 } from "@vst-cloner/profile";
 import { findHost, hostVersion, pluginInfo, runHost, type HostInfo, type HostRenderMessage, type RenderJob } from "./host.ts";
-import { planCaptures, PlanTooLargeError, resolveFixedValues, type CapturePlan, type PlanOptions } from "./plan.ts";
+import { planCaptures, PlanTooLargeError, resolveFixedValues, type CapturePlan, type FixedValue, type PlanOptions } from "./plan.ts";
 import { generateTestSignal, type SignalPreset } from "./signals.ts";
 
 export const GENERATOR = { name: "vst-cloner", version: "0.1.0" };
@@ -43,6 +43,7 @@ export interface CaptureOptions {
 
 export type CaptureProgress =
   | { stage: "info"; plugin: string }
+  | { stage: "probe"; candidates: number; chosen: number; workingPoint: FixedValue[] }
   | { stage: "plan"; parameters: number; selected: number; renders: number }
   | { stage: "workdir"; path: string }
   | { stage: "render"; done: number; total: number; id: string; milliseconds: number }
@@ -53,6 +54,18 @@ export interface CapturePlanner {
   name: string;
   signalPreset: SignalPreset;
   plan(info: HostInfo, options: PlanOptions): CapturePlan;
+  /**
+   * Optional probe before planning: a few candidate settings are rendered with the test signal and the
+   * planner chooses the one to measure around (returned as `workingPoint` of the plan options).
+   * The first candidate is the initial state of the plugin (no values).
+   */
+  probe?(info: HostInfo, options: PlanOptions): CaptureProbe | undefined;
+}
+
+export interface CaptureProbe {
+  candidates: FixedValue[][];
+  /** index of the chosen candidate; `outputs[i]` is the first channel of candidate i */
+  choose(outputs: Float32Array[], input: Float32Array, sampleRate: number): number;
 }
 
 /** Re-encodes a WAV file as mono when all channels are bit-identical (halves the profile size for stereo-linked effects). */
@@ -99,10 +112,10 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
 
   if (info.mainOutputChannels === 0) throw new Error(`${info.plugin.name} has no audio output bus`);
 
-  const planOptions = { ...options.plan, fixed: resolveFixedValues(info.parameters, options.set ?? []) };
-  const plan = options.planner ? options.planner.plan(info, planOptions) : planCaptures(info.parameters, planOptions);
-  if (plan.renders.length > planOptions.maxRenders) throw new PlanTooLargeError(plan.renders.length, planOptions.maxRenders);
-  progress({ stage: "plan", parameters: info.parameters.length, selected: plan.selected.length, renders: plan.renders.length });
+  const planOptions: PlanOptions = { ...options.plan, fixed: resolveFixedValues(info.parameters, options.set ?? []) };
+  // fails early when the plugin is not of the planner's class
+  const firstPlan = options.planner ? options.planner.plan(info, planOptions) : planCaptures(info.parameters, planOptions);
+  if (firstPlan.renders.length > planOptions.maxRenders) throw new PlanTooLargeError(firstPlan.renders.length, planOptions.maxRenders);
 
   const signal = generateTestSignal({
     sampleRate: options.sampleRate,
@@ -115,8 +128,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
 
   try {
     await writeFile(join(workDir, "input.wav"), encodeWav(signal.audio));
-
-    const job: RenderJob = {
+    const jobBase = {
       plugin: pluginPath,
       identifier: info.plugin.identifier,
       sampleRate: options.sampleRate,
@@ -125,6 +137,35 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
       prerollSeconds: options.prerollSeconds,
       tailSeconds: options.tailSeconds,
       input: "input.wav",
+    };
+
+    // probe: the planner looks at a few candidate settings and picks the one to measure around
+    let plan = firstPlan;
+    const probe = options.planner?.probe?.(info, planOptions);
+    if (probe && probe.candidates.length > 1) {
+      const fixed = planOptions.fixed ?? [];
+      const probeJob: RenderJob = {
+        ...jobBase,
+        renders: probe.candidates.map((values, i) => ({ id: `p${i}`, params: [...fixed, ...values], output: `probe/p${i}.wav` })),
+      };
+      await mkdir(join(workDir, "probe"), { recursive: true });
+      await writeFile(join(workDir, "probe.json"), JSON.stringify(probeJob, null, 2));
+      await runHost(["render", join(workDir, "probe.json")], { hostPath, ...(options.signal ? { signal: options.signal } : {}) });
+      const outputs: Float32Array[] = [];
+      for (let i = 0; i < probe.candidates.length; i++) outputs.push(decodeWav(await readFile(join(workDir, "probe", `p${i}.wav`))).channels[0]!);
+      const chosen = probe.choose(outputs, signal.audio.channels[0]!, options.sampleRate);
+      const workingPoint = probe.candidates[chosen] ?? [];
+      progress({ stage: "probe", candidates: probe.candidates.length, chosen, workingPoint });
+      if (workingPoint.length) {
+        planOptions.workingPoint = workingPoint;
+        plan = options.planner!.plan(info, planOptions);
+        if (plan.renders.length > planOptions.maxRenders) throw new PlanTooLargeError(plan.renders.length, planOptions.maxRenders);
+      }
+    }
+    progress({ stage: "plan", parameters: info.parameters.length, selected: plan.selected.length, renders: plan.renders.length });
+
+    const job: RenderJob = {
+      ...jobBase,
       renders: plan.renders.map((r) => ({ id: r.id, params: r.params, output: `captures/${r.id}.wav` })),
     };
     await writeFile(join(workDir, "job.json"), JSON.stringify(job, null, 2));
@@ -203,6 +244,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
             ...(options.plan.include ? { include: options.plan.include.source } : {}),
             ...(options.plan.exclude ? { exclude: options.plan.exclude.source } : {}),
             fixed: planOptions.fixed,
+            ...(planOptions.workingPoint?.length ? { workingPoint: planOptions.workingPoint } : {}),
             selectedParameters: plan.selected.map((p) => p.index),
           },
         },

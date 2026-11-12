@@ -3,7 +3,8 @@ import { readProfile, writeProfile, type Profile } from "@vst-cloner/profile";
 import { strFromU8, strToU8 } from "fflate";
 import { buildPlugin, slugify, type BuildResult, type Logger } from "../build.ts";
 import { generateDynamicsHeader } from "./codegen.ts";
-import { fitDynamics, predictModel, type DynamicsModel } from "./fit.ts";
+import { CancelledError } from "@vst-cloner/capture";
+import { predictModel, type DynamicsModel } from "./fit.ts";
 import { staticReduction } from "./model.ts";
 import { verifyDynamicsClone, type DynamicsVerifyReport } from "./verify.ts";
 import { existsSync } from "node:fs";
@@ -57,6 +58,33 @@ export function formatDynamicsVerify(report: DynamicsVerifyReport): string[] {
   return lines;
 }
 
+/** The compressor fit on a worker thread: progress arrives while it runs, cancelling stops it at once. */
+export async function fitDynamicsInWorker(
+  profilePath: string,
+  onProgress?: (done: number, total: number, label: string) => void,
+  signal?: AbortSignal,
+): Promise<DynamicsModel> {
+  if (signal?.aborted) throw new CancelledError();
+  const { Worker } = await import("node:worker_threads");
+  const worker = new Worker(new URL("./worker.ts", import.meta.url), { workerData: { profilePath } });
+  let cancel: () => void = () => {};
+  try {
+    return await new Promise<DynamicsModel>((resolve, reject) => {
+      cancel = () => reject(new CancelledError());
+      signal?.addEventListener("abort", cancel, { once: true });
+      worker.on("message", (message: { model?: DynamicsModel; progress?: { done: number; total: number; label: string } }) => {
+        if (message.progress) onProgress?.(message.progress.done, message.progress.total, message.progress.label);
+        if (message.model) resolve(message.model);
+      });
+      worker.once("error", reject);
+      worker.once("exit", (code) => reject(new Error(`Kompressor-Fit beendet ohne Ergebnis (Code ${code})`)));
+    });
+  } finally {
+    signal?.removeEventListener("abort", cancel);
+    await worker.terminate();
+  }
+}
+
 export interface DynamicsCloneOptions {
   profilePath: string;
   outputDir?: string;
@@ -95,7 +123,7 @@ export async function cloneDynamicsProfile(options: DynamicsCloneOptions): Promi
   if (model) log("info", "Im Profil gespeichertes Modell wird verwendet");
   else {
     log("info", `${profile.captures.renders.length} Messungen von ${profile.manifest.plugin.name} werden analysiert …`);
-    model = fitDynamics(profile, options.onProgress);
+    model = await fitDynamicsInWorker(options.profilePath, options.onProgress, options.signal);
   }
   for (const line of formatDynamicsModel(model)) log("info", line);
 

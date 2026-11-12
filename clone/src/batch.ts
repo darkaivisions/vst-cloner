@@ -18,7 +18,11 @@ export const EFFECT_CLASSES: EffectClass[] = ["eq", "dynamics", "distortion"];
  * Effect class of a plugin – the same order as the app uses: EQ (band parameters), compressor
  * (threshold + timing), distortion (drive control or category). Undefined with the reason when none fits.
  */
-export function classifyPlugin(info: Pick<HostInfo, "parameters" | "plugin">): { effectClass?: EffectClass; reason: string } {
+export function classifyPlugin(info: Pick<HostInfo, "parameters" | "plugin"> & Partial<Pick<HostInfo, "mainInputChannels">>): { effectClass?: EffectClass; reason: string } {
+  // synths have attack/release/drive controls too, but nothing to measure: they do not process an input
+  if (info.plugin.isInstrument || info.mainInputChannels === 0 || /instrument|synth|generator/i.test(info.plugin.category)) {
+    return { reason: "Instrument (verarbeitet kein Eingangssignal)" };
+  }
   const reasons: string[] = [];
   try {
     detectEq(info.parameters);
@@ -142,13 +146,13 @@ export async function runBatch(options: BatchOptions): Promise<BatchReport> {
     if (options.limit !== undefined && counted >= options.limit) break;
     const done = report.rows.find((r) => r.plugin === entry.path);
     if (done && !options.force && done.status !== "timeout") {
-      if (done.status !== "skipped") counted++;
+      if (done.status !== "skipped" && done.stage !== "info") counted++;
       continue;
     }
     const row = await runOne(entry, options);
     report.rows = report.rows.filter((r) => r.plugin !== entry.path);
     report.rows.push(row);
-    if (row.status !== "skipped") counted++;
+    if (row.status !== "skipped" && row.stage !== "info") counted++;
     await save();
     const quality = row.quality ? ` – ${row.quality.text}` : "";
     const level = row.status === "failed" || row.status === "timeout" ? "warn" : "info";
@@ -277,12 +281,14 @@ async function runOne(entry: Pick<PluginEntry, "path" | "name" | "format">, opti
 /** The report as a Markdown table: failures first, then results from worst to best, skipped plugins last. */
 export function formatBatchMarkdown(report: BatchReport): string {
   const rows = report.rows;
-  const tried = rows.filter((r) => r.status !== "skipped");
+  // plugins that do not even load never showed their class: listed apart, not counted as plugins of the class
+  const unloadable = rows.filter((r) => r.status !== "skipped" && r.stage === "info");
+  const tried = rows.filter((r) => r.status !== "skipped" && r.stage !== "info");
   const ok = tried.filter((r) => r.status === "ok");
   const lines = [
     `# Batch-Lauf ${report.effectClass} (${report.startedAt.slice(0, 16).replace("T", " ")})`,
     "",
-    `${tried.length} Plugins der Klasse versucht · ${ok.length} geklont · ${tried.length - ok.length} fehlgeschlagen · ${rows.length - tried.length} übersprungen`,
+    `${tried.length} Plugins der Klasse versucht · ${ok.length} geklont · ${tried.length - ok.length} fehlgeschlagen · ${rows.length - tried.length - unloadable.length} übersprungen · ${unloadable.length} nicht ladbar`,
     "",
   ];
   const verdicts = new Map<string, number>();
@@ -312,6 +318,11 @@ export function formatBatchMarkdown(report: BatchReport): string {
     }
     lines.push("## Übersprungen", "");
     for (const [key, names] of other) lines.push(`- ${key} (${names.length}): ${names.join(", ")}`);
+    lines.push("");
+  }
+  if (unloadable.length) {
+    lines.push("## Nicht ladbar", "", "| Plugin | Format | Fehler |", "|---|---|---|");
+    for (const r of unloadable) lines.push(`| ${r.name} | ${r.format} | ${(r.error ?? "").replace(/\|/g, "/")} |`);
     lines.push("");
   }
   return lines.join("\n");

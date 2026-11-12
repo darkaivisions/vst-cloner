@@ -14,6 +14,11 @@ export interface PlanOptions {
   maxRenders: number;
   /** Fixed values applied to every render (e.g. enabling an EQ band); these parameters are not swept. */
   fixed?: FixedValue[];
+  /**
+   * Values that replace the plugin's initial state as the centre of the measurement (found by a planner's
+   * probe, e.g. a compressor whose initial state does not compress). Unlike `fixed` they are still swept.
+   */
+  workingPoint?: FixedValue[];
 }
 
 export interface FixedValue {

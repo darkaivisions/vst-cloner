@@ -32,7 +32,7 @@ function cacheRoot(): string {
 const onPath = (exe: string) =>
   (process.env.PATH ?? "").split(delimiter).some((dir) => existsSync(join(dir, process.platform === "win32" ? `${exe}.exe` : exe)));
 
-/** JUCE checkout: $VCH_JUCE_DIR, the one used by vch-host, its FetchContent copy, or none (CMake downloads it). */
+/** JUCE checkout: $VCH_JUCE_DIR, the one used by vch-host, its FetchContent copy, one in the cache directory, or none (CMake downloads it). */
 export async function findJuceDir(): Promise<string | undefined> {
   if (process.env.VCH_JUCE_DIR) return process.env.VCH_JUCE_DIR;
   const hostBuild = join(REPO_DIR, "host", "build");
@@ -43,8 +43,8 @@ export async function findJuceDir(): Promise<string | undefined> {
   } catch {
     // host not configured
   }
-  const fetched = join(hostBuild, "_deps", "juce-src");
-  return existsSync(join(fetched, "CMakeLists.txt")) ? fetched : undefined;
+  for (const dir of [join(hostBuild, "_deps", "juce-src"), join(cacheRoot(), "JUCE")]) if (existsSync(join(dir, "CMakeLists.txt"))) return dir;
+  return undefined;
 }
 
 /** Runs a command and forwards its output line by line. */
@@ -153,6 +153,16 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
   const juceDir = await findJuceDir();
   log("detail", juceDir ? `JUCE: ${juceDir}` : "JUCE 9.0.5 wird heruntergeladen (nur beim ersten Build)");
 
+  // a build directory configured with another JUCE checkout cannot be reused (CMake refuses the changed source,
+  // also in the nested juceaide build): the checkout used is noted next to it
+  const juceNote = join(workDir, "juce-dir.txt");
+  const noted = existsSync(juceNote) ? await readFile(juceNote, "utf8") : undefined;
+  if (noted !== (juceDir ?? "") && existsSync(buildDir)) {
+    log("detail", "JUCE-Verzeichnis hat sich geändert oder ist unbekannt: Build-Verzeichnis wird neu angelegt");
+    await rm(buildDir, { recursive: true, force: true });
+  }
+  await writeFile(juceNote, juceDir ?? "");
+
   const configure = [
     "-S", workDir, "-B", buildDir,
     "-DCMAKE_BUILD_TYPE=Release",
@@ -160,7 +170,8 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
     `-DCLONE_FILE_NAME=${fileName}`,
     `-DCLONE_CODE=${code}`,
     `-DCLONE_GENERATED_DIR=${generated}`,
-    ...(juceDir ? [`-DVCH_JUCE_DIR=${juceDir}`] : []),
+    // always set: an earlier configure may have cached a checkout that no longer exists
+    `-DVCH_JUCE_DIR=${juceDir ?? ""}`,
   ];
   if (!existsSync(join(buildDir, "CMakeCache.txt")) && onPath("ninja")) configure.push("-G", "Ninja");
 

@@ -7,6 +7,7 @@ import {
   blockLevels,
   renderModel,
   simulateGain,
+  staticReduction,
   type CompressorParams,
   type CompressorStructure,
   type Detector,
@@ -23,6 +24,9 @@ export interface DynamicsObservation {
   label: string;
   purpose: "train" | "validate";
   params: { index: number; value: number }[];
+  kind?: string;
+  /** index of the parameter a sweep render varies (its other values are those of the base render) */
+  sweepParameter?: number;
   /** measured gain per window (dB), NaN where the input is too quiet */
   measuredDb: Float64Array;
   /** H3 and H5 relative to the fundamental (dB) per step of the harmonics segment */
@@ -115,6 +119,8 @@ export function dynamicsObservations(profile: Profile, input: DynamicsInput): Dy
       label: r.label ?? r.id,
       purpose: r.purpose === "validate" ? "validate" : "train",
       params: r.params.map((p) => ({ index: p.index, value: p.value })),
+      kind: r.kind,
+      ...(r.sweepParameter !== undefined ? { sweepParameter: r.sweepParameter } : {}),
       measuredDb: measured,
       ...(input.harmonicWindows.length ? { harmonicsDb: harmonicsDb(output, input.harmonicWindows, input.sampleRate) } : {}),
     };
@@ -334,6 +340,8 @@ export interface ParamTable {
   discrete: boolean;
   /** plugin value (normalised) → fitted model parameters (packed, see pack()) */
   points: { value: number; packed: number[] }[];
+  /** the control acts as a gain in front of the compressor (see Interaction) */
+  inputGain?: boolean;
 }
 
 /**
@@ -371,19 +379,108 @@ export function tableAt(table: ParamTable, value: number): number[] {
 }
 
 /**
- * Model parameters for a combination of plugin values: base model plus the change each parameter causes
- * on its own (additive in the packed domain: dB, log ratio, log times).
+ * What single-parameter tables cannot express when they are simply added up: controls that work together.
+ * - automatic makeup: the plugin adds `autoMakeup` × (reduction of the static curve at `referenceDb`) to its
+ *   output level, so threshold and ratio controls change the level together (their product);
+ * - input gain: a control that moves the threshold down and the level up by the same amount is a gain in
+ *   front of the compressor – it shifts whatever threshold the other controls set.
+ * Tables are stored in a "latent" form in which these effects are separate values that do add up:
+ * threshold before input gain, makeup without input gain and automatic makeup, plus the input gain itself.
  */
-export function predictParams(base: CompressorParams, baseValues: Map<number, number>, tables: ParamTable[], values: Map<number, number>): CompressorParams {
-  const packed = pack(base);
+export interface Interaction {
+  autoMakeup: number;
+  referenceDb: number;
+}
+export const NO_INTERACTION: Interaction = { autoMakeup: 0, referenceDb: 0 };
+const THRESHOLD = 0, KNEE = 2, MAKEUP = 3;
+/** index of the input gain in a latent vector (appended to the packed parameters) */
+export const PRE_GAIN = 13;
+
+/** Packed engine parameters → latent form, for a point with the given input gain. */
+export function toLatent(packed: number[], preGainDb: number, interaction: Interaction): number[] {
+  const shifted = packed.slice(0, PRE_GAIN);
+  shifted[THRESHOLD] = packed[THRESHOLD]! + preGainDb;
+  const latent = [...shifted, preGainDb];
+  latent[MAKEUP] = packed[MAKEUP]! - preGainDb - interaction.autoMakeup * staticReduction(interaction.referenceDb, unpack(shifted));
+  // the knee adds up in dB: as a logarithm, small changes of a hard knee on several controls would multiply
+  latent[KNEE] = Math.exp(packed[KNEE]!) - 0.1;
+  return latent;
+}
+
+/** Latent form → packed engine parameters (inverse of toLatent). */
+export function fromLatent(latent: number[], interaction: Interaction): number[] {
+  const packed = latent.slice(0, PRE_GAIN);
+  const preGainDb = latent[PRE_GAIN] ?? 0;
+  packed[KNEE] = Math.log(Math.max(latent[KNEE]!, 0) + 0.1);
+  packed[MAKEUP] = latent[MAKEUP]! + preGainDb + interaction.autoMakeup * staticReduction(interaction.referenceDb, unpack(packed));
+  packed[THRESHOLD] = latent[THRESHOLD]! - preGainDb;
+  return packed;
+}
+
+/** Table points of models fitted before interactions existed are plain packed values. */
+export const latentPoint = (packed: number[]): number[] => (packed.length > PRE_GAIN ? packed : toLatent(packed, 0, NO_INTERACTION));
+
+/**
+ * Model parameters for a combination of plugin values: base model plus the change each parameter causes
+ * on its own (additive in the latent domain: dB, log ratio, log times; see Interaction).
+ */
+export function predictParams(
+  base: CompressorParams,
+  baseValues: Map<number, number>,
+  tables: ParamTable[],
+  values: Map<number, number>,
+  interaction: Interaction = NO_INTERACTION,
+): CompressorParams {
+  const latent = toLatent(pack(base), 0, interaction);
   for (const table of tables) {
     const value = values.get(table.index) ?? baseValues.get(table.index);
     const reference = baseValues.get(table.index);
     if (value === undefined || reference === undefined) continue;
-    const at = tableAt(table, value), ref = tableAt(table, reference);
-    for (let i = 0; i < packed.length; i++) packed[i]! += at[i]! - ref[i]!;
+    const at = latentPoint(tableAt(table, value)), ref = latentPoint(tableAt(table, reference));
+    for (let i = 0; i < latent.length; i++) latent[i]! += at[i]! - ref[i]!;
   }
-  return unpack(packed);
+  return unpack(fromLatent(latent, interaction));
+}
+
+/**
+ * Finds the interaction that explains the makeup changes of the sweeps best and converts the tables to the
+ * latent form. A control counts as input gain when that removes most of its makeup changes; automatic makeup
+ * is only assumed when it at least halves what is left over all tables.
+ */
+export function fitInteraction(base: CompressorParams, tables: ParamTable[]): Interaction {
+  const baseE = pack(base);
+  const preOf = (packed: number[], gain: boolean) => (gain ? baseE[THRESHOLD]! - packed[THRESHOLD]! : 0);
+  const residual = (table: ParamTable, gain: boolean, it: Interaction) => {
+    const reference = toLatent(baseE, 0, it)[MAKEUP]!;
+    return table.points.reduce((sum, pt) => sum + (toLatent(pt.packed, preOf(pt.packed, gain), it)[MAKEUP]! - reference) ** 2, 0);
+  };
+  const assess = (it: Interaction) => {
+    let cost = 0;
+    const gains = new Set<number>();
+    for (const table of tables) {
+      const plain = residual(table, false, it), asGain = residual(table, true, it);
+      if (!table.discrete && plain > 4 && asGain < plain * 0.25) {
+        gains.add(table.index);
+        cost += asGain;
+      } else cost += plain;
+    }
+    return { cost, gains, it };
+  };
+  const none = assess(NO_INTERACTION);
+  let best = none;
+  for (const autoMakeup of [0.25, 0.5, 0.75, 1]) {
+    for (let referenceDb = -40; referenceDb <= 12; referenceDb++) {
+      const candidate = assess({ autoMakeup, referenceDb });
+      if (candidate.cost < best.cost) best = candidate;
+    }
+  }
+  if (best !== none && !(none.cost > 4 && best.cost < none.cost * 0.5)) best = none;
+  for (const table of tables) {
+    const gain = best.gains.has(table.index);
+    if (gain) table.inputGain = true;
+    for (const pt of table.points) pt.packed = toLatent(pt.packed, preOf(pt.packed, gain), best.it);
+  }
+  return best.it;
 }
 
 // ---- complete fit ------------------------------------------------------------------------------
@@ -411,7 +508,9 @@ export interface DynamicsModel {
   base: CompressorParams;
   /** plugin parameter values of the initial state (normalised) */
   baseValues: { index: number; value: number }[];
+  /** per-parameter changes, in latent form (see Interaction) */
   tables: ParamTable[];
+  interaction?: Interaction;
   report: {
     structures: { structure: CompressorStructure; rmsDb: number }[];
     renders: DynamicsRenderReport[];
@@ -424,7 +523,7 @@ const summarize = (rows: DynamicsRenderReport[]): Errors | undefined =>
   rows.length ? { rmsDb: rows.reduce((s, r) => s + r.rmsDb, 0) / rows.length, maxDb: Math.max(...rows.map((r) => r.maxDb)) } : undefined;
 
 export function predictModel(model: DynamicsModel, values: Map<number, number>): CompressorParams {
-  return predictParams(model.base, new Map(model.baseValues.map((v) => [v.index, v.value])), model.tables, values);
+  return predictParams(model.base, new Map(model.baseValues.map((v) => [v.index, v.value])), model.tables, values, model.interaction);
 }
 
 /**
@@ -436,8 +535,13 @@ export function fitDynamics(profile: Profile, onProgress?: (done: number, total:
   const input = dynamicsInput(profile);
   const observations = dynamicsObservations(profile, input);
   const parameters = profile.parameters.parameters;
-  const base = observations.find((o) => o.params.length === 0) ?? observations[0]!;
-  const train = observations.filter((o) => o.purpose === "train" && o !== base && o.params.length === 1);
+  // the measurement is centred on the working point when the capture found one (else the initial state)
+  const working = new Map(((profile.manifest.capture.plan?.workingPoint as { index: number; value: number }[] | undefined) ?? []).map((w) => [w.index, w.value]));
+  const base = observations.find((o) => o.kind === "default") ?? observations.find((o) => o.params.length === 0) ?? observations[0]!;
+  /** the one parameter a training render moved away from the base */
+  const swept = (o: DynamicsObservation) =>
+    o.sweepParameter !== undefined ? o.params.find((p) => p.index === o.sweepParameter) : o.params.length === 1 ? o.params[0] : undefined;
+  const train = observations.filter((o) => o.purpose === "train" && o !== base && o.kind !== "random" && swept(o) !== undefined);
   const total = STRUCTURES.length + train.length;
 
   const structures = STRUCTURES.map((structure, i) => {
@@ -449,7 +553,7 @@ export function fitDynamics(profile: Profile, onProgress?: (done: number, total:
   const baseFit = fitStatic(base, input, structure, structures[0]!.params);
   baseFit.params = fitColour(base, input, baseFit.params, structure, true).params;
 
-  const baseValues = new Map(parameters.map((p) => [p.index, p.value ?? p.default]));
+  const baseValues = new Map(parameters.map((p) => [p.index, working.get(p.index) ?? p.value ?? p.default]));
   const tables = new Map<number, ParamTable>();
   const points: { o: DynamicsObservation; params: CompressorParams }[] = [];
   train.forEach((o, i) => {
@@ -461,7 +565,7 @@ export function fitDynamics(profile: Profile, onProgress?: (done: number, total:
     }
     fit.params = { ...fit.params, rippleTime: baseFit.params.rippleTime, ripple: baseFit.params.ripple };
     points.push({ o, params: fit.params });
-    const p = o.params[0]!;
+    const p = swept(o)!;
     const info = parameters.find((x) => x.index === p.index)!;
     const table = tables.get(p.index)
       ?? { index: p.index, name: info.name, discrete: info.discrete, points: [{ value: baseValues.get(p.index)!, packed: pack(baseFit.params) }] };
@@ -476,11 +580,13 @@ export function fitDynamics(profile: Profile, onProgress?: (done: number, total:
   const DRIVE = 10;
   for (const table of tables.values()) table.points[0]!.packed[DRIVE] = drives.base; // the base point
   points.forEach((point, i) => {
-    const table = tables.get(point.o.params[0]!.index)!;
-    const entry = table.points.find((e) => e.value === point.o.params[0]!.value && e !== table.points[0]);
+    const p = swept(point.o)!;
+    const table = tables.get(p.index)!;
+    const entry = table.points.find((e) => e.value === p.value && e !== table.points[0]);
     if (entry) entry.packed[DRIVE] = drives.base + drives.changes[i]!;
   });
   for (const table of tables.values()) table.points.sort((a, b) => a.value - b.value);
+  const interaction = fitInteraction(baseFit.params, [...tables.values()]);
 
   const model: DynamicsModel = {
     type: "compressor",
@@ -490,6 +596,7 @@ export function fitDynamics(profile: Profile, onProgress?: (done: number, total:
     base: baseFit.params,
     baseValues: [...tables.keys()].map((index) => ({ index, value: baseValues.get(index)! })),
     tables: [...tables.values()],
+    interaction,
     report: { structures: structures.map((s) => ({ structure: s.structure, rmsDb: s.errors.rmsDb })), renders: [] },
   };
 

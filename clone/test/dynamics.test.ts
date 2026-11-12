@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { Parameter } from "@vst-cloner/profile";
 import { nelderMead } from "../src/dsp/optimize.ts";
 import { BLOCK, simulateGain, staticReduction, type CompressorParams } from "../src/dynamics/model.ts";
-import { pack, predictParams, tableAt, type ParamTable } from "../src/dynamics/fit.ts";
+import { fitInteraction, fromLatent, pack, predictParams, tableAt, toLatent, type ParamTable } from "../src/dynamics/fit.ts";
 import { detectDynamics, NotDynamicsError } from "../src/dynamics/plan.ts";
 
 const params: CompressorParams = {
@@ -46,6 +46,10 @@ test("compressors are recognised by their parameter names", () => {
   assert.equal(m.roles.makeup, 1);
   assert.equal(m.roles.limit, 2);
   assert.throws(() => detectDynamics([parameter(0, "Frequency"), parameter(1, "Gain")]), NotDynamicsError);
+  // "Saturation" contains "ratio" but is not one
+  const s = detectDynamics([parameter(0, "Threshold"), parameter(1, "Saturation"), parameter(2, "Comp Ratio"), parameter(3, "Attack")]);
+  assert.equal(s.roles.saturation, 1);
+  assert.equal(s.roles.ratio, 2);
 });
 
 test("parameter tables: base values reproduce the base model, changes add up", () => {
@@ -60,6 +64,39 @@ test("parameter tables: base values reproduce the base model, changes add up", (
   assert.ok(Math.abs(same.thresholdDb + 20) < 1e-9 && Math.abs(same.makeupDb) < 1e-9);
   const both = predictParams(params, baseValues, tables, new Map([[0, 1], [1, 1]]));
   assert.ok(Math.abs(both.thresholdDb + 40) < 1e-9 && Math.abs(both.makeupDb - 10) < 1e-9);
+});
+
+test("interaction: automatic makeup and input gain are found and combine like the original", () => {
+  // original: makeup = 0.5 × reduction at 0 dB (threshold and ratio controls), plus an input gain control
+  const auto = (p: CompressorParams) => 0.5 * staticReduction(0, p);
+  const original = (thresholdDb: number, ratio: number, inputDb: number): CompressorParams => {
+    const p = { ...params, thresholdDb, ratio };
+    return { ...p, thresholdDb: thresholdDb - inputDb, makeupDb: auto(p) + inputDb };
+  };
+  const sweep = (index: number, at: (v: number) => CompressorParams): ParamTable => ({
+    index, name: String(index), discrete: false,
+    points: [0, 0.25, 0.5, 0.75, 1].map((value) => ({ value, packed: pack(at(value)) })),
+  });
+  const threshold = (v: number) => -40 + 40 * v, ratio = (v: number) => 2 + 8 * v, gain = (v: number) => 24 * v;
+  const base = original(threshold(0.5), ratio(0.5), gain(0));
+  const tables = [
+    sweep(0, (v) => original(threshold(v), ratio(0.5), 0)),
+    sweep(1, (v) => original(threshold(0.5), ratio(v), 0)),
+    sweep(2, (v) => original(threshold(0.5), ratio(0.5), gain(v))),
+  ];
+  const interaction = fitInteraction(base, tables);
+  assert.equal(interaction.autoMakeup, 0.5);
+  assert.deepEqual(tables.map((t) => t.inputGain === true), [false, false, true]);
+  const packed = pack(base);
+  fromLatent(toLatent(packed, 3, interaction), interaction).forEach((v, i) => assert.ok(v === packed[i] || Math.abs(v - packed[i]!) < 1e-9)); // round trip
+  const baseValues = new Map([[0, 0.5], [1, 0.5], [2, 0]]);
+  for (const [t, r, g] of [[0, 1, 0], [1, 0, 1], [0.25, 0.75, 0.5]] as const) {
+    const predicted = predictParams(base, baseValues, tables, new Map([[0, t], [1, r], [2, g]]), interaction);
+    const expected = original(threshold(t), ratio(r), gain(g));
+    assert.ok(Math.abs(predicted.thresholdDb - expected.thresholdDb) < 1e-6, `threshold ${predicted.thresholdDb} vs ${expected.thresholdDb}`);
+    assert.ok(Math.abs(predicted.ratio - expected.ratio) < 1e-6);
+    assert.ok(Math.abs(predicted.makeupDb - expected.makeupDb) < 0.01, `makeup ${predicted.makeupDb} vs ${expected.makeupDb}`);
+  }
 });
 
 test("dynamics header: parameters with the original's names, tables in clone indices", async () => {

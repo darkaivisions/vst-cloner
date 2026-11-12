@@ -49,15 +49,6 @@ inline CompressorParams unpack (const double* x)
     return p;
 }
 
-/** predictParams() in fit.ts: base model plus the change each parameter causes on its own. */
-template <typename ValueOf>
-CompressorParams predict (const double* basePacked, const ParamTable* tables, int numTables, ValueOf valueOf)
-{
-    double packed[numPacked];
-    predictPacked (basePacked, numPacked, tables, numTables, valueOf, packed);
-    return unpack (packed);
-}
-
 /** staticReduction() in model.ts */
 inline double staticReduction (double levelDb, const CompressorParams& p)
 {
@@ -67,6 +58,31 @@ inline double staticReduction (double levelDb, const CompressorParams& p)
     if (over <= -half) return 0.0;
     if (over >= half || p.kneeDb <= 0.0) return slope * over;
     return slope * (over + half) * (over + half) / (2.0 * p.kneeDb);
+}
+
+/** Interaction in fit.ts: automatic makeup = autoMakeup × static reduction at referenceDb. */
+struct Interaction
+{
+    double autoMakeup = 0, referenceDb = 0;
+};
+
+/** latent vector (see toLatent() in fit.ts): the packed parameters with threshold before input gain, knee in dB and
+    makeup without input gain and automatic makeup, followed by the input gain (dB) */
+constexpr int numLatent = numPacked + 1;
+
+/** predictParams() in fit.ts: base model plus the change each parameter causes on its own (latent domain),
+    then fromLatent(). */
+template <typename ValueOf>
+CompressorParams predict (const double* baseLatent, const ParamTable* tables, int numTables, const Interaction& interaction, ValueOf valueOf)
+{
+    double latent[numLatent];
+    predictPacked (baseLatent, numLatent, tables, numTables, valueOf, latent);
+    const double preGainDb = latent[numPacked];
+    latent[2] = std::log (std::max (latent[2], 0.0) + 0.1); // the knee is added up in dB
+    // as in fromLatent(): the automatic makeup follows the threshold before the input gain
+    latent[3] += preGainDb + interaction.autoMakeup * staticReduction (interaction.referenceDb, unpack (latent));
+    latent[0] -= preGainDb;
+    return unpack (latent);
 }
 
 /** Gain computer of simulateGain() in model.ts, one block at a time. */
