@@ -192,14 +192,27 @@ export function initialGuess(o: DynamicsObservation, input: DynamicsInput, s: Co
   };
 }
 
-export function fitRender(o: DynamicsObservation, input: DynamicsInput, s: CompressorStructure, start?: CompressorParams, maxEvaluations = 600) {
+/** Search steps of the packed values; also the scale on which a change away from the anchor is penalised. */
+const STEP = [6, 0.7, 0.7, 2, 0.7, 0.7, 0.7, 0.7, 1, 1];
+/**
+ * Penalty (dB per step) for moving a model value away from the base fit. Many model values are barely
+ * identifiable from one render (release against the slow stage, ratio against the detector …); without the
+ * penalty they wander from sweep point to sweep point, and the wandering of several tables adds up – in the
+ * log domain – when controls are combined.
+ */
+export const ANCHOR_WEIGHT = 0.05;
+const anchorPenalty = (x: number[], anchor: number[] | undefined) =>
+  anchor ? ANCHOR_WEIGHT * x.reduce((sum, v, i) => sum + Math.abs(v - anchor[i]!) / STEP[i]!, 0) : 0;
+
+export function fitRender(o: DynamicsObservation, input: DynamicsInput, s: CompressorStructure, start?: CompressorParams, maxEvaluations = 600, anchor?: CompressorParams) {
   const initial = start ?? initialGuess(o, input, s);
   // the colouration (last packed values) hardly changes the level over time – it is fitted separately
   const packed = pack(initial);
   const colour = packed.slice(-COLOUR);
   const full = (x: number[]) => unpack([...x, ...colour]);
-  const cost = (x: number[]) => compare(modelWindowDb(input, full(x), s), o.measuredDb).rmsDb;
-  const result = nelderMead(cost, packed.slice(0, -COLOUR), { step: [6, 0.7, 0.7, 2, 0.7, 0.7, 0.7, 0.7, 1, 1], maxEvaluations });
+  const anchored = anchor ? pack(anchor) : undefined;
+  const cost = (x: number[]) => compare(modelWindowDb(input, full(x), s), o.measuredDb).rmsDb + anchorPenalty(x, anchored);
+  const result = nelderMead(cost, packed.slice(0, -COLOUR), { step: STEP, maxEvaluations });
   // a restart from the result escapes most early collapses of the simplex
   const again = nelderMead(cost, result.x, { step: [2, 0.3, 0.3, 0.5, 0.3, 0.3, 0.3, 0.3, 0.5, 0.5], maxEvaluations: maxEvaluations / 2 });
   const params = full(again.x);
@@ -207,13 +220,14 @@ export function fitRender(o: DynamicsObservation, input: DynamicsInput, s: Compr
 }
 
 /** Static part only (threshold, ratio, knee, makeup); the timing stays as given. */
-export function fitStatic(o: DynamicsObservation, input: DynamicsInput, s: CompressorStructure, timing: CompressorParams, maxEvaluations = 400) {
+export function fitStatic(o: DynamicsObservation, input: DynamicsInput, s: CompressorStructure, timing: CompressorParams, maxEvaluations = 400, anchor?: CompressorParams) {
   const guess = initialGuess(o, input, s);
   const make = (x: number[]): CompressorParams => ({
     ...timing,
     thresholdDb: x[0]!, ratio: 1 + Math.exp(x[1]!), kneeDb: Math.max(0, Math.exp(x[2]!) - 0.1), makeupDb: x[3]!,
   });
-  const cost = (x: number[]) => compare(modelWindowDb(input, make(x), s), o.measuredDb).rmsDb;
+  const anchored = anchor ? pack(anchor) : undefined;
+  const cost = (x: number[]) => compare(modelWindowDb(input, make(x), s), o.measuredDb).rmsDb + anchorPenalty(x, anchored);
   // start from the timing render's static values, but with this render's level
   const start = [timing.thresholdDb, Math.log(Math.max(timing.ratio - 1, 1e-3)), Math.log(timing.kneeDb + 0.1), guess.makeupDb];
   const first = nelderMead(cost, start, { step: [6, 0.7, 0.7, 2], maxEvaluations });
@@ -580,9 +594,9 @@ export function fitDynamics(profile: Profile, onProgress?: (done: number, total:
   const points: { o: DynamicsObservation; params: CompressorParams }[] = [];
   train.forEach((o, i) => {
     onProgress?.(STRUCTURES.length + i, total, o.label);
-    let fit = fitStatic(o, input, structure, baseFit.params);
+    let fit = fitStatic(o, input, structure, baseFit.params, undefined, baseFit.params);
     if (compressedShare(o, fit.params.makeupDb) > MIN_COMPRESSED_FOR_TIMING) {
-      const full = fitRender(o, input, structure, fit.params);
+      const full = fitRender(o, input, structure, fit.params, undefined, baseFit.params);
       if (full.errors.rmsDb < fit.errors.rmsDb * 0.8 && fit.errors.rmsDb - full.errors.rmsDb > MIN_TIMING_GAIN_DB) fit = full;
     }
     fit.params = { ...fit.params, rippleTime: baseFit.params.rippleTime, ripple: baseFit.params.ripple };
