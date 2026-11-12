@@ -45,22 +45,60 @@ export interface DynamicsMapping {
 }
 
 export class NotDynamicsError extends Error {
-  constructor(message: string) {
+  /**
+   * The plugin is a known processor of another kind (gate, expander, dynamic EQ, multiband compressor …):
+   * no other effect class should be tried for it either.
+   */
+  readonly otherProcessor: boolean;
+
+  constructor(message: string, otherProcessor = false) {
     super(message);
+    this.otherProcessor = otherProcessor;
     this.name = "NotDynamicsError";
   }
 }
 
-/** Recognises a compressor/limiter by its parameter names. */
 /** Plugin categories of other effect classes: their "drive", "threshold" … controls do not make them a compressor or distortion. */
 export const OTHER_CLASS_CATEGORY = /delay|echo|reverb|chorus|flanger|phaser|modulat|pitch|shift|wah|tremolo|vibrato/i;
 
-export function detectDynamics(parameters: Parameter[], category = ""): DynamicsMapping {
+/** Dynamics processors the compressor model cannot represent: they have a threshold and timing controls too. */
+const NOT_COMPRESSOR_CATEGORY = /expander|gate|envelope|\beq\b|equali[sz]er/i;
+const NOT_COMPRESSOR_NAME = /expander|gate|dynamic\s*eq|envelope/i;
+const GATE_PARAMETER = /gate/i;
+
+/**
+ * Reason why a plugin is a multiband or multi-stage compressor (one threshold/ratio per band), which the
+ * single-band model cannot represent; undefined for an ordinary compressor.
+ */
+export function multibandReason(parameters: Parameter[]): string | undefined {
+  const active = parameters.filter((p) => p.automatable && !p.meta && !IGNORED.test(p.name));
+  const count = (pattern: RegExp) => active.filter((p) => pattern.test(p.name)).length;
+  const stages = Math.max(count(/thresh|thr\b/i), count(/\bratio|ratio\s*\d*$/i));
+  const crossover = count(/cross\s*-?over/i) > 0;
+  if (stages >= 3 || (crossover && stages >= 2)) {
+    return `Multiband- oder Mehrstufen-Kompressor (${stages} Stufen${crossover ? ", Crossover" : ""}) – mit dem Einband-Modell nicht abbildbar`;
+  }
+  return undefined;
+}
+
+/** Recognises a compressor/limiter by its parameter names (and rules out other processors by category and name). */
+export function detectDynamics(parameters: Parameter[], category = "", name = ""): DynamicsMapping {
   if (OTHER_CLASS_CATEGORY.test(category)) throw new NotDynamicsError(`Plugin-Kategorie „${category}“ ist kein Kompressor`);
+  if (NOT_COMPRESSOR_CATEGORY.test(category)) throw new NotDynamicsError(`Plugin-Kategorie „${category}“ ist kein Kompressor`, true);
+  if (NOT_COMPRESSOR_NAME.test(name)) throw new NotDynamicsError(`„${name}“ ist ein Gate, Expander oder dynamischer EQ, kein Kompressor`, true);
+  const multiband = multibandReason(parameters);
+  if (multiband) throw new NotDynamicsError(multiband, true);
   const roles: DynamicsMapping["roles"] = {};
   const other: number[] = [];
+  let gate = false;
   for (const p of parameters) {
     if (!p.automatable || p.meta || IGNORED.test(p.name)) continue;
+    // the controls of a built-in noise gate ("gateThreshold", "gate release") are not the compressor's
+    if (GATE_PARAMETER.test(p.name)) {
+      gate = true;
+      other.push(p.index);
+      continue;
+    }
     const role = ROLE_PATTERNS.find(([r, pattern]) => roles[r] === undefined && pattern.test(p.name))?.[0];
     if (role) roles[role] = p.index;
     else other.push(p.index);
@@ -69,6 +107,10 @@ export function detectDynamics(parameters: Parameter[], category = ""): Dynamics
   const behaviour = roles.ratio !== undefined || roles.attack !== undefined || roles.release !== undefined || roles.limit !== undefined || roles.reduction !== undefined;
   if (!level || !behaviour) {
     throw new NotDynamicsError("Keine Kompressor-Parameter erkannt (Threshold/Peak Reduction und Ratio/Attack/Release)");
+  }
+  // gate controls next to a threshold but no ratio, reduction or limiter: the plugin is the gate
+  if (gate && roles.ratio === undefined && roles.reduction === undefined && roles.limit === undefined) {
+    throw new NotDynamicsError("Gate-Parameter ohne Ratio erkannt – ein Gate, kein Kompressor", true);
   }
   return { roles, other };
 }

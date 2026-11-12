@@ -4,7 +4,8 @@ import type { Parameter } from "@vst-cloner/profile";
 import { nelderMead } from "../src/dsp/optimize.ts";
 import { BLOCK, simulateGain, staticReduction, type CompressorParams } from "../src/dynamics/model.ts";
 import { gainSpreadDb, fitInteraction, fromLatent, pack, predictParams, tableAt, toLatent, type ParamTable } from "../src/dynamics/fit.ts";
-import { detectDynamics, NotDynamicsError } from "../src/dynamics/plan.ts";
+import { detectDynamics, multibandReason, NotDynamicsError } from "../src/dynamics/plan.ts";
+import { classifyPlugin } from "../src/batch.ts";
 
 const params: CompressorParams = {
   thresholdDb: -20, ratio: 4, kneeDb: 6, makeupDb: 0, attack: 0.01, release: 0.1, charge: 0, slow: 4, slowKneeDb: 1, detectorTime: 0, drive: 0, rippleTime: 0.001, ripple: 0,
@@ -38,6 +39,34 @@ test("nelder–mead finds the minimum of a shifted quadratic", () => {
 
 const parameter = (index: number, name: string, discrete = false): Parameter => ({
   index, id: String(index), name, default: 0.5, numSteps: discrete ? 2 : 0x7fffffff, discrete, boolean: discrete, automatable: true,
+});
+
+
+test("gates, expanders, dynamic EQs and multiband compressors are not cloned as a compressor", () => {
+  const named = (...names: string[]) => names.map((n, i) => parameter(i, n));
+  const comp = named("Attack", "Release", "Knee", "Ratio", "Threshold", "Makeup");
+  assert.ok(detectDynamics(comp, "Fx|Dynamics|Mono", "ZamComp"));
+  // by category and by name
+  assert.throws(() => detectDynamics(comp, "Expander Plugin", "GxExpander"), NotDynamicsError);
+  assert.throws(() => detectDynamics(comp, "Fx|EQ|Mono", "ZamDynamicEQ"), NotDynamicsError);
+  assert.throws(() => detectDynamics(named("Attack", "Release", "Threshold", "Makeup"), "Fx|Dynamics", "ZamGate"), NotDynamicsError);
+  // a gate by its controls only
+  assert.throws(() => detectDynamics(named("Attack", "Release", "Threshold", "Max gate close")), /Gate/);
+  // the noise gate of an amp is not a compressor threshold …
+  assert.throws(() => detectDynamics(named("inputLevel", "gateThreshold", "gateRelease", "gateHold")), NotDynamicsError);
+  // … but a compressor may have one
+  assert.equal(detectDynamics(named("Gate Threshold", "Threshold", "Ratio", "Attack")).roles.threshold, 1);
+  // one threshold/ratio per band
+  const bands = named("RATIO1", "RATIO2", "RATIO3", "ATTACK1", "MAKEUPTHRESHOLD1", "CROSSOVER_B2_B3");
+  assert.match(multibandReason(bands) ?? "", /Multiband/);
+  assert.equal(multibandReason(comp), undefined);
+  // two compressors without a crossover (dual compressor) stay
+  assert.equal(multibandReason(named("Threshold 1", "Ratio 1", "Threshold 2", "Ratio 2")), undefined);
+  // none of them falls through to another class, although "Makeup"/"Gain" would pass as a drive control
+  const plugin = (name: string, category: string) => ({ name, category, isInstrument: false }) as never;
+  assert.equal(classifyPlugin({ parameters: named("Attack", "Release", "Threshold", "Gain"), plugin: plugin("ZamGate", "Fx|Dynamics") }).effectClass, undefined);
+  assert.equal(classifyPlugin({ parameters: [...bands, parameter(9, "Gain")], plugin: plugin("MB", "Fx") }).effectClass, undefined);
+  assert.equal(classifyPlugin({ parameters: comp, plugin: plugin("ZamComp", "Fx|Dynamics") }).effectClass, "dynamics");
 });
 
 test("compressors are recognised by their parameter names", () => {

@@ -6,7 +6,7 @@ import { slugify, type Logger } from "./build.ts";
 import { detectEq } from "./eq/mapping.ts";
 import { eqPlanner } from "./eq/plan.ts";
 import { cloneProfile, verdict } from "./workflow.ts";
-import { detectDynamics, dynamicsPlanner } from "./dynamics/plan.ts";
+import { detectDynamics, dynamicsPlanner, multibandReason, NotDynamicsError } from "./dynamics/plan.ts";
 import { cloneDynamicsProfile, dynamicsVerdict } from "./dynamics/workflow.ts";
 import { measuredCompression } from "./dynamics/fit.ts";
 import { detectDistortion, distortionPlanner } from "./distortion/plan.ts";
@@ -24,6 +24,9 @@ export function classifyPlugin(info: Pick<HostInfo, "parameters" | "plugin"> & P
   if (info.plugin.isInstrument || info.mainInputChannels === 0 || /instrument|synth|generator/i.test(info.plugin.category)) {
     return { reason: "Instrument (verarbeitet kein Eingangssignal)" };
   }
+  // per-band thresholds and ratios look like EQ bands or a compressor, but neither model fits
+  const multiband = multibandReason(info.parameters);
+  if (multiband) return { reason: multiband };
   const reasons: string[] = [];
   try {
     detectEq(info.parameters);
@@ -32,9 +35,11 @@ export function classifyPlugin(info: Pick<HostInfo, "parameters" | "plugin"> & P
     reasons.push((error as Error).message);
   }
   try {
-    detectDynamics(info.parameters, info.plugin.category);
+    detectDynamics(info.parameters, info.plugin.category, info.plugin.name);
     return { effectClass: "dynamics", reason: "Kompressor-Parameter erkannt" };
   } catch (error) {
+    // a gate, expander or dynamic EQ is no distortion either, whatever its "gain" control suggests
+    if (error instanceof NotDynamicsError && error.otherProcessor) return { reason: error.message };
     reasons.push((error as Error).message);
   }
   try {
