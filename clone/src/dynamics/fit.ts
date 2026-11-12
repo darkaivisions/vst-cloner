@@ -500,7 +500,9 @@ export function fitInteraction(base: CompressorParams, tables: ParamTable[]): In
 // ---- complete fit ------------------------------------------------------------------------------
 
 /** Below this share of compressed windows the timing of a render cannot be identified. */
-const MIN_COMPRESSED_FOR_TIMING = 0.3;
+const MIN_COMPRESSED_FOR_TIMING = 0.05;
+/** … and the timing fit must explain at least this much more than the static one (dB), not only a fraction of a tiny error */
+const MIN_TIMING_GAIN_DB = 0.05;
 
 export interface DynamicsRenderReport {
   renderId: string;
@@ -581,7 +583,7 @@ export function fitDynamics(profile: Profile, onProgress?: (done: number, total:
     let fit = fitStatic(o, input, structure, baseFit.params);
     if (compressedShare(o, fit.params.makeupDb) > MIN_COMPRESSED_FOR_TIMING) {
       const full = fitRender(o, input, structure, fit.params);
-      if (full.errors.rmsDb < fit.errors.rmsDb * 0.8) fit = full;
+      if (full.errors.rmsDb < fit.errors.rmsDb * 0.8 && fit.errors.rmsDb - full.errors.rmsDb > MIN_TIMING_GAIN_DB) fit = full;
     }
     fit.params = { ...fit.params, rippleTime: baseFit.params.rippleTime, ripple: baseFit.params.ripple };
     points.push({ o, params: fit.params });
