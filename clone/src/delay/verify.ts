@@ -6,7 +6,7 @@ import { decodeWav, encodeWav, type Profile } from "@vst-cloner/profile";
 import type { Logger } from "../build.ts";
 import type { Errors } from "../dynamics/fit.ts";
 import { cloneValue, dynamicsCloneParameters, modelValue } from "../dynamics/params.ts";
-import { compareResponses, delayInput, delayObservations, delayResponse, modelResponse, predictDelay, type DelayModel } from "./fit.ts";
+import { compareResponses, delayInput, delayObservations, delayResponse, modelResponse, predictDelayModel, type DelayModel } from "./fit.ts";
 
 export interface DelayVerifyReport {
   clone: string;
@@ -83,8 +83,8 @@ export async function verifyDelayClone(
       rows.push({ label: o.label, purpose: o.purpose, errors: compareResponses(response, o.response, sampleRate) });
 
       // reference: the TypeScript model (exactly what the plugin must do)
-      const params = predictDelay(model, new Map(o.params.map((p) => [p.index, asModel.get(p.index)?.(p.value) ?? p.value])));
-      const engine = compareResponses(response, modelResponse(params, model.structure, input), sampleRate);
+      const predicted = predictDelayModel(model, new Map(o.params.map((p) => [p.index, asModel.get(p.index)?.(p.value) ?? p.value])));
+      const engine = compareResponses(response, modelResponse(predicted.params, predicted.structure, input), sampleRate);
       if (engine.maxDb > engineMaxDb) {
         engineMaxDb = engine.maxDb;
         engineWorst = o.label;

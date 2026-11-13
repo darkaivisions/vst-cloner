@@ -176,9 +176,21 @@ test("dynamics header: parameters with the original's names, tables in clone ind
   const { header, params: cloneParams } = generateDynamicsHeader(model, parameters, "Test Clone");
   assert.deepEqual(cloneParams.map((p) => [p.name, p.kind]), [["Peak Reduction", "continuous"], ["Limit", "toggle"]]);
   assert.match(header, /vch::Detector::rms/);
-  assert.match(header, /\{ 0, false, 2, tableValues0, tablePacked0, 0\.5 \}/);
-  assert.match(header, /\{ 1, true, 2, tableValues1, tablePacked1, 0\.0 \}/);
-  assert.match(header, /numTables = 2/);
+  assert.match(header, /\{ 0, false, 2, tableValues0_0, tablePacked0_0, 0\.5 \}/);
+  assert.match(header, /\{ 1, true, 2, tableValues0_1, tablePacked0_1, 0\.0 \}/);
+  assert.match(header, /\{ -1, 0\.0, 0\.0, vch::Detector::rms, vch::Topology::feedforward, vch::Curve::compressor, baseLatent0, tables0, 2, /);
+  assert.match(header, /numModels = 1/);
+
+  // a model of its own for a switch position: its switch becomes a clone parameter, its tables follow
+  const variant = {
+    index: 9, value: 1, range: [0.5, 1.5] as [number, number], name: "Mode = 1",
+    structure: { detector: "peak" as const, topology: "feedforward" as const, curve: "ducker" as const },
+    base, baseValues: [{ index: 3, value: 0.5 }], tables: [model.tables[0]!],
+  };
+  const withVariant = generateDynamicsHeader({ ...model, variants: [variant] }, [...parameters, { ...parameter(9, "Mode", true), texts: [{ value: 0, text: "Off" }, { value: 1, text: "On" }] }], "Test Clone");
+  assert.deepEqual(withVariant.params.map((p) => p.name), ["Peak Reduction", "Limit", "Mode"]);
+  assert.match(withVariant.header, /\{ 2, 0\.5, 1\.5, vch::Detector::peak, vch::Topology::feedforward, vch::Curve::ducker, baseLatent1, tables1, 1, /);
+  assert.match(withVariant.header, /numModels = 2/);
 });
 
 test("pchip: passes through the points, stays monotone, no overshoot", async () => {

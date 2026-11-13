@@ -14,8 +14,9 @@ namespace vch
 
 enum class Detector { peak, rms };
 enum class Topology { feedforward, feedback };
-/** compressor: reduction above the threshold; expander: below it (downward expander, gate) */
-enum class Curve { compressor, expander };
+/** compressor: reduction above the threshold; expander: below it (downward expander, gate); ducker: an inverted
+    gate that closes above the threshold */
+enum class Curve { compressor, expander, ducker };
 
 /** control rate: one gain computer step per block of this many samples */
 constexpr int dynamicsBlock = 32;
@@ -55,10 +56,10 @@ inline CompressorParams unpack (const double* x)
 inline double staticReduction (double levelDb, const CompressorParams& p, Curve curve = Curve::compressor)
 {
     const double half = p.kneeDb / 2.0;
-    if (curve == Curve::expander)
+    if (curve != Curve::compressor)
     {
-        // (ratio − 1) dB per dB below the threshold, at most the range (stored in slowKneeDb)
-        const double under = p.thresholdDb - levelDb;
+        // (ratio − 1) dB per dB beyond the threshold (expander: below, ducker: above), at most the range (slowKneeDb)
+        const double under = curve == Curve::expander ? p.thresholdDb - levelDb : levelDb - p.thresholdDb;
         const double steep = std::max (p.ratio, 1.0) - 1.0;
         if (under <= -half) return 0.0;
         if (under >= half || p.kneeDb <= 0.0) return std::min (p.slowKneeDb, steep * under);
@@ -96,6 +97,21 @@ CompressorParams predict (const double* baseLatent, const ParamTable* tables, in
     return unpack (latent);
 }
 
+/** One model: the main one (switchParam −1) or the model for one position of a switch (see DynamicsVariant in
+    fit.ts), which applies while from ≤ value of the switch < to. */
+struct DynamicsModelData
+{
+    int switchParam;
+    double from, to;
+    Detector detector;
+    Topology topology;
+    Curve curve;
+    const double* baseLatent;
+    const ParamTable* tables;
+    int numTables;
+    Interaction interaction;
+};
+
 /** Gain computer of simulateGain() in model.ts, one block at a time. */
 class GainComputer
 {
@@ -121,7 +137,7 @@ public:
     {
         // detector averaging in the energy domain (simulateGain() in model.ts)
         const double e = std::pow (10.0, levelDb / 10.0);
-        const bool expander = curve == Curve::expander;
+        const bool expander = curve != Curve::compressor;
         const double raw = topology == Topology::feedback && ! expander && reduction > 0 ? e * std::pow (10.0, -reduction / 10.0) : e;
         // expander: the detector follows a falling level with its own (slower) time constant
         energy = expander && raw < energy ? charge * energy + (1 - charge) * raw : smoothing * energy + (1 - smoothing) * raw;

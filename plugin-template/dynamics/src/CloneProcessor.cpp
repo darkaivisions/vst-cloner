@@ -45,9 +45,21 @@ void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     juce::ScopedNoDenormals noDenormals;
 
     // model parameters from the current plugin parameters (normalised values of the original)
-    const auto params = vch::predict (clonemodel::baseLatent, clonemodel::tables, clonemodel::numTables, clonemodel::interaction,
-                                      [this] (int index) { return vch::originalValue (clonemodel::params[index], *parameters[(size_t) index]); });
-    computer.setParams (params, currentSampleRate, clonemodel::curve);
+    const auto valueOf = [this] (int index) { return vch::originalValue (clonemodel::params[index], *parameters[(size_t) index]); };
+    // predictVariant() in fit.ts: the model for the current switch position where there is one
+    const vch::DynamicsModelData* model = &clonemodel::models[0];
+    for (int m = 1; m < clonemodel::numModels; ++m)
+    {
+        const auto& candidate = clonemodel::models[m];
+        const double value = valueOf (candidate.switchParam);
+        if (value >= candidate.from && value < candidate.to)
+        {
+            model = &candidate;
+            break;
+        }
+    }
+    const auto params = vch::predict (model->baseLatent, model->tables, model->numTables, model->interaction, valueOf);
+    computer.setParams (params, currentSampleRate, model->curve);
     if (! initialised)
     {
         makeupDb = params.makeupDb;
@@ -78,11 +90,11 @@ void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
         if (++position == vch::dynamicsBlock)
         {
             // blockLevels() in model.ts: RMS + 3.01 dB (sine peak scale) or peak, in dBFS
-            const double level = clonemodel::detector == vch::Detector::peak
+            const double level = model->detector == vch::Detector::peak
                                      ? 20.0 * std::log10 (peak + 1e-12)
                                      : 10.0 * std::log10 (sumSquares / (vch::dynamicsBlock * std::max (channels, 1)) + 1e-24) + 3.0103;
             fromDb = toDb;
-            toDb = computer.step (level, clonemodel::topology);
+            toDb = computer.step (level, model->topology);
             gainReduction.store ((float) -toDb);
             if ((float) peak > inputPeak.load())
                 inputPeak.store ((float) peak);

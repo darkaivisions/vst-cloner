@@ -30,6 +30,18 @@ struct DelayStructure
     double drySign = 1, wetSign = 1, feedbackSign = 1;
 };
 
+/** One model: the main one (switchParam −1) or the model for one position of a switch (see DelayVariant in
+    fit.ts), which applies while from ≤ value of the switch < to. */
+struct DelayModelData
+{
+    int switchParam;
+    double from, to;
+    const double* basePacked;
+    const ParamTable* tables;
+    int numTables;
+    DelayStructure structure;
+};
+
 /** unpackDelay() in model.ts */
 inline DelayParams unpack (const double* x)
 {

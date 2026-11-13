@@ -2,6 +2,7 @@ import { decodeWav, type Profile } from "@vst-cloner/profile";
 import { fft, nextPowerOfTwo } from "../dsp/fft.ts";
 import { nelderMead } from "../dsp/optimize.ts";
 import { tableAt, type Errors, type ParamTable } from "../dynamics/fit.ts";
+import { renderCondition } from "../dynamics/plan.ts";
 import { HP_OFF, hpActive, LP_OFF, lpActive, MAX_FEEDBACK_DB, OFF_DB, onePole, packDelay, processDelay, unpackDelay, type DelayParams, type DelayStructure } from "./model.ts";
 
 export interface DelayInput {
@@ -284,14 +285,31 @@ export interface DelayRenderReport {
   maxDb: number;
 }
 
-export interface DelayModel {
-  type: "delay";
-  version: 1;
-  sampleRate: number;
+/** Base model values and one table of model values per plugin parameter. */
+export interface DelayTables {
   structure: DelayStructure;
   base: DelayParams;
   baseValues: { index: number; value: number }[];
   tables: ParamTable[];
+}
+
+/**
+ * Model of its own for one position of a switch (see SWITCH_STATES in dynamics/plan.ts): it applies while the
+ * switch's value lies in `range`, and replaces the main model entirely.
+ */
+export interface DelayVariant extends DelayTables {
+  index: number;
+  value: number;
+  /** normalised values of the switch for which this variant applies: from ≤ value < to */
+  range: [number, number];
+  name: string;
+}
+
+export interface DelayModel extends DelayTables {
+  type: "delay";
+  version: 1;
+  sampleRate: number;
+  variants?: DelayVariant[];
   report: {
     /** repeats found in the base render */
     echoes: number;
@@ -304,8 +322,15 @@ export interface DelayModel {
 const summarize = (rows: DelayRenderReport[]): Errors | undefined =>
   rows.length ? { rmsDb: rows.reduce((s, r) => s + r.rmsDb, 0) / rows.length, maxDb: Math.max(...rows.map((r) => r.maxDb)) } : undefined;
 
-/** Model values for a combination of plugin values: base plus the change each parameter causes on its own. */
-export function predictDelay(model: Pick<DelayModel, "base" | "baseValues" | "tables">, values: Map<number, number>): DelayParams {
+/** The variant that applies to plugin values, if any. */
+export function activeVariant<V extends { index: number; range: [number, number] }>(variants: V[] | undefined, values: Map<number, number>): V | undefined {
+  return variants?.find((v) => {
+    const value = values.get(v.index);
+    return value !== undefined && value >= v.range[0] && value < v.range[1];
+  });
+}
+
+const combine = (model: DelayTables, values: Map<number, number>): DelayParams => {
   const packed = packDelay(model.base);
   const baseValues = new Map(model.baseValues.map((v) => [v.index, v.value]));
   for (const table of model.tables) {
@@ -316,15 +341,37 @@ export function predictDelay(model: Pick<DelayModel, "base" | "baseValues" | "ta
     for (let i = 0; i < packed.length; i++) packed[i]! += at[i]! - ref[i]!;
   }
   return unpackDelay(packed);
+};
+
+/**
+ * Model values for a combination of plugin values: base plus the change each parameter causes on its own – of
+ * the model for the current switch position where there is one.
+ */
+export function predictDelayModel(model: DelayTables & { variants?: DelayVariant[] }, values: Map<number, number>): { params: DelayParams; structure: DelayStructure } {
+  const variant = activeVariant(model.variants, values);
+  return { params: combine(variant ?? model, values), structure: (variant ?? model).structure };
 }
+export const predictDelay = (model: DelayTables & { variants?: DelayVariant[] }, values: Map<number, number>): DelayParams => predictDelayModel(model, values).params;
 
 /** Impulse response of the model, as long as the measured ones. */
 export const modelResponse = (p: DelayParams, s: DelayStructure, input: DelayInput) => processDelay([1], p, s, input.sampleRate, input.length);
 
 /**
+ * A model for a switch position must predict the check renders of that position better than the main model: by
+ * this much on average (dB), and by half of it in the median – one lucky render must not decide.
+ */
+const MIN_VARIANT_GAIN_DB = 1;
+const variantGain = (before: number[], after: number[]): boolean => {
+  if (!before.length) return false;
+  const gains = before.map((b, i) => b - after[i]!).sort((x, y) => x - y);
+  const mean = gains.reduce((sum, g) => sum + g, 0) / gains.length;
+  return mean >= MIN_VARIANT_GAIN_DB && gains[gains.length >> 1]! >= MIN_VARIANT_GAIN_DB / 2;
+};
+
+/**
  * Fits the delay model: base render in full, then every single-parameter sweep (a table of model values per
- * plugin parameter), and finally predicts every render from the tables (validation renders – random
- * combinations – were never used for fitting).
+ * plugin parameter); a model of its own for switch positions the main model predicts badly; finally predicts
+ * every render (validation renders – random combinations – were never used for fitting).
  */
 export function fitDelay(profile: Profile, onProgress?: (done: number, total: number, label: string) => void): DelayModel {
   const input = delayInput(profile);
@@ -336,41 +383,82 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
   const swept = (o: DelayObservation) =>
     o.sweepParameter !== undefined ? o.params.find((p) => p.index === o.sweepParameter) : o.params.length === 1 ? o.params[0] : undefined;
   const train = observations.filter((o) => o.purpose === "train" && o !== base && o.kind !== "random" && swept(o) !== undefined);
+  const condition = (o: DelayObservation) => renderCondition(o.params, swept(o)!.index, baseValues);
+  let done = 0;
 
-  const baseFit = analyseResponse(base.response, input.sampleRate);
-  const tables = new Map<number, ParamTable>();
-  train.forEach((o, i) => {
-    onProgress?.(i, train.length, o.label);
-    const p = swept(o)!;
-    const info = parameters.find((x) => x.index === p.index)!;
-    const fit = analyseResponse(o.response, input.sampleRate, baseFit.params);
-    const table = tables.get(p.index)
-      ?? { index: p.index, name: info.name, discrete: info.discrete, points: [{ value: baseValues.get(p.index)!, packed: packDelay(baseFit.params) }] };
-    table.points.push({ value: p.value, packed: packDelay(fit.params) });
-    tables.set(p.index, table);
-  });
-  for (const [index, table] of tables) {
-    // points at the same plugin value carry no information and break the interpolation (see fitDynamics)
-    table.points = table.points.filter((pt, i, all) => all.findIndex((other) => Math.abs(other.value - pt.value) < 1e-9) === i);
-    // a control that changes nothing needs no table
-    const moves = table.points.some((pt) => pt.packed.some((v, k) => Math.abs(v - table.points[0]!.packed[k]!) > 1e-6));
-    if (table.points.length < 2 || !moves) tables.delete(index);
-    else table.points.sort((a, b) => a.value - b.value);
+  /** tables from the sweeps around one base render */
+  const fitTables = (baseObservation: DelayObservation, sweeps: DelayObservation[], fallback?: DelayParams): DelayTables & { echoes: number } => {
+    const baseFit = analyseResponse(baseObservation.response, input.sampleRate, fallback);
+    const tables = new Map<number, ParamTable>();
+    for (const o of sweeps) {
+      onProgress?.(done++, train.length, o.label);
+      const p = swept(o)!;
+      const info = parameters.find((x) => x.index === p.index)!;
+      const fit = analyseResponse(o.response, input.sampleRate, baseFit.params);
+      const table = tables.get(p.index)
+        ?? { index: p.index, name: info.name, discrete: info.discrete, points: [{ value: baseValues.get(p.index)!, packed: packDelay(baseFit.params) }] };
+      table.points.push({ value: p.value, packed: packDelay(fit.params) });
+      tables.set(p.index, table);
+    }
+    for (const [index, table] of tables) {
+      // points at the same plugin value carry no information and break the interpolation (see fitDynamics)
+      table.points = table.points.filter((pt, i, all) => all.findIndex((other) => Math.abs(other.value - pt.value) < 1e-9) === i);
+      // a control that changes nothing needs no table
+      const moves = table.points.some((pt) => pt.packed.some((v, k) => Math.abs(v - table.points[0]!.packed[k]!) > 1e-6));
+      if (table.points.length < 2 || !moves) tables.delete(index);
+      else table.points.sort((a, b) => a.value - b.value);
+    }
+    return {
+      structure: baseFit.structure,
+      base: baseFit.params,
+      baseValues: [...tables.keys()].map((index) => ({ index, value: baseValues.get(index)! })),
+      tables: [...tables.values()],
+      echoes: baseFit.echoes,
+    };
+  };
+  const errorOf = (tables: DelayTables, o: DelayObservation) => {
+    const predicted = predictDelayModel(tables, new Map(o.params.map((p) => [p.index, p.value])));
+    return compareResponses(modelResponse(predicted.params, predicted.structure, input), o.response, input.sampleRate);
+  };
+
+  const { echoes, ...main } = fitTables(base, train.filter((o) => !condition(o)));
+
+  // switch positions: a model of its own where it predicts the renders of that position clearly better
+  const variants: DelayVariant[] = [];
+  const positions = new Map<string, { index: number; value: number; sweeps: DelayObservation[] }>();
+  for (const o of train) {
+    const c = condition(o);
+    if (!c) continue;
+    const key = `${c.index}:${c.value.toFixed(6)}`;
+    (positions.get(key) ?? positions.set(key, { ...c, sweeps: [] }).get(key)!).sweeps.push(o);
+  }
+  for (const position of positions.values()) {
+    const start = train.find((o) => !condition(o) && swept(o)!.index === position.index && Math.abs(swept(o)!.value - position.value) < 1e-4);
+    if (!start) continue;
+    const { echoes: _, ...own } = fitTables(start, position.sweeps, main.base);
+    // Tables reproduce their own sweep points by construction, so a better fit of those proves nothing. The
+    // decision is made on the random combinations measured in this position, which no table has seen.
+    const checks = observations.filter((o) => o.purpose === "train" && o.kind === "random" && o.params.some((p) => p.index === position.index && Math.abs(p.value - position.value) < 1e-4));
+    const errors = (tables: DelayTables) => checks.map((o) => errorOf(tables, o).rmsDb);
+    if (!variantGain(errors(main), errors(own))) continue;
+    const info = parameters.find((x) => x.index === position.index)!;
+    const step = 1 / Math.max(info.numSteps - 1, 1);
+    variants.push({
+      ...own, index: position.index, value: position.value, name: `${info.name} = ${start.label.split(" = ").pop()}`,
+      range: [position.value - step / 2, position.value + step / 2],
+    });
   }
 
   const model: DelayModel = {
     type: "delay",
     version: 1,
     sampleRate: input.sampleRate,
-    structure: baseFit.structure,
-    base: baseFit.params,
-    baseValues: [...tables.keys()].map((index) => ({ index, value: baseValues.get(index)! })),
-    tables: [...tables.values()],
-    report: { echoes: baseFit.echoes, renders: [] },
+    ...main,
+    ...(variants.length ? { variants } : {}),
+    report: { echoes, renders: [] },
   };
   model.report.renders = observations.map((o) => {
-    const predicted = predictDelay(model, new Map(o.params.map((p) => [p.index, p.value])));
-    const e = compareResponses(modelResponse(predicted, model.structure, input), o.response, input.sampleRate);
+    const e = errorOf(model, o);
     return { renderId: o.renderId, label: o.label, purpose: o.purpose, rmsDb: e.rmsDb, maxDb: e.maxDb };
   });
   const trainStats = summarize(model.report.renders.filter((r) => r.purpose === "train"));

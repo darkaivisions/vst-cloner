@@ -1,7 +1,6 @@
 import type { CaptureRender, Parameter } from "@vst-cloner/profile";
 import { buildTable, parameterSteps, stepIndex, tableRange, tableValue, textDecimals } from "../eq/mapping.ts";
 import type { CloneParam } from "../eq/params.ts";
-import type { DynamicsModel } from "./fit.ts";
 
 const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "param";
 
@@ -10,10 +9,20 @@ const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "_").re
  * display table (normalised ↔ physical) and options. The normalised values equal the original's, so the
  * model tables (indexed by normalised values) apply directly.
  */
-export function dynamicsCloneParameters(model: Pick<DynamicsModel, "tables">, parameters: Parameter[], renders: CaptureRender[] = []): CloneParam[] {
+export function dynamicsCloneParameters(
+  model: { tables: { index: number }[]; variants?: { index: number; tables: { index: number }[] }[] },
+  parameters: Parameter[],
+  renders: CaptureRender[] = [],
+): CloneParam[] {
   const byIndex = new Map(parameters.map((p) => [p.index, p]));
   const used = new Set<string>();
-  return model.tables.map((table) => {
+  // also the parameters only the models for switch positions depend on, and the switches themselves
+  const indices = new Set(model.tables.map((t) => t.index));
+  for (const variant of model.variants ?? []) {
+    indices.add(variant.index);
+    for (const t of variant.tables) indices.add(t.index);
+  }
+  return [...indices].map((index) => ({ index })).map((table) => {
     const p = byIndex.get(table.index)!;
     let id = slug(p.name);
     while (used.has(id)) id += "_";

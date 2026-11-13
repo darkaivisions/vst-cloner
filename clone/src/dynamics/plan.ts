@@ -122,10 +122,31 @@ const percent = (p: Parameter, value: number) => {
 export const DYNAMICS_SWEEP = [0, 0.05, 0.15, 0.3, 0.5, 0.7, 0.85, 0.95, 1];
 
 /**
+ * Discrete parameters with up to this many positions count as switches: they may change what the other controls
+ * do (another tempo source, an inverted gate …), which tables per control cannot express. Their other positions
+ * get sweeps of their own, from which the fit can build a model per position.
+ */
+export const SWITCH_STATES = 4;
+/** random combinations measured in every other position of a switch (see planSweeps) */
+const SWITCH_CHECKS = 6;
+
+/**
+ * The switch position a sweep render was measured in, if it is not the base position: the one parameter besides
+ * the swept one that differs from the base values.
+ */
+export function renderCondition(
+  params: { index: number; value: number }[],
+  sweptIndex: number | undefined,
+  baseValues: Map<number, number>,
+): { index: number; value: number } | undefined {
+  return params.find((p) => p.index !== sweptIndex && Math.abs(p.value - (baseValues.get(p.index) ?? p.value)) > 1e-4);
+}
+
+/**
  * Single-parameter sweeps (training) plus random combinations (validation) of all selected parameters.
  * Shared by the dynamics and distortion planners.
  */
-export function planSweeps(parameters: Parameter[], options: PlanOptions, ignored: RegExp): CapturePlan {
+export function planSweeps(parameters: Parameter[], options: PlanOptions, ignored: RegExp, extra: { switches?: boolean } = {}): CapturePlan {
   const exclude = options.exclude ? new RegExp(`${options.exclude.source}|${ignored.source}`, "i") : ignored;
   const selected = selectParameters(parameters, { ...(options.include ? { include: options.include } : {}), exclude });
   const stepped = (p: Parameter) => p.discrete && p.numSteps >= 2 && p.numSteps <= 64;
@@ -148,6 +169,50 @@ export function planSweeps(parameters: Parameter[], options: PlanOptions, ignore
       renders.push({ kind: "sweep", sweepParameter: p.index, purpose: "train", label: `${p.name} = ${percent(p, value)}`, params: [...others, { index: p.index, value }] });
     }
   }
+  // Switches (see SWITCH_STATES): the sweeps of all other parameters again in each of their other positions.
+  // One switch after the other, as long as the plan stays within its limit.
+  if (extra.switches) {
+    // switches with few positions first: they cost the least and are the commonest (on/off)
+    for (const s of selected.filter((p) => stepped(p) && p.numSteps <= SWITCH_STATES).sort((a, b) => a.numSteps - b.numSteps)) {
+      const block: Omit<PlannedRender, "id">[] = [];
+      for (let state = 0; state < s.numSteps; state++) {
+        const position = state / (s.numSteps - 1);
+        if (Math.abs(position - base(s)) < 1e-4) continue;
+        for (const p of selected) {
+          if (p === s) continue;
+          // the same points as in the base position: a model for this position must be as exact as the main one
+          const values = stepped(p) ? Array.from({ length: p.numSteps }, (_, i) => i / (p.numSteps - 1)) : DYNAMICS_SWEEP;
+          const others = fixed.filter((f) => f.index !== p.index && f.index !== s.index);
+          for (const value of values) {
+            if (Math.abs(value - base(p)) < 1e-4) continue;
+            block.push({
+              kind: "sweep", sweepParameter: p.index, purpose: "train",
+              label: `${s.name} = ${percent(s, position)}: ${p.name} = ${percent(p, value)}`,
+              params: [...others, { index: s.index, value: position }, { index: p.index, value }],
+            });
+          }
+        }
+      }
+      // random combinations within each position: the fit decides on them whether the position needs a model of
+      // its own (they are not used for the tables, and not for the validation either)
+      const checks = createRandom(options.seed + 1000 + s.index);
+      for (let state = 0; state < s.numSteps; state++) {
+        const position = state / (s.numSteps - 1);
+        if (Math.abs(position - base(s)) < 1e-4) continue;
+        for (let i = 0; i < SWITCH_CHECKS; i++) {
+          block.push({
+            kind: "random", purpose: "train",
+            label: `${s.name} = ${percent(s, position)}: Kombination ${i + 1}`,
+            params: [
+              ...fixed.filter((f) => !selected.some((p) => p.index === f.index)),
+              ...selected.map((p) => ({ index: p.index, value: p === s ? position : stepped(p) ? Math.floor(checks() * p.numSteps) / (p.numSteps - 1) : checks() })),
+            ],
+          });
+        }
+      }
+      if (renders.length + block.length + options.random <= options.maxRenders) renders.push(...block);
+    }
+  }
   const random = createRandom(options.seed);
   for (let i = 0; i < options.random; i++) {
     renders.push({
@@ -165,7 +230,7 @@ export function planSweeps(parameters: Parameter[], options: PlanOptions, ignore
 /** Single-parameter sweeps (training) plus random combinations (validation). */
 export function planDynamics(parameters: Parameter[], options: PlanOptions): CapturePlan & { mapping: DynamicsMapping } {
   const mapping = detectDynamics(parameters);
-  return { ...planSweeps(parameters, options, IGNORED), mapping };
+  return { ...planSweeps(parameters, options, IGNORED, { switches: true }), mapping };
 }
 
 /**

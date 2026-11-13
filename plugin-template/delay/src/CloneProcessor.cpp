@@ -42,7 +42,7 @@ void CloneProcessor::reset()
 
 void CloneProcessor::design()
 {
-    coeffs.design (vch::unpack (packed), clonemodel::structure, currentSampleRate);
+    coeffs.design (vch::unpack (packed), structure, currentSampleRate);
     std::copy (std::begin (packed), std::end (packed), std::begin (designed));
 }
 
@@ -51,9 +51,24 @@ void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     juce::ScopedNoDenormals noDenormals;
 
     // model values of the current plugin parameters (normalised values of the original)
+    const auto valueOf = [this] (int index) { return vch::originalValue (clonemodel::params[index], *parameters[(size_t) index]); };
+    // predictDelayModel() in fit.ts: the model for the current switch position where there is one
+    const vch::DelayModelData* model = &clonemodel::models[0];
+    for (int m = 1; m < clonemodel::numModels; ++m)
+    {
+        const auto& candidate = clonemodel::models[m];
+        const double value = valueOf (candidate.switchParam);
+        if (value >= candidate.from && value < candidate.to)
+        {
+            model = &candidate;
+            break;
+        }
+    }
     double target[vch::numPacked];
-    vch::predictPacked (clonemodel::basePacked, vch::numPacked, clonemodel::tables, clonemodel::numTables,
-                        [this] (int index) { return vch::originalValue (clonemodel::params[index], *parameters[(size_t) index]); }, target);
+    vch::predictPacked (model->basePacked, vch::numPacked, model->tables, model->numTables, valueOf, target);
+    const bool polarityChanged = structure.drySign != model->structure.drySign || structure.wetSign != model->structure.wetSign
+                                 || structure.feedbackSign != model->structure.feedbackSign;
+    structure = model->structure;
     if (! initialised)
     {
         // first block after reset: no smoothing (offline renders must match the settings exactly)
@@ -77,7 +92,7 @@ void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
             if (std::abs (target[i] - packed[i]) < 1e-6) packed[i] = target[i];
             moved = moved || std::abs (packed[i] - designed[i]) > 1e-9;
         }
-        if (moved)
+        if (moved || (polarityChanged && start == 0))
             design();
 
         for (int ch = 0; ch < channels; ++ch)

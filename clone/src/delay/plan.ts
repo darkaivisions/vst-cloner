@@ -47,7 +47,7 @@ export function detectDelay(parameters: Parameter[], category = "", name = ""): 
 /** Single-parameter sweeps (training) plus random combinations (validation). */
 export function planDelay(parameters: Parameter[], options: PlanOptions, category = "", name = ""): CapturePlan & { mapping: DelayMapping } {
   const mapping = detectDelay(parameters, category, name);
-  return { ...planSweeps(parameters, options, IGNORED), mapping };
+  return { ...planSweeps(parameters, options, IGNORED, { switches: true }), mapping };
 }
 
 /** Energy of everything after the first 2 ms of the impulse's answer, relative to the impulse (dB). */

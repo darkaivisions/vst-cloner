@@ -7,8 +7,13 @@ export const BLOCK = 32;
 
 export type Detector = "peak" | "rms";
 export type Topology = "feedforward" | "feedback";
-/** compressor: reduction above the threshold; expander: reduction below it (downward expander, gate) */
-export type Curve = "compressor" | "expander";
+/**
+ * compressor: reduction above the threshold; expander: reduction below it (downward expander, gate);
+ * ducker: an inverted gate – it closes above the threshold, with the expander's steepness and range
+ */
+export type Curve = "compressor" | "expander" | "ducker";
+/** gate-like curves: steepness (ratio − 1) dB per dB, a range, a detector with its own decay, no slow stage */
+export const isGate = (s: { curve?: Curve }) => s.curve === "expander" || s.curve === "ducker";
 
 export interface CompressorParams {
   /** threshold (dBFS of the detector level) */
@@ -59,8 +64,8 @@ export function staticReduction(
   curve: Curve = "compressor",
 ): number {
   const half = p.kneeDb / 2;
-  if (curve === "expander") {
-    const under = p.thresholdDb - levelDb;
+  if (curve === "expander" || curve === "ducker") {
+    const under = curve === "expander" ? p.thresholdDb - levelDb : levelDb - p.thresholdDb;
     const steep = Math.max(p.ratio, 1) - 1;
     const range = p.slowKneeDb ?? Infinity;
     if (under <= -half) return 0;
@@ -114,11 +119,12 @@ export function simulateGain(
   const smoothing = coefficient(p.detectorTime, sampleRate);
   const rippleSmoothing = coefficient(p.rippleTime, sampleRate);
   const gains = new Float64Array(levels.length);
-  const expander = s.curve === "expander";
-  // outside the knee edge the curve is 0 – no logarithm needed there (compressor: below it, expander: above it)
-  const kneeEdge = 10 ** ((p.thresholdDb + (expander ? p.kneeDb / 2 : -p.kneeDb / 2)) / 10);
+  const expander = isGate(s);
+  const above = s.curve === "expander";
+  // outside the knee edge the curve is 0 – no logarithm needed there (expander: above it, the others: below it)
+  const kneeEdge = 10 ** ((p.thresholdDb + (above ? p.kneeDb / 2 : -p.kneeDb / 2)) / 10);
   const curveAt = (energy: number) =>
-    (expander ? energy >= kneeEdge : energy <= kneeEdge) ? 0 : staticReduction(10 * Math.log10(energy + 1e-24), p, s.curve);
+    (above ? energy >= kneeEdge : energy <= kneeEdge) ? 0 : staticReduction(10 * Math.log10(energy + 1e-24), p, s.curve);
   let fast = 0, slow = 0, reduction = 0, energy = 0, rippleEnergy = 0;
   for (let b = 0; b < levels.length; b++) {
     const e = energies ? energies[b]! : 10 ** (levels[b]! / 10);

@@ -10,7 +10,7 @@ import { verifyDelayClone, type DelayVerifyReport } from "./verify.ts";
 
 export const DELAY_MODEL_FILE = "model/delay.json";
 /** Raised whenever the delay fit changes; older stored models are fitted again. */
-export const DELAY_FIT_REVISION = 1;
+export const DELAY_FIT_REVISION = 2; // 2: models per switch position
 
 export function isDelayProfile(profile: Profile): boolean {
   return profile.manifest.capture.plan?.planner === "delay" || profile.files.has(DELAY_MODEL_FILE);
@@ -38,6 +38,7 @@ export function formatDelayModel(model: DelayModel): string[] {
     `Klangfarbe: Echo – ${filter(p.wetLp, p.wetHp)}; Rückkopplung – ${filter(p.loopLp, p.loopHp)}`,
     `Parameter: ${model.tables.map((t) => t.name).join(", ")}`,
   ];
+  if (model.variants?.length) lines.push(`Eigenes Modell für Schalterstellungen: ${model.variants.map((v) => v.name).join(", ")}`);
   if (model.report.echoes === 0) lines.push("Achtung: in der Grundmessung ist kein Echo zu hören – Zeit, Feedback und Filter konnten nicht bestimmt werden");
   if (model.report.train) lines.push(`Modell vs. Original (Einzelparameter): ${db(model.report.train.rmsDb)} (max ${model.report.train.maxDb.toFixed(1)}) – ${delayVerdict(model.report.train.rmsDb)}`);
   if (model.report.validate) lines.push(`Vorhersage unbekannter Kombinationen: ${db(model.report.validate.rmsDb)} (max ${model.report.validate.maxDb.toFixed(1)}) – ${delayVerdict(model.report.validate.rmsDb)}`);

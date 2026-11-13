@@ -63,6 +63,7 @@ private:
 
     double packed[vch::numPacked] {};   // current (smoothed) model values
     double designed[vch::numPacked] {}; // values the coefficients belong to
+    vch::DelayStructure structure;
     vch::DelayCoeffs coeffs;
     std::array<vch::DelayLine, 2> lines;
 

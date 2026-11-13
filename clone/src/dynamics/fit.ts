@@ -7,13 +7,14 @@ import {
   blockLevels,
   renderModel,
   simulateGain,
+  isGate,
   staticReduction,
   type CompressorParams,
   type CompressorStructure,
   type Detector,
   type Topology,
 } from "./model.ts";
-import { detectDynamics } from "./plan.ts";
+import { detectDynamics, renderCondition } from "./plan.ts";
 
 /** Comparison windows: 8 blocks = 256 samples (5.3 ms at 48 kHz). */
 export const WINDOW_BLOCKS = 8;
@@ -211,18 +212,20 @@ export function initialGuess(o: DynamicsObservation, input: DynamicsInput, s: Co
   const valid: [number, number][] = [];
   o.measuredDb.forEach((g, w) => { if (!Number.isNaN(g)) valid.push([input.windowDb[w]!, g]); });
   valid.sort((a, b) => a[0] - b[0]);
-  if (s.curve === "expander") {
-    // open at the loud end; closed below the loudest window that is clearly reduced
-    const loud = valid.filter(([l]) => l > -15).map(([, g]) => g).sort((a, b) => a - b);
-    const makeupDb = loud.length ? loud[loud.length >> 1]! : 0;
+  if (isGate(s)) {
+    // expander: open at the loud end, closed below the loudest window that is clearly reduced; ducker: mirrored
+    const ducker = s.curve === "ducker";
+    if (ducker) valid.reverse();
+    const open = valid.filter(([l]) => (ducker ? l < -45 : l > -15)).map(([, g]) => g).sort((a, b) => a - b);
+    const makeupDb = open.length ? open[open.length >> 1]! : 0;
     const reduced = valid.filter(([, g]) => g < makeupDb - 1);
-    const thresholdDb = reduced.length ? Math.max(...reduced.map(([l]) => l)) - 3 : -50;
+    const thresholdDb = !reduced.length ? (ducker ? -10 : -50) : ducker ? Math.min(...reduced.map(([l]) => l)) + 3 : Math.max(...reduced.map(([l]) => l)) - 3;
     // a range shows as a plateau: the same gain, above the floor, over many dB of input level. An expander
     // without one reduces without limit
     const quietest = reduced.slice(0, Math.ceil(reduced.length * 0.4));
     const gains = quietest.map(([, g]) => g).sort((x, y) => x - y);
     const at = (q: number) => gains[Math.min(gains.length - 1, Math.floor(q * gains.length))]!;
-    const plateau = quietest.length >= 20 && quietest[quietest.length - 1]![0] - quietest[0]![0] >= 8
+    const plateau = quietest.length >= 20 && Math.abs(quietest[quietest.length - 1]![0] - quietest[0]![0]) >= 8
       && at(0.1) > GAIN_FLOOR_DB + 3 && at(0.9) - at(0.1) < 1.5;
     const rangeDb = plateau ? makeupDb - at(0.5) : NO_RANGE_DB;
     return {
@@ -265,7 +268,7 @@ export function fitRender(o: DynamicsObservation, input: DynamicsInput, s: Compr
   // the fit would let it drift down to the largest reduction that happened to be measured
   let weights: number[] | undefined;
   let from = initial;
-  if (s.curve === "expander") {
+  if (isGate(s)) {
     weights = STEP.map((_, i) => (i === RANGE ? RANGE_HOLD : anchor ? 1 : 0));
     anchor ??= initial;
     // a range that shows in this render (a plateau of the closed gate) is taken from it, not from the anchor
@@ -430,6 +433,10 @@ export const STRUCTURES: CompressorStructure[] = [
   // gates and downward expanders (a feedback detector would never open again)
   ...(["peak", "rms"] as Detector[]).map((detector) => ({ detector, topology: "feedforward" as Topology, curve: "expander" as const })),
 ];
+
+/** Inverted gates are rare: they are only tried when nothing else fits the base render within this error (dB). */
+const DUCKER_TRIAL_DB = 3;
+const DUCKER_STRUCTURES: CompressorStructure[] = (["peak", "rms"] as Detector[]).map((detector) => ({ detector, topology: "feedforward" as Topology, curve: "ducker" as const }));
 
 // ---- parameter conditioning ------------------------------------------------------------------
 
@@ -607,10 +614,8 @@ export interface DynamicsRenderReport {
   harmonicsDb?: number;
 }
 
-export interface DynamicsModel {
-  type: "compressor";
-  version: 1;
-  sampleRate: number;
+/** Structure, base model and one table of model values per plugin parameter. */
+export interface DynamicsTables {
   structure: CompressorStructure;
   /** model of the plugin in its initial state */
   base: CompressorParams;
@@ -619,6 +624,25 @@ export interface DynamicsModel {
   /** per-parameter changes, in latent form (see Interaction) */
   tables: ParamTable[];
   interaction?: Interaction;
+}
+
+/**
+ * Model of its own for one position of a switch (see SWITCH_STATES in plan.ts): it applies while the switch's
+ * value lies in `range`, and replaces the main model entirely – structure included (a gate's inverted mode).
+ */
+export interface DynamicsVariant extends DynamicsTables {
+  index: number;
+  value: number;
+  /** normalised values of the switch for which this variant applies: from ≤ value < to */
+  range: [number, number];
+  name: string;
+}
+
+export interface DynamicsModel extends DynamicsTables {
+  type: "compressor";
+  version: 1;
+  sampleRate: number;
+  variants?: DynamicsVariant[];
   report: {
     structures: { structure: CompressorStructure; rmsDb: number }[];
     renders: DynamicsRenderReport[];
@@ -636,9 +660,30 @@ export const measuredCompression = (model: DynamicsModel): boolean =>
 const summarize = (rows: DynamicsRenderReport[]): Errors | undefined =>
   rows.length ? { rmsDb: rows.reduce((s, r) => s + r.rmsDb, 0) / rows.length, maxDb: Math.max(...rows.map((r) => r.maxDb)) } : undefined;
 
-export function predictModel(model: DynamicsModel, values: Map<number, number>): CompressorParams {
-  return predictParams(model.base, new Map(model.baseValues.map((v) => [v.index, v.value])), model.tables, values, model.interaction);
+/** Model values and structure for plugin values: of the model for the current switch position where there is one. */
+export function predictVariant(model: DynamicsTables & { variants?: DynamicsVariant[] }, values: Map<number, number>): { params: CompressorParams; structure: CompressorStructure } {
+  const active = model.variants?.find((v) => {
+    const value = values.get(v.index);
+    return value !== undefined && value >= v.range[0] && value < v.range[1];
+  }) ?? model;
+  return {
+    params: predictParams(active.base, new Map(active.baseValues.map((v) => [v.index, v.value])), active.tables, values, active.interaction),
+    structure: active.structure,
+  };
 }
+export const predictModel = (model: DynamicsTables & { variants?: DynamicsVariant[] }, values: Map<number, number>): CompressorParams => predictVariant(model, values).params;
+
+/**
+ * A model for a switch position must predict the check renders of that position better than the main model: by
+ * this much on average (dB), and by half of it in the median – one lucky render must not decide.
+ */
+const MIN_VARIANT_GAIN_DB = 1;
+const variantGain = (before: number[], after: number[]): boolean => {
+  if (!before.length) return false;
+  const gains = before.map((b, i) => b - after[i]!).sort((x, y) => x - y);
+  const mean = gains.reduce((sum, g) => sum + g, 0) / gains.length;
+  return mean >= MIN_VARIANT_GAIN_DB && gains[gains.length >> 1]! >= MIN_VARIANT_GAIN_DB / 2;
+};
 
 /**
  * Fits a compressor model: structure and full model on the initial state, then every single-parameter
@@ -656,121 +701,180 @@ export function fitDynamics(profile: Profile, onProgress?: (done: number, total:
   const swept = (o: DynamicsObservation) =>
     o.sweepParameter !== undefined ? o.params.find((p) => p.index === o.sweepParameter) : o.params.length === 1 ? o.params[0] : undefined;
   const train = observations.filter((o) => o.purpose === "train" && o !== base && o.kind !== "random" && swept(o) !== undefined);
-  const total = STRUCTURES.length + train.length;
-
   const baseValues = new Map(parameters.map((p) => [p.index, working.get(p.index) ?? p.value ?? p.default]));
-  const structures = STRUCTURES.map((structure, i) => {
-    onProgress?.(i, total, `Struktur ${structure.detector}/${structure.topology}`);
-    return { structure, ...fitRender(base, input, structure) };
-  }).sort((a, b) => a.errors.rmsDb - b.errors.rmsDb);
-  // feedback with a huge ratio and feedforward with a small one are nearly the same curve; on a near tie the
-  // feedforward structure is taken – its ratio is the one that is identifiable, and tables of it combine better
-  const tied = structures.findIndex((x) => x.structure.topology === "feedforward" && x.errors.rmsDb <= structures[0]!.errors.rmsDb * 1.1 + 0.02);
-  if (tied > 0) structures.unshift(...structures.splice(tied, 1));
-  const structure = structures[0]!.structure;
-  const expander = structure.curve === "expander";
-  // reference in the same regime as the sweep points (compressor: static refit with the base timing)
-  const baseFit = expander ? { params: structures[0]!.params, errors: structures[0]!.errors } : fitStatic(base, input, structure, structures[0]!.params);
-  baseFit.params = fitColour(base, input, baseFit.params, structure, true).params;
+  const condition = (o: DynamicsObservation) => renderCondition(o.params, swept(o)!.index, baseValues);
+  const total = STRUCTURES.length + train.length;
+  let done = 0;
 
-  const tables = new Map<number, ParamTable>();
-  const points: { o: DynamicsObservation; params: CompressorParams }[] = [];
-  // Expander: a render in which the gate never closes only says "open", not why (threshold below the signal,
-  // a long decay …). The points of a sweep are therefore fitted from the base outwards, each one starting from
-  // and anchored to its neighbour: what the control did so far is continued.
-  let roleOf = new Map<number, string>();
-  try {
-    roleOf = new Map(Object.entries(detectDynamics(parameters).roles).map(([role, index]) => [index, role]));
-  } catch {
-    // no roles: the trend of the sweep decides alone
-  }
-  const distance = (o: DynamicsObservation) => Math.abs(swept(o)!.value - baseValues.get(swept(o)!.index)!);
-  const ordered = expander ? [...train].sort((a, b) => distance(a) - distance(b)) : train;
-  /** per parameter and direction: the points (from the base outwards) at which the gate does close */
-  const closing = new Map<string, { value: number; packed: number[] }[]>();
-  ordered.forEach((o, i) => {
-    onProgress?.(STRUCTURES.length + i, total, o.label);
-    const side = `${swept(o)!.index}${swept(o)!.value < baseValues.get(swept(o)!.index)! ? "-" : "+"}`;
-    const history = closing.get(side) ?? [{ value: baseValues.get(swept(o)!.index)!, packed: pack(baseFit.params) }];
-    closing.set(side, history);
-    const previous = unpack(history[history.length - 1]!.packed);
-    let fit = expander ? fitRender(o, input, structure, previous, undefined, previous) : fitStatic(o, input, structure, baseFit.params, undefined, baseFit.params);
-    if (expander) {
-      if (compressedShare(o, fit.params.makeupDb) > 0.005) history.push({ value: swept(o)!.value, packed: pack(fit.params) });
-      else {
-        // open: the smallest change of one model value that keeps the gate open – first the value the control
-        // stands for by its name, then those it changed most so far
-        const last = history[history.length - 1]!.packed, origin = history[0]!.packed;
-        const moved = (k: number) => Math.abs(last[k]! - origin[k]!) / STEP[k]!;
-        const byTrend = STEP.map((_, k) => k).filter((k) => moved(k) > 0.2).sort((x, y) => moved(y) - moved(x)).slice(0, 3);
-        const candidates = [...new Set([...(OPEN_BY_ROLE[roleOf.get(swept(o)!.index) ?? ""] ?? []), ...byTrend])];
-        search: for (const k of candidates) {
-          for (let n = 1; n <= 12; n++) {
-            for (const direction of [-1, 1]) {
-              const packed = [...last];
-              packed[k] = last[k]! + direction * n * STEP[k]!;
-              const continued = unpack(packed);
-              const errors = compare(modelWindowDb(input, continued, structure), o.measuredDb);
-              if (errors.rmsDb < fit.errors.rmsDb + 0.3) {
-                fit = { params: continued, errors };
-                break search;
+  /** structure, base model and tables from the sweeps around one base render */
+  const fitCore = (base: DynamicsObservation, train: DynamicsObservation[], colour?: CompressorParams) => {
+
+    const candidates = (list: CompressorStructure[]) => list.map((structure) => {
+      onProgress?.(done++, total, `Struktur ${structure.detector}/${structure.topology}${structure.curve ? `/${structure.curve}` : ""}`);
+      return { structure, ...fitRender(base, input, structure) };
+    });
+    const structures = candidates(STRUCTURES);
+    if (Math.min(...structures.map((x) => x.errors.rmsDb)) > DUCKER_TRIAL_DB) structures.push(...candidates(DUCKER_STRUCTURES));
+    structures.sort((a, b) => a.errors.rmsDb - b.errors.rmsDb);
+    // feedback with a huge ratio and feedforward with a small one are nearly the same curve; on a near tie the
+    // feedforward structure is taken – its ratio is the one that is identifiable, and tables of it combine better
+    const tied = structures.findIndex((x) => x.structure.topology === "feedforward" && x.errors.rmsDb <= structures[0]!.errors.rmsDb * 1.1 + 0.02);
+    if (tied > 0) structures.unshift(...structures.splice(tied, 1));
+    const structure = structures[0]!.structure;
+    const expander = isGate(structure);
+    // reference in the same regime as the sweep points (compressor: static refit with the base timing)
+    const baseFit = expander ? { params: structures[0]!.params, errors: structures[0]!.errors } : fitStatic(base, input, structure, structures[0]!.params);
+    // The colouration (saturation, detector ripple) is fitted on the harmonics, which the level comparison does
+    // not see. A switch position takes it over from the main model: its own renders (a sidechain without a
+    // signal, a closed gate …) often show nothing to fit it on.
+    baseFit.params = colour
+      ? { ...baseFit.params, drive: colour.drive, rippleTime: colour.rippleTime, ripple: colour.ripple }
+      : fitColour(base, input, baseFit.params, structure, true).params;
+
+    const tables = new Map<number, ParamTable>();
+    const points: { o: DynamicsObservation; params: CompressorParams }[] = [];
+    // Expander: a render in which the gate never closes only says "open", not why (threshold below the signal,
+    // a long decay …). The points of a sweep are therefore fitted from the base outwards, each one starting from
+    // and anchored to its neighbour: what the control did so far is continued.
+    let roleOf = new Map<number, string>();
+    try {
+      roleOf = new Map(Object.entries(detectDynamics(parameters).roles).map(([role, index]) => [index, role]));
+    } catch {
+      // no roles: the trend of the sweep decides alone
+    }
+    const distance = (o: DynamicsObservation) => Math.abs(swept(o)!.value - baseValues.get(swept(o)!.index)!);
+    const ordered = expander ? [...train].sort((a, b) => distance(a) - distance(b)) : train;
+    /** per parameter and direction: the points (from the base outwards) at which the gate does close */
+    const closing = new Map<string, { value: number; packed: number[] }[]>();
+    ordered.forEach((o, i) => {
+      onProgress?.(done++, total, o.label);
+      const side = `${swept(o)!.index}${swept(o)!.value < baseValues.get(swept(o)!.index)! ? "-" : "+"}`;
+      const history = closing.get(side) ?? [{ value: baseValues.get(swept(o)!.index)!, packed: pack(baseFit.params) }];
+      closing.set(side, history);
+      const previous = unpack(history[history.length - 1]!.packed);
+      let fit = expander ? fitRender(o, input, structure, previous, undefined, previous) : fitStatic(o, input, structure, baseFit.params, undefined, baseFit.params);
+      if (expander) {
+        if (compressedShare(o, fit.params.makeupDb) > 0.005) history.push({ value: swept(o)!.value, packed: pack(fit.params) });
+        else {
+          // open: the smallest change of one model value that keeps the gate open – first the value the control
+          // stands for by its name, then those it changed most so far
+          const last = history[history.length - 1]!.packed, origin = history[0]!.packed;
+          const moved = (k: number) => Math.abs(last[k]! - origin[k]!) / STEP[k]!;
+          const byTrend = STEP.map((_, k) => k).filter((k) => moved(k) > 0.2).sort((x, y) => moved(y) - moved(x)).slice(0, 3);
+          const candidates = [...new Set([...(OPEN_BY_ROLE[roleOf.get(swept(o)!.index) ?? ""] ?? []), ...byTrend])];
+          search: for (const k of candidates) {
+            for (let n = 1; n <= 12; n++) {
+              for (const direction of [-1, 1]) {
+                const packed = [...last];
+                packed[k] = last[k]! + direction * n * STEP[k]!;
+                const continued = unpack(packed);
+                const errors = compare(modelWindowDb(input, continued, structure), o.measuredDb);
+                if (errors.rmsDb < fit.errors.rmsDb + 0.3) {
+                  fit = { params: continued, errors };
+                  break search;
+                }
               }
             }
           }
         }
       }
-    }
-    if (!expander && compressedShare(o, fit.params.makeupDb) > MIN_COMPRESSED_FOR_TIMING) {
-      const full = fitRender(o, input, structure, fit.params, undefined, baseFit.params);
-      if (full.errors.rmsDb < fit.errors.rmsDb * 0.8 && fit.errors.rmsDb - full.errors.rmsDb > MIN_TIMING_GAIN_DB) fit = full;
-    }
-    fit.params = { ...fit.params, rippleTime: baseFit.params.rippleTime, ripple: baseFit.params.ripple };
-    points.push({ o, params: fit.params });
-    const p = swept(o)!;
-    const info = parameters.find((x) => x.index === p.index)!;
-    const table = tables.get(p.index)
-      ?? { index: p.index, name: info.name, discrete: info.discrete, points: [{ value: baseValues.get(p.index)!, packed: pack(baseFit.params) }] };
-    table.points.push({ value: p.value, packed: pack(fit.params) });
-    tables.set(p.index, table);
-  });
+      if (!expander && compressedShare(o, fit.params.makeupDb) > MIN_COMPRESSED_FOR_TIMING) {
+        const full = fitRender(o, input, structure, fit.params, undefined, baseFit.params);
+        if (full.errors.rmsDb < fit.errors.rmsDb * 0.8 && fit.errors.rmsDb - full.errors.rmsDb > MIN_TIMING_GAIN_DB) fit = full;
+      }
+      fit.params = { ...fit.params, rippleTime: baseFit.params.rippleTime, ripple: baseFit.params.ripple };
+      points.push({ o, params: fit.params });
+      const p = swept(o)!;
+      const info = parameters.find((x) => x.index === p.index)!;
+      const table = tables.get(p.index)
+        ?? { index: p.index, name: info.name, discrete: info.discrete, points: [{ value: baseValues.get(p.index)!, packed: pack(baseFit.params) }] };
+      table.points.push({ value: p.value, packed: pack(fit.params) });
+      tables.set(p.index, table);
+    });
 
-  // saturation drive, jointly: base value + a (penalised) change per sweep point
-  onProgress?.(total - 1, total, "Sättigung");
-  const drives = fitDrives(input, structure, baseFit.params, base, points);
-  baseFit.params.drive = drives.base;
-  const DRIVE = 10;
-  for (const table of tables.values()) table.points[0]!.packed[DRIVE] = drives.base; // the base point
-  points.forEach((point, i) => {
-    const p = swept(point.o)!;
-    const table = tables.get(p.index)!;
-    const entry = table.points.find((e) => e.value === p.value && e !== table.points[0]);
-    if (entry) entry.packed[DRIVE] = drives.base + drives.changes[i]!;
-  });
-  // points at the same plugin value (a control with one option, values the plugin snaps together) carry no
-  // information and break the interpolation: the first one (the base point) stays, a table without a second
-  // value is dropped
-  for (const [index, table] of tables) {
-    table.points = table.points.filter((pt, i, all) => all.findIndex((other) => Math.abs(other.value - pt.value) < 1e-9) === i);
-    if (table.points.length < 2) tables.delete(index);
-    else table.points.sort((a, b) => a.value - b.value);
+    // saturation drive, jointly: base value + a (penalised) change per sweep point
+    onProgress?.(Math.min(done, total - 1), total, "Sättigung");
+    const drives = colour ? { base: colour.drive, changes: points.map(() => 0) } : fitDrives(input, structure, baseFit.params, base, points);
+    baseFit.params.drive = drives.base;
+    const DRIVE = 10;
+    for (const table of tables.values()) table.points[0]!.packed[DRIVE] = drives.base; // the base point
+    points.forEach((point, i) => {
+      const p = swept(point.o)!;
+      const table = tables.get(p.index)!;
+      const entry = table.points.find((e) => e.value === p.value && e !== table.points[0]);
+      if (entry) entry.packed[DRIVE] = drives.base + drives.changes[i]!;
+    });
+    // points at the same plugin value (a control with one option, values the plugin snaps together) carry no
+    // information and break the interpolation: the first one (the base point) stays, a table without a second
+    // value is dropped
+    for (const [index, table] of tables) {
+      table.points = table.points.filter((pt, i, all) => all.findIndex((other) => Math.abs(other.value - pt.value) < 1e-9) === i);
+      if (table.points.length < 2) tables.delete(index);
+      else table.points.sort((a, b) => a.value - b.value);
+    }
+    // automatic makeup follows the compressor curve; a gate has none
+    const interaction = fitInteraction(baseFit.params, [...tables.values()], !expander);
+
+    const core: DynamicsTables = {
+      structure,
+      base: baseFit.params,
+      baseValues: [...tables.keys()].map((index) => ({ index, value: baseValues.get(index)! })),
+      tables: [...tables.values()],
+      interaction,
+    };
+    return { core, structures };
+  };
+  const errorOf = (tables: DynamicsTables, o: DynamicsObservation) => {
+    const predicted = predictVariant(tables, new Map(o.params.map((p) => [p.index, p.value])));
+    return compare(modelWindowDb(input, predicted.params, predicted.structure), o.measuredDb);
+  };
+
+  const main = fitCore(base, train.filter((o) => !condition(o)));
+
+  // switch positions: a model of its own where it predicts the renders of that position clearly better
+  const variants: DynamicsVariant[] = [];
+  const positions = new Map<string, { index: number; value: number; sweeps: DynamicsObservation[] }>();
+  for (const o of train) {
+    const c = condition(o);
+    if (!c) continue;
+    const key = `${c.index}:${c.value.toFixed(6)}`;
+    (positions.get(key) ?? positions.set(key, { ...c, sweeps: [] }).get(key)!).sweeps.push(o);
   }
-  // automatic makeup follows the compressor curve; a gate has none
-  const interaction = fitInteraction(baseFit.params, [...tables.values()], structure.curve !== "expander");
+  for (const position of positions.values()) {
+    const start = train.find((o) => !condition(o) && swept(o)!.index === position.index && Math.abs(swept(o)!.value - position.value) < 1e-4);
+    if (!start) continue;
+    // Tables reproduce their own sweep points by construction, so a better fit of those proves nothing. The
+    // decision is made on the random combinations measured in this position, which no table has seen.
+    const checks = observations.filter((o) => o.purpose === "train" && o.kind === "random" && o.params.some((p) => p.index === position.index && Math.abs(p.value - position.value) < 1e-4));
+    const errors = (tables: DynamicsTables) => checks.map((o) => errorOf(tables, o).rmsDb);
+    // the main model already predicts this position: no need to fit it
+    const before = errors(main.core);
+    if (!variantGain(before, before.map(() => 0))) {
+      done += position.sweeps.length;
+      continue;
+    }
+    const own = fitCore(start, position.sweeps, main.core.base).core;
+    if (!variantGain(before, errors(own))) continue;
+    const info = parameters.find((x) => x.index === position.index)!;
+    const step = 1 / Math.max(info.numSteps - 1, 1);
+    variants.push({
+      ...own, index: position.index, value: position.value, name: `${info.name} = ${start.label.split(" = ").pop()}`,
+      range: [position.value - step / 2, position.value + step / 2],
+    });
+  }
+  const structure = main.core.structure;
 
   const model: DynamicsModel = {
     type: "compressor",
     version: 1,
     sampleRate: input.sampleRate,
-    structure,
-    base: baseFit.params,
-    baseValues: [...tables.keys()].map((index) => ({ index, value: baseValues.get(index)! })),
-    tables: [...tables.values()],
-    interaction,
-    report: { structures: structures.map((s) => ({ structure: s.structure, rmsDb: s.errors.rmsDb })), renders: [] },
+    ...main.core,
+    ...(variants.length ? { variants } : {}),
+    report: { structures: main.structures.map((s) => ({ structure: s.structure, rmsDb: s.errors.rmsDb })), renders: [] },
   };
 
   model.report.renders = observations.map((o) => {
-    const predicted = predictModel(model, new Map(o.params.map((p) => [p.index, p.value])));
+    const { params: predicted, structure } = predictVariant(model, new Map(o.params.map((p) => [p.index, p.value])));
     const e = compare(modelWindowDb(input, predicted, structure), o.measuredDb);
     let harmonics: number | undefined;
     const windows = input.harmonicWindows;

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { pluginInfo, regenerateTestSignal, runHost, type RenderJob } from "@vst-cloner/capture";
 import { decodeWav, encodeWav, type Profile } from "@vst-cloner/profile";
 import type { Logger } from "../build.ts";
-import { compare, dynamicsInput, dynamicsObservations, predictModel, windowRmsDb, type DynamicsModel, type Errors } from "./fit.ts";
+import { compare, dynamicsInput, dynamicsObservations, predictVariant, windowRmsDb, type DynamicsModel, type Errors } from "./fit.ts";
 import { renderModel, simulateGain } from "./model.ts";
 import { cloneValue, dynamicsCloneParameters, modelValue } from "./params.ts";
 
@@ -88,8 +88,8 @@ export async function verifyDynamicsClone(
       rows.push({ label: o.label, purpose: o.purpose, errors: compare(cloneDb, o.measuredDb) });
 
       // reference: the TypeScript model applied sample by sample (exactly what the plugin must do)
-      const params = predictModel(model, new Map(o.params.map((p) => [p.index, asModel.get(p.index)?.(p.value) ?? p.value])));
-      const gains = simulateGain(input.levels[model.structure.detector], params, model.structure, sampleRate);
+      const { params, structure } = predictVariant(model, new Map(o.params.map((p) => [p.index, asModel.get(p.index)?.(p.value) ?? p.value])));
+      const gains = simulateGain(input.levels[structure.detector], params, structure, sampleRate);
       const reference = windowRmsDb(renderModel(signal, gains, params), input.windowDb.length).map((v, w) => v - input.windowDb[w]!);
       const engine = compare(cloneDb, o.measuredDb.map((m, w) => (Number.isNaN(m) ? NaN : reference[w]!)));
       if (engine.maxDb > engineMaxDb) {

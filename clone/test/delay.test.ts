@@ -52,6 +52,7 @@ test("delay analysis recovers time, levels, feedback and filters from an impulse
 test("delay tables combine: time controls multiply, levels add in dB", () => {
   const at = (p: Partial<DelayParams>) => packDelay({ ...params, ...p });
   const model = {
+    structure,
     base: params,
     baseValues: [{ index: 0, value: 0.5 }, { index: 1, value: 0.5 }],
     tables: [

@@ -5,7 +5,7 @@ import { buildPlugin, slugify, type BuildResult, type Logger } from "../build.ts
 import { generateDynamicsHeader } from "./codegen.ts";
 import { CancelledError } from "@vst-cloner/capture";
 import { measuredCompression, predictModel, type DynamicsModel } from "./fit.ts";
-import { staticReduction } from "./model.ts";
+import { isGate, staticReduction } from "./model.ts";
 import { verifyDynamicsClone, type DynamicsVerifyReport } from "./verify.ts";
 import { existsSync } from "node:fs";
 import { generateGuiHeader } from "../gui/codegen.ts";
@@ -16,7 +16,7 @@ import { captureGuiLayout, compareGui, GUI_MODEL_FILE, guiCacheDir, locatePlugin
 export const DYNAMICS_MODEL_FILE = "model/dynamics.json";
 export const DYNAMICS_REPORT_FILE = "report.json";
 /** Raised whenever the dynamics fit changes; older stored models are fitted again. */
-export const DYNAMICS_FIT_REVISION = 4; // 2: detector averaging time, 3: saturation and detector ripple, 4: anchored sweep fits, expander curve
+export const DYNAMICS_FIT_REVISION = 5; // 2: detector averaging time, 3: saturation and detector ripple, 4: anchored sweep fits, expander curve, 5: models per switch position
 
 /** Whether a profile was captured with the dynamics plan (or already holds a dynamics model). */
 export function isDynamicsProfile(profile: Profile): boolean {
@@ -37,7 +37,7 @@ const verdict = dynamicsVerdict;
 
 export function formatDynamicsModel(model: DynamicsModel): string[] {
   const p = model.base;
-  const expander = model.structure.curve === "expander";
+  const expander = isGate(model.structure);
   const lines = [
     `${expander ? "Gate/Expander" : "Kompressor"}: ${model.structure.detector === "rms" ? "RMS" : "Spitzenwert"}-Detektor${expander ? "" : `, ${model.structure.topology === "feedforward" ? "Feed-forward" : "Feedback"}`}`,
     `Grundeinstellung: Schwelle ${p.thresholdDb.toFixed(1)} dB, Verhältnis ${expander ? `1:${p.ratio.toFixed(2)}` : `${p.ratio.toFixed(2)}:1`}, Knick ${p.kneeDb.toFixed(1)} dB, ` +
@@ -48,6 +48,7 @@ export function formatDynamicsModel(model: DynamicsModel): string[] {
     `Klangfarbe: Sättigung ${p.drive > 0 ? `Drive ${p.drive.toFixed(2)}` : "aus"}, Detektor-Welligkeit ${(p.ripple * 100).toFixed(1)} % (${(p.rippleTime * 1000).toFixed(1)} ms)`,
     `Parameter: ${model.tables.map((t) => t.name).join(", ")}`,
   ];
+  if (model.variants?.length) lines.push(`Eigenes Modell für Schalterstellungen: ${model.variants.map((v) => `${v.name} (${v.structure.curve ?? "compressor"})`).join(", ")}`);
   if (model.report.train) lines.push(`Modell vs. Original (Einzelparameter): ${db(model.report.train.rmsDb)} (max ${model.report.train.maxDb.toFixed(1)}) – ${verdict(model.report.train.rmsDb)}`);
   if (model.report.validate) lines.push(`Vorhersage unbekannter Kombinationen: ${db(model.report.validate.rmsDb)} (max ${model.report.validate.maxDb.toFixed(1)}) – ${verdict(model.report.validate.rmsDb)}`);
   if (!measuredCompression(model)) {
