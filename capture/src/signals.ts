@@ -12,9 +12,9 @@ interface SegmentSpec {
   params?: Record<string, number>;
 }
 
-export type SignalPreset = "full" | "eq" | "dynamics" | "distortion" | "delay";
+export type SignalPreset = "full" | "eq" | "dynamics" | "distortion" | "delay" | "reverb";
 
-export const SIGNAL_PRESETS: SignalPreset[] = ["full", "eq", "dynamics", "distortion", "delay"];
+export const SIGNAL_PRESETS: SignalPreset[] = ["full", "eq", "dynamics", "distortion", "delay", "reverb"];
 
 /** Short sequence for linear, time-invariant effects (EQs, filters): impulse response + sweep as cross-check. */
 export function eqSegmentSpecs(sampleRate: number): SegmentSpec[] {
@@ -109,8 +109,20 @@ export function delaySegmentSpecs(seed = 1): SegmentSpec[] {
   ];
 }
 
+/**
+ * Sequence for reverbs: one impulse and its tail. Nothing else – a tail is noise, which no compression makes
+ * smaller, so every further second costs its full size in the profile.
+ */
+export function reverbSegmentSpecs(): SegmentSpec[] {
+  return [
+    { id: "lead", kind: "silence", seconds: 0.1 },
+    { id: "impulse", kind: "impulse", seconds: 5, params: { amplitude: 0.5 } },
+  ];
+}
+
 export function segmentSpecs(preset: SignalPreset, sampleRate: number, seed = 1): SegmentSpec[] {
   if (preset === "eq") return eqSegmentSpecs(sampleRate);
+  if (preset === "reverb") return reverbSegmentSpecs();
   if (preset === "delay") return delaySegmentSpecs(seed);
   if (preset === "distortion") return distortionSegmentSpecs(sampleRate, seed);
   if (preset === "dynamics") return dynamicsSegmentSpecs(sampleRate, seed);

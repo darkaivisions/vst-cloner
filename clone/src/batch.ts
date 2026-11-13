@@ -13,9 +13,11 @@ import { detectDistortion, distortionPlanner } from "./distortion/plan.ts";
 import { cloneDistortionProfile, distortionVerdict } from "./distortion/workflow.ts";
 import { delayPlanner, detectDelay } from "./delay/plan.ts";
 import { cloneDelayProfile, delayVerdict } from "./delay/workflow.ts";
+import { detectReverb, reverbPlanner } from "./reverb/plan.ts";
+import { cloneReverbProfile, reverbVerdict } from "./reverb/workflow.ts";
 
-export type EffectClass = "eq" | "dynamics" | "distortion" | "delay";
-export const EFFECT_CLASSES: EffectClass[] = ["eq", "dynamics", "distortion", "delay"];
+export type EffectClass = "eq" | "dynamics" | "distortion" | "delay" | "reverb";
+export const EFFECT_CLASSES: EffectClass[] = ["eq", "dynamics", "distortion", "delay", "reverb"];
 
 /**
  * Effect class of a plugin – the same order as the app uses: EQ (band parameters), compressor
@@ -32,6 +34,12 @@ export function classifyPlugin(info: Pick<HostInfo, "parameters" | "plugin"> & P
     return { effectClass: "delay", reason: "Delay erkannt" };
   } catch {
     // not a delay: the other classes follow
+  }
+  try {
+    detectReverb(info.parameters, info.plugin.category, info.plugin.name);
+    return { effectClass: "reverb", reason: "Hall erkannt" };
+  } catch {
+    // not a reverb
   }
   // per-band thresholds and ratios look like EQ bands or a compressor, but neither model fits
   const multiband = multibandReason(info.parameters);
@@ -224,7 +232,7 @@ async function runOne(entry: Pick<PluginEntry, "path" | "name" | "format">, opti
 
     row.stage = "capture";
     const profilePath = join(options.outputDir, "profiles", `${slug}.vcprofile`);
-    const planner = { eq: eqPlanner, dynamics: dynamicsPlanner, distortion: distortionPlanner, delay: delayPlanner }[options.effectClass];
+    const planner = { eq: eqPlanner, dynamics: dynamicsPlanner, distortion: distortionPlanner, delay: delayPlanner, reverb: reverbPlanner }[options.effectClass];
     await capture({
       plugin: entry.path,
       output: profilePath,
@@ -273,6 +281,13 @@ async function runOne(entry: Pick<PluginEntry, "path" | "name" | "format">, opti
       if (v) {
         // without an echo in the base render there was nothing to measure: the error says nothing about a delay
         const judged = result.model.report.echoes > 0 ? delayVerdict(v.overall.rmsDb) : "kein Echo gemessen";
+        row.quality = { value: v.overall.rmsDb, verdict: judged, text: `${v.overall.rmsDb.toFixed(2)} dB (${judged})`, ...(v.validate ? { validate: v.validate.rmsDb } : {}) };
+      }
+    } else if (options.effectClass === "reverb") {
+      const result = await cloneReverbProfile(common);
+      const v = result.verify;
+      if (v) {
+        const judged = result.model.report.tail ? reverbVerdict(v.overall.rmsDb) : "kein Nachhall gemessen";
         row.quality = { value: v.overall.rmsDb, verdict: judged, text: `${v.overall.rmsDb.toFixed(2)} dB (${judged})`, ...(v.validate ? { validate: v.validate.rmsDb } : {}) };
       }
     } else {

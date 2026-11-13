@@ -25,7 +25,7 @@ Usage:
   vch analyze <profile> [--save] [--json]
                                         Fit the EQ model and show how well it matches
   vch verify  <profile> <clone.vst3>    Compare a built clone with the original measurements
-  vch batch   --class <eq|dynamics|distortion|delay> -o <dir>
+  vch batch   --class <eq|dynamics|distortion|delay|reverb> -o <dir>
                                         Capture and clone every installed plugin of one class
 
 Capture options:
@@ -210,7 +210,8 @@ async function loadPlanner(name: string | undefined): Promise<CapturePlanner | u
   if (name === "dynamics") return (await import("@vst-cloner/clone")).dynamicsPlanner;
   if (name === "distortion") return (await import("@vst-cloner/clone")).distortionPlanner;
   if (name === "delay") return (await import("@vst-cloner/clone")).delayPlanner;
-  throw new UsageError(`unknown --class '${name}' (available: eq, dynamics, distortion, delay)`);
+  if (name === "reverb") return (await import("@vst-cloner/clone")).reverbPlanner;
+  throw new UsageError(`unknown --class '${name}' (available: eq, dynamics, distortion, delay, reverb)`);
 }
 
 async function commandCapture(positionals: string[], values: Values): Promise<void> {
