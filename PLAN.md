@@ -98,7 +98,7 @@ finden, entscheidet später das LLM (Meilenstein 7).
 | EQ / Filter | Impulsantwort pro Filterform × Frequenz × Gain × Güte | Biquad-Kette, elliptische Brickwall-Flanken, gefittete Q-Kennlinie | ✔ – offen: linearphasig |
 | Kompressor / Limiter | Pegeltreppe, Bursts, lange Pausen, 100-Hz-Stufen, Rauschen | Detektor (RMS/Peak, FF/FB), Kennlinie mit Knick, Attack/Release, Opto-Speicher, Sättigung | ✔ |
 | Gate / Expander / Ducker | wie Kompressor | Expander-Kennlinie mit Range, invertierte Kennlinie | ✔ |
-| Verzerrer (Pedale) | Sinus-Pegeltreppen bei mehreren Frequenzen, Rauschen, leiser Sweep | Wiener-Hammerstein (Vorfilter → Begrenzung → Nachfilter) | ✔ an einem Plugin – Batch-Lauf offen |
+| Verzerrer (Pedale) | Sinus-Pegeltreppen bei mehreren Frequenzen, Rauschen, leiser Sweep | Wiener-Hammerstein (Vorfilter → Begrenzung → Nachfilter) | ✔ – 73 Plugins im Batch, 46 gut oder besser |
 | Amp / Tape | Rauschen + Musik über Parameterraster | NAM / RTNeural-LSTM, Parameter-konditioniert | offen (5c) |
 | Delay / Echo | Impuls mit langer Stille, Rauschburst | Delay-Line mit Feedback, Tief-/Hochpass in der Schleife und im Wet-Pfad | erste Fassung |
 | Reverb | Impuls und Ausklang | FDN hinter Pre-Delay; Pegel und Nachhallzeit in drei Bändern | erste Fassung |
@@ -133,14 +133,15 @@ kleine Übersetzungseinheiten und einen Cache.
   werden ausgewiesen statt gut bewertet.
 - Tests zunächst mit freien/Open-Source-Plugins, bei denen das Ergebnis überprüfbar ist.
 
-Stand der Batch-Läufe (12./13.11.):
+Stand der Batch-Läufe (12.–15.11.):
 
 | Klasse | Plugins | Ergebnis |
 |---|---|---|
 | Dynamik | 9 Kompressoren/Limiter + ZamGate | 0,27–2,32 dB; 2× ausgezeichnet, 4× sehr gut, 2× gut, 1× brauchbar, 1× „keine Kompression gemessen“; unbekannte Kombinationen 0,43–9,72 dB |
 | Delay | 12 | 1× sehr gut, 3× gut, 3× brauchbar, 5× ungenau; unbekannte Kombinationen meist 11–26 dB |
 | Reverb | 18 (+1 Fehler beim Messen) | 5× sehr gut, 6× gut, 6× brauchbar, 1× ungenau; unbekannte Kombinationen 2–30 dB |
-| EQ, Verzerrer | – | noch kein Batch-Lauf |
+| Verzerrer | 73 (+4 Fehler: 3× Absturz beim Messen, 1× Klon lädt nicht) | 0,06–18,4 dB; 12× ausgezeichnet, 20× sehr gut, 14× gut, 14× brauchbar, 13× ungenau; unbekannte Kombinationen meist nahe am Gesamtwert, Ausreißer bis 28 dB |
+| EQ | 3 | x42-eq 0,01 dB (ausgezeichnet); MultiEQ 30,7 dB und DirectivityShaper 4,3 dB abweichend – Erkennung zu eng, sechs grafische/feste EQs bekommen keine Klasse |
 
 ## Profilformat `.vcprofile`
 Details: [docs/profile-format.md](docs/profile-format.md). ZIP-Container, versioniertes JSON-Schema:
@@ -190,12 +191,17 @@ vst-cloner/
      - Offen: Fit-Zeit (1–4 min pro Plugin), GxCompressor und DirectionalCompressor bei unbekannten
        Kombinationen (7–10 dB)
    - **5b Verzerrer (Pedale)** ✔ – Wiener-Hammerstein; GxBoss DS1: Grundton 0,68 dB, Oberwellen 1,8 dB
-     - Offen: Batch-Lauf, Erkennung schärfen (97 Treffer, darunter Decoder, Tuner, Balance-Regler),
-       Zeitbereichs-Term im Fit
+     - Erkennung geschärft (97 → 77 Treffer: ein Gain-Regler allein reicht nicht mehr); Batch über 77 Plugins:
+       73 geklont, 46 gut oder besser
+     - Offen: Fuzz-Pedale mit Grundton-Fehlern über 10 dB (GxAxisFace, GxFuzzFaceFuller, GxSunFace, Hip2B),
+       Bitcrusher (Bitta, MaBitcrush – brauchen ein anderes Modell), Absturz beim Messen (GxAmplifier-X,
+       GxCabinet), Zeitbereichs-Term im Fit
    - **5c Amps mit NAM** – lokales Training (CPU/GPU), Swanky Amp, TONE3000
 6. **Delay + Reverb + Modulation**
    - **6a Delay + Reverb** ← in Arbeit – erste Fassung in CLI, Batch und App ✔
-     - Offen: unbekannte Kombinationen (Delay), Oberfläche, Batch-Lauf für EQ
+     - Offen: unbekannte Kombinationen (Delay), Oberfläche
+     - EQ-Batch gelaufen; offen: Erkennung für grafische und feste EQs (ZamEQ2, ZamGEQ31, Luftikus, 3 Band EQ,
+       GxGraphicEQ, GxBarkGraphicEQ), DirectivityShaper ausschließen, Fit bei IEM MultiEQ
    - **6b Modulation** – Chorus, Flanger, Phaser, Tremolo
 7. **Builder-Agent (Weg B)** – Faust-Schleife, Analyst-Agent mit REA und `spec.md`, Clean-Room-Trennung,
    Klassifizierung durch LLM für Plugins ohne Klasse
@@ -214,7 +220,8 @@ vst-cloner/
 - Delay und Reverb wurden vor Amps/NAM begonnen.
 
 ## Risiken / Erwartungen
-- Sehr gut klonbar: EQs, Kompressoren, Limiter, einfache Verzerrer.
+- Sehr gut klonbar: EQs, Kompressoren, Limiter, einfache Verzerrer (Overdrive, Distortion, Booster).
+- Mit dem jetzigen Verzerrer-Modell ungenau: Fuzz mit starker Pegelabhängigkeit, Bitcrusher, Amps mit mehreren Stufen.
 - Brauchbar, aber noch nicht treu über alle Reglerkombinationen: Delays, Reverbs.
 - Nur angenähert: stark zeitvariante/zufällige Effekte, komplexe Multieffekte.
 - Erst mit Weg B: Multiband-Kompressoren, dynamische EQs, Plugins ohne Klasse.

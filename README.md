@@ -22,13 +22,15 @@ Getestet unter Linux mit nativen VST3-/LV2-Plugins und Windows-Plugins über yab
 | DirectionalCompressor Clone | IEM Directional Compressor | 0,71 dB Pegelverlauf über 224 Einstellungen | 75 % Struktur, 96 % Farbe |
 | GxBoss DS1 Clone | GxBoss DS1 (Guitarix, LV2) | Grundton 0,68 dB, Oberwellen 1,8 dB, Kleinsignal 1,23 dB | noch grob |
 
-Batch-Läufe über alle installierten Plugins einer Klasse (ohne Oberfläche, Stand 12./13.11.):
+Batch-Läufe über alle installierten Plugins einer Klasse (ohne Oberfläche, Stand 12.–15.11.):
 
 | Klasse | Plugins | Klon vs. Original |
 |---|---|---|
 | Kompressoren, Limiter, Gate | 10 | 0,27–2,32 dB (z. B. x42-dpl 0,27 · ZamComp 0,45 · OmniCompressor 0,70 · ZamGate 1,88) |
 | Delays | 12 | 1,96–16,7 dB: 4 gut oder besser, 3 brauchbar, 5 ungenau |
 | Reverbs | 18 | 1,48–13,0 dB: 11 gut oder besser, 6 brauchbar, 1 ungenau |
+| Verzerrer | 73 | 0,06–18,4 dB: 46 gut oder besser, 14 brauchbar, 13 ungenau (z. B. GxMicroAmp 0,06 · Wolf Shaper 0,44 · GxBoss DS1 1,15 · GxTubeScreamer 1,93) |
+| EQs | 3 | x42-eq 0,01 dB; IEM MultiEQ und DirectivityShaper weichen ab (Erkennung und Fit noch offen) |
 
 Bei Delays und Reverbs weichen Reglerkombinationen, die nicht einzeln gemessen wurden, noch deutlich stärker ab.
 
