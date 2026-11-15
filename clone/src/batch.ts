@@ -60,7 +60,7 @@ export function classifyPlugin(info: Pick<HostInfo, "parameters" | "plugin"> & P
     reasons.push((error as Error).message);
   }
   try {
-    detectDistortion(info.parameters, info.plugin.category);
+    detectDistortion(info.parameters, info.plugin.category, info.plugin.name);
     return { effectClass: "distortion", reason: "Drive-Regler oder Verzerrer-Kategorie erkannt" };
   } catch (error) {
     reasons.push((error as Error).message);

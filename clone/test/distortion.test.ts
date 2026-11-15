@@ -47,6 +47,23 @@ test("distortion plugins are recognised by their controls or category", () => {
   assert.throws(() => detectDistortion([parameter(0, "Frequency")]), NotDistortionError);
 });
 
+test("distortion detection: a gain control alone, tools, several bands and built-in modulation are no distortion", () => {
+  const names = (...list: string[]) => list.map((name, index) => parameter(index, name));
+  // decoders, mixers and tuners have gains too
+  assert.throws(() => detectDistortion(names("Bypass", "OutGain"), "Plugin", "ambix_decoder_o5"), NotDistortionError);
+  assert.throws(() => detectDistortion(names("Input Gain 0", "Mix 0 0"), "Utility Plugin", "Mixer'n'Trigger"), NotDistortionError);
+  assert.throws(() => detectDistortion(names("GAIN", "THRESHOLD", "LEVEL"), "Analyser Plugin", "GxTuner"), NotDistortionError);
+  assert.throws(() => detectDistortion(names("Drive", "Decay", "Range", "Freq", "Mix"), "Filter Plugin", "Auto-wah"), NotDistortionError);
+  // one drive per band, tape with wow and flutter, amp with tremolo
+  assert.throws(() => detectDistortion(names("DRIVE1", "DRIVE2", "DRIVE3", "GAIN"), "Distortion Plugin"), /Mehrband/);
+  assert.throws(() => detectDistortion(names("Drive", "WowDepth", "FlutterDepth"), "Filter Plugin", "GxTape"), /Modulation/);
+  assert.throws(() => detectDistortion(names("Gain", "Tone", "Volume", "Speed", "Intensity"), "Amplifier Plugin"), /Modulation/);
+  // amps by category or name, the drive is the control named so
+  assert.equal(detectDistortion(names("MasterGain", "PreGain", "Distortion", "Drive"), "Simulator Plugin").roles.drive, 2);
+  assert.ok(detectDistortion(names("InputLevel", "OutputLevel", "GainStages"), "Fx", "Swanky Amp"));
+  assert.ok(detectDistortion(names("Pre Amp", "Middle", "Master Volume"), "Amplifier Plugin"));
+});
+
 test("distortion detection: drive control or category, other effect classes excluded", async () => {
   const { detectDistortion } = await import("../src/distortion/plan.ts");
   const { detectDynamics } = await import("../src/dynamics/plan.ts");
