@@ -34,6 +34,10 @@ export interface PluginInfo {
   dynamics?: { roles: string[]; renders: number };
   /** overdrive/distortion recognised by a drive control or its category */
   distortion?: { roles: string[]; renders: number; signalSeconds: number };
+  /** delay/echo recognised by its category, name or controls */
+  delay?: { roles: string[]; renders: number; signalSeconds: number };
+  /** reverb recognised by its category or name */
+  reverb?: { renders: number; signalSeconds: number };
   genericRenders: number;
 }
 
@@ -61,7 +65,7 @@ export interface ProfileSummary {
 }
 
 export interface CloneResult {
-  kind: "eq" | "dynamics" | "distortion";
+  kind: "eq" | "dynamics" | "distortion" | "delay" | "reverb";
   pluginName: string;
   vst3: string;
   lv2: string;
@@ -70,6 +74,14 @@ export interface CloneResult {
   /** compressors: description of the model and comparison with the original */
   summary?: string[];
   dynamics?: {
+    overall: { rmsDb: number; maxDb: number };
+    validate?: { rmsDb: number; maxDb: number };
+    worst: { label: string; rmsDb: number; maxDb: number }[];
+    verdict: string;
+    renders: number;
+  };
+  /** delay and reverb: level of the response over time and frequency band, compared with the original */
+  levels?: {
     overall: { rmsDb: number; maxDb: number };
     validate?: { rmsDb: number; maxDb: number };
     worst: { label: string; rmsDb: number; maxDb: number }[];

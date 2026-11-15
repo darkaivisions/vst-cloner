@@ -15,8 +15,20 @@ import {
   type CaptureProgress,
 } from "@vst-cloner/capture";
 import {
+  cloneDelayProfile,
   cloneDistortionProfile,
   cloneDynamicsProfile,
+  cloneReverbProfile,
+  delayPlanner,
+  delayVerdict,
+  detectDelay,
+  detectReverb,
+  formatDelayModel,
+  formatReverbModel,
+  planDelay,
+  planReverb,
+  reverbPlanner,
+  reverbVerdict,
   detectDistortion,
   distortionPlanner,
   planDistortion,
@@ -171,7 +183,24 @@ async function guiResult(gui: { controls: number; comparison?: { similarity: num
   };
 }
 
-const PLANNER_NAMES: Record<string, string> = { eq: "EQ-Messung", dynamics: "Kompressor-Messung", distortion: "Verzerrer-Messung", generic: "Allgemeine Messung" };
+const PLANNER_NAMES: Record<string, string> = {
+  eq: "EQ-Messung", dynamics: "Dynamik-Messung", distortion: "Verzerrer-Messung", delay: "Delay-Messung", reverb: "Hall-Messung", generic: "Allgemeine Messung",
+};
+/** Rating of the main number in a report, by the measurement the profile was captured with. */
+const VERDICTS: Record<string, (value: number) => string> = { dynamics: dynamicsVerdict, distortion: distortionVerdict, delay: delayVerdict, reverb: reverbVerdict };
+const verdictFor = (planner: unknown) => VERDICTS[planner as string] ?? verdict;
+const MODEL_FILES = ["model/eq.json", "model/dynamics.json", "model/distortion.json", "model/delay.json", "model/reverb.json"];
+const MODES = ["eq", "dynamics", "distortion", "delay", "reverb", "generic"] as const;
+type Mode = (typeof MODES)[number];
+const PLANNERS = { eq: eqPlanner, dynamics: dynamicsPlanner, distortion: distortionPlanner, delay: delayPlanner, reverb: reverbPlanner };
+const PLAN_NOTES: Record<Mode, string> = {
+  eq: "EQ-Messplan: jede Filterform bei mehreren Frequenzen, Gains und Güten",
+  dynamics: "Kompressor-Messplan: jeder Regler einzeln (dicht an den Enden) + Zufallskombinationen zur Gegenprobe, Messsignal mit Pegeltreppe, Bursts und langen Pausen",
+  distortion: "Verzerrer-Messplan: jeder Regler einzeln + Zufallskombinationen zur Gegenprobe, Messsignal mit Sinus-Pegeltreppen bei mehreren Frequenzen, Rauschen und leisem Sweep",
+  delay: "Delay-Messplan: jeder Regler einzeln + Zufallskombinationen zur Gegenprobe, Messsignal mit Impuls, langer Stille und Rauschburst",
+  reverb: "Hall-Messplan: jeder Regler einzeln + Zufallskombinationen zur Gegenprobe, Messsignal mit einem Impuls und seinem Ausklang",
+  generic: "Allgemeiner Messplan: jeder Parameter einzeln + Zufallskombinationen",
+};
 
 /** Everything the library shows about a profile: plugin, capture, signal, model, editor layout. */
 async function profileDetails(path: string) {
@@ -206,7 +235,10 @@ async function profileDetails(path: string) {
   let model: { kind: string; summary: string[] } | undefined;
   try {
     const eq = json("model/eq.json"), dyn = json("model/dynamics.json"), dist = json("model/distortion.json");
-    if (dist) model = { kind: "distortion", summary: formatDistortionModel(dist) };
+    const delay = json("model/delay.json"), reverb = json("model/reverb.json");
+    if (reverb) model = { kind: "reverb", summary: formatReverbModel(reverb) };
+    else if (delay) model = { kind: "delay", summary: formatDelayModel(delay) };
+    else if (dist) model = { kind: "distortion", summary: formatDistortionModel(dist) };
     else if (dyn) model = { kind: "dynamics", summary: formatDynamicsModel(dyn) };
     else if (eq) model = { kind: "eq", summary: formatModelReport(eq) };
   } catch {
@@ -262,7 +294,7 @@ async function profileDetails(path: string) {
       discrete: p.discrete,
     })),
     model,
-    verdict: rms !== undefined ? { value: rms, text: planner === "dynamics" ? dynamicsVerdict(rms) : planner === "distortion" ? distortionVerdict(rms) : verdict(rms), pluginName: report?.pluginName } : undefined,
+    verdict: rms !== undefined ? { value: rms, text: verdictFor(planner)(rms), pluginName: report?.pluginName } : undefined,
     gui: gui
       ? {
           layout: svgDataUrl(renderSvg(gui)),
@@ -294,9 +326,9 @@ async function summarizeProfile(path: string): Promise<ProfileSummary> {
     createdAt: manifest?.createdAt ?? "",
     renders: captures?.renders?.length ?? 0,
     planner: manifest?.capture?.plan?.planner ?? "generic",
-    hasModel: Boolean(entries["model/eq.json"] || entries["model/dynamics.json"] || entries["model/distortion.json"]),
+    hasModel: MODEL_FILES.some((file) => entries[file]),
     ...(rms !== undefined
-      ? { rmsDb: rms, verdict: ({ dynamics: dynamicsVerdict, distortion: distortionVerdict }[manifest?.capture?.plan?.planner as string] ?? verdict)(rms) }
+      ? { rmsDb: rms, verdict: verdictFor(manifest?.capture?.plan?.planner)(rms) }
       : {}),
     ...(report?.pluginName ? { pluginName: report.pluginName } : {}),
   };
@@ -374,14 +406,33 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
     let distortion: { roles: string[]; renders: number; signalSeconds: number } | undefined;
     if (effectClass === "distortion") {
       try {
-        const mapping = detectDistortion(info.parameters, info.plugin.category);
+        const mapping = detectDistortion(info.parameters, info.plugin.category, info.plugin.name);
         distortion = {
           roles: Object.keys(mapping.roles),
-          renders: planDistortion(info.parameters, { ...DEFAULT_PLAN }, info.plugin.category).renders.length,
+          renders: planDistortion(info.parameters, { ...DEFAULT_PLAN }, info.plugin.category, info.plugin.name).renders.length,
           signalSeconds: Math.round(generateTestSignal({ sampleRate: 1000, channels: 1, preset: "distortion" }).set.length / 1000),
         };
       } catch {
         distortion = undefined;
+      }
+    }
+    const signalSeconds = (preset: "delay" | "reverb") => Math.round(generateTestSignal({ sampleRate: 1000, channels: 1, preset }).set.length / 1000);
+    let delay: { roles: string[]; renders: number; signalSeconds: number } | undefined;
+    if (effectClass === "delay") {
+      try {
+        const plan = planDelay(info.parameters, { ...DEFAULT_PLAN }, info.plugin.category, info.plugin.name);
+        delay = { roles: Object.keys(plan.mapping.roles), renders: plan.renders.length, signalSeconds: signalSeconds("delay") };
+      } catch {
+        delay = undefined;
+      }
+    }
+    let reverb: { renders: number; signalSeconds: number } | undefined;
+    if (effectClass === "reverb") {
+      try {
+        detectReverb(info.parameters, info.plugin.category, info.plugin.name);
+        reverb = { renders: planReverb(info.parameters, { ...DEFAULT_PLAN }, info.plugin.category, info.plugin.name).renders.length, signalSeconds: signalSeconds("reverb") };
+      } catch {
+        reverb = undefined;
       }
     }
     let genericRenders: number;
@@ -404,25 +455,21 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
       eq,
       dynamics,
       distortion,
+      delay,
+      reverb,
       genericRenders,
     };
   },
 
   "capture.start"(params) {
     const plugin = str(params, "path");
-    const mode = params.mode === "generic" ? "generic" : params.mode === "dynamics" ? "dynamics" : params.mode === "distortion" ? "distortion" : "eq";
+    const mode: Mode = MODES.find((m) => m === params.mode) ?? "eq";
     return startJob("capture", async (ctx) => {
       ctx.stage("capture", "Messen");
       await mkdir(profilesDir(), { recursive: true });
       const info = await pluginInfo(plugin, { signal: ctx.signal });
       const output = join(profilesDir(), `${slugify(info.plugin.name)}-${timestamp()}.vcprofile`);
-      ctx.log("info", mode === "eq"
-        ? "EQ-Messplan: jede Filterform bei mehreren Frequenzen, Gains und Güten"
-        : mode === "dynamics"
-          ? "Kompressor-Messplan: jeder Regler einzeln (dicht an den Enden) + Zufallskombinationen zur Gegenprobe, Messsignal mit Pegeltreppe, Bursts und langen Pausen"
-          : mode === "distortion"
-            ? "Verzerrer-Messplan: jeder Regler einzeln + Zufallskombinationen zur Gegenprobe, Messsignal mit Sinus-Pegeltreppen bei mehreren Frequenzen, Rauschen und leisem Sweep"
-            : "Allgemeiner Messplan: jeder Parameter einzeln + Zufallskombinationen");
+      ctx.log("info", PLAN_NOTES[mode]);
 
       const started = Date.now();
       const profile = await capture({
@@ -434,7 +481,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
         prerollSeconds: 0.5,
         tailSeconds: mode === "eq" ? 0.25 : 2,
         plan: { ...DEFAULT_PLAN },
-        ...(mode === "eq" ? { planner: eqPlanner } : mode === "dynamics" ? { planner: dynamicsPlanner } : mode === "distortion" ? { planner: distortionPlanner } : {}),
+        ...(mode === "generic" ? {} : { planner: PLANNERS[mode] }),
         signal: ctx.signal,
         onProgress: (event) => {
           if (event.stage === "render") ctx.progress(event.done, event.total, event.id);
@@ -534,6 +581,47 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
               }
             : undefined,
           gui: await guiResult(result.gui),
+        };
+      }
+      if (summary.planner === "delay" || summary.planner === "reverb") {
+        // same shape of result as a compressor: level deviation in dB, overall and on unknown combinations
+        const kind = summary.planner;
+        const options = {
+          profilePath,
+          outputDir: join(clonesDir(), slugify(pluginName)),
+          pluginName,
+          ...(install ? { install: true } : {}),
+          ...(refit ? { refit: true } : {}),
+          signal: ctx.signal,
+          onStage: (stage: CloneStage) => ctx.stage(stage, STAGE_TITLES[stage]),
+          onProgress: (done: number, total: number, label: string) => ctx.progress(done, total, label),
+          log: (level: LogLevel, message: string) => ctx.log(level, message),
+        };
+        let v, modelSummary: string[], measured: boolean;
+        let build;
+        if (kind === "delay") {
+          const result = await cloneDelayProfile(options);
+          ({ verify: v, build } = result);
+          modelSummary = formatDelayModel(result.model);
+          measured = result.model.report.echoes > 0;
+        } else {
+          const result = await cloneReverbProfile(options);
+          ({ verify: v, build } = result);
+          modelSummary = formatReverbModel(result.model);
+          measured = Boolean(result.model.report.tail);
+        }
+        // nothing to hear in the base render: the small error says nothing about the effect
+        const judged = !v ? "" : measured ? VERDICTS[kind]!(v.overall.rmsDb) : kind === "delay" ? "kein Echo gemessen" : "kein Nachhall gemessen";
+        if (v) ctx.log(measured ? "success" : "warn", `Klon fertig – Abweichung zum Original ${v.overall.rmsDb.toFixed(2)} dB (${judged})`);
+        return {
+          kind,
+          pluginName,
+          vst3: build.vst3,
+          lv2: build.lv2,
+          installed: build.installed,
+          shapes: [],
+          summary: modelSummary,
+          levels: v ? { overall: v.overall, ...(v.validate ? { validate: v.validate } : {}), worst: v.worst, verdict: judged, renders: v.renders } : undefined,
         };
       }
       if (summary.planner === "dynamics") {

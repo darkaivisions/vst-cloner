@@ -6,7 +6,7 @@ import { Progress } from "../progress.ts";
 import type { CaptureResult, CloneResult, PluginEntry, PluginInfo, ProfileSummary } from "../types.ts";
 
 /** Main workflow: 1 choose plugin → 2 capture → 3 build the clone. */
-type Mode = "eq" | "dynamics" | "distortion" | "generic";
+type Mode = "eq" | "dynamics" | "distortion" | "delay" | "reverb" | "generic";
 
 export class CloneView {
   readonly element: HTMLElement;
@@ -122,7 +122,7 @@ export class CloneView {
     this.update();
     try {
       this.info = await call<PluginInfo>("plugins.info", { path: plugin.path });
-      this.mode = this.info.eq ? "eq" : this.info.dynamics ? "dynamics" : this.info.distortion ? "distortion" : "generic";
+      this.mode = this.info.eq ? "eq" : this.info.dynamics ? "dynamics" : this.info.distortion ? "distortion" : this.info.delay ? "delay" : this.info.reverb ? "reverb" : "generic";
     } catch (error) {
       clear(this.details);
       this.details.appendChild(h("div.error-box", {}, `Plugin konnte nicht geladen werden: ${(error as Error).message}`));
@@ -149,7 +149,11 @@ export class CloneView {
             ? h("span.badge.good", {}, "Kompressor/Gate erkannt")
             : info.distortion
               ? h("span.badge.good", {}, "Verzerrer erkannt")
-              : h("span.badge.muted", {}, "weder EQ, Kompressor/Gate noch Verzerrer erkannt")),
+              : info.delay
+                ? h("span.badge.good", {}, "Delay erkannt")
+                : info.reverb
+                  ? h("span.badge.good", {}, "Hall erkannt")
+                  : h("span.badge.muted", {}, "keine klonbare Effektklasse erkannt")),
     );
   }
 
@@ -165,6 +169,8 @@ export class CloneView {
       option("eq", "EQ-Messung", Boolean(info?.eq)),
       option("dynamics", "Dynamik-Messung", Boolean(info?.dynamics)),
       option("distortion", "Verzerrer-Messung", Boolean(info?.distortion)),
+      option("delay", "Delay-Messung", Boolean(info?.delay)),
+      option("reverb", "Hall-Messung", Boolean(info?.reverb)),
       option("generic", "Allgemein", Boolean(info)),
     );
     this.captureHint.textContent = !info
@@ -175,7 +181,11 @@ export class CloneView {
           ? `${info.dynamics.renders} Einstellungen à ~27 s Messsignal (Pegeltreppe, Bursts, lange Pausen für langsames Release) – jeder Regler einzeln und in Zufallskombinationen. Dauert meist unter einer Minute.`
           : this.mode === "distortion" && info.distortion
             ? `${info.distortion.renders} Einstellungen à ~${info.distortion.signalSeconds} s Messsignal (Sinus-Pegeltreppen bei mehreren Frequenzen, Rauschen, leiser Sweep) – jeder Regler einzeln und in Zufallskombinationen. Das Analysieren beim Klonen dauert danach etwa 2 Minuten.`
-            : `${info.genericRenders} Einstellungen – jeder Parameter einzeln und in Zufallskombinationen. Klone sind bisher nur für EQs, Kompressoren, Gates/Expander und Verzerrer möglich.`;
+            : this.mode === "delay" && info.delay
+              ? `${info.delay.renders} Einstellungen à ~${info.delay.signalSeconds} s Messsignal (Impuls, lange Stille, Rauschburst) – jeder Regler einzeln und in Zufallskombinationen. Dauert meist unter einer Minute.`
+              : this.mode === "reverb" && info.reverb
+                ? `${info.reverb.renders} Einstellungen à ~${info.reverb.signalSeconds} s Messsignal (ein Impuls und sein Ausklang) – jeder Regler einzeln und in Zufallskombinationen. Dauert meist unter einer Minute.`
+                : `${info.genericRenders} Einstellungen – jeder Parameter einzeln und in Zufallskombinationen. Klone sind bisher nur für EQs, Kompressoren, Gates/Expander, Verzerrer, Delays und Hall möglich.`;
     this.captureButton.disabled = !info || Boolean(this.cloneJob);
     this.captureButton.textContent = this.captureJob ? "Abbrechen" : "Messen starten";
     this.captureButton.classList.toggle("danger", Boolean(this.captureJob));
@@ -253,12 +263,14 @@ export class CloneView {
 
   private renderResult(result: CloneResult) {
     clear(this.result);
-    const d = result.dynamics;
-    if (result.kind === "dynamics" && d) {
+    // compressors, delays and reverbs report the same numbers; only what was compared differs
+    const d = result.kind === "dynamics" ? result.dynamics : result.kind === "delay" || result.kind === "reverb" ? result.levels : undefined;
+    if (d) {
+      const compared = result.kind === "delay" ? "Echo-Pegel über Zeit und Frequenzband weicht" : result.kind === "reverb" ? "Ausklang (Pegel und Abklingen pro Band) weicht" : "Pegelverlauf weicht";
       this.result.append(
         h("div.verdict", { class: verdictClass(d.verdict) },
           h("div.verdict-main", {}, d.verdict),
-          h("div.verdict-sub", {}, `Pegelverlauf weicht im Mittel ${formatDb(d.overall.rmsDb)} vom Original ab · ${d.renders} Einstellungen geprüft` +
+          h("div.verdict-sub", {}, `${compared} im Mittel ${formatDb(d.overall.rmsDb)} vom Original ab · ${d.renders} Einstellungen geprüft` +
             (d.validate ? ` · unbekannte Kombinationen ${formatDb(d.validate.rmsDb)}` : ""))),
         h("ul.model-summary", {}, ...(result.summary ?? []).map((line) => h("li", {}, line))),
       );

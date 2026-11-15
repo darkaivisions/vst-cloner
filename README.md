@@ -11,7 +11,7 @@ Gesamtplan und Meilensteine: [PLAN.md](PLAN.md) · Profilformat: [docs/profile-f
 **Stand: Meilenstein 6 in Arbeit** – Desktop-App, Capture-Host, Profilformat und LLM-Anbindung funktionieren.
 Klone (VST3/LV2) gibt es für **parametrische EQs**, **Kompressoren/Limiter**, **Gates/Expander** und
 **Verzerrer** (Overdrive/Distortion), jeweils mit nachgebauter Oberfläche des Originals.
-**Delays** und **Reverbs** lassen sich in einer ersten Fassung über die Kommandozeile klonen (noch nicht in der App).
+**Delays** und **Reverbs** lassen sich in einer ersten Fassung klonen (noch ohne nachgebaute Oberfläche).
 Amp-Simulationen mit NAM, Modulationseffekte und der Builder-Agent (Faust) für alle übrigen Plugins folgen.
 Getestet unter Linux mit nativen VST3-/LV2-Plugins und Windows-Plugins über yabridge.
 
@@ -59,7 +59,7 @@ Test). Unten zeigt das **Protokoll** jeden Schritt, nach Phasen gegliedert; „D
 Ausgaben von Compiler und Host ein.
 
 Im Bereich Klonen wählt die App den Messmodus passend zum Plugin: **EQ-Messung**, **Kompressor-Messung**,
-**Verzerrer-Messung** oder **Allgemein** (Delay und Reverb vorerst nur über die Kommandozeile). Plugins, deren Kategorie eine andere Effektklasse nennt
+**Verzerrer-Messung**, **Delay-Messung**, **Hall-Messung** oder **Allgemein**. Plugins, deren Kategorie eine andere Effektklasse nennt
 (Delay, Hall, Modulation …), werden dabei nicht als Kompressor oder Verzerrer eingestuft. Beim Klonen kann sie außerdem die **Oberfläche des Originals nachbauen** (das Original
 wird dafür einmal unsichtbar geöffnet, siehe unten).
 

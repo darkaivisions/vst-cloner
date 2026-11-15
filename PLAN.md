@@ -178,7 +178,7 @@ vst-cloner/
 2. **LLM-Layer** ✔ – Anbieter, Auto-Discovery, Fähigkeitstest, Keychain, Kosten, Rollen; CLI `vch llm …`
 3. **EQ/Filter** ✔ – Pro-Q 3: 0,10 dB über 149 Einstellungen
    - Offen: linearphasiger Modus
-4. **Desktop-Oberfläche** ✔ – Klonen, Bibliothek, KI-Modelle, Protokoll; Modi EQ, Dynamik, Verzerrer, Allgemein
+4. **Desktop-Oberfläche** ✔ – Klonen, Bibliothek, KI-Modelle, Protokoll; Modi EQ, Dynamik, Verzerrer, Delay, Hall, Allgemein
    - **4b Oberflächen-Nachbau** (läuft) – Wiggle-Test, OCR, Nadeln, Pegelbalken, Schalter-Erkennung;
      74–82 % Struktur-, 95–98 % Farbähnlichkeit an vier Plugins
      - Offen: XY-Punkte, farbige Vollringe um Regler, Regler mit Verlauf und kleinem Zeiger (DS1), Skalen der
@@ -194,8 +194,8 @@ vst-cloner/
        Zeitbereichs-Term im Fit
    - **5c Amps mit NAM** – lokales Training (CPU/GPU), Swanky Amp, TONE3000
 6. **Delay + Reverb + Modulation**
-   - **6a Delay + Reverb** ← als Nächstes – erste Fassung in CLI und Batch ✔
-     - Offen: Modi in App und Bridge, unbekannte Kombinationen (Delay), Oberfläche, Batch-Lauf für EQ
+   - **6a Delay + Reverb** ← in Arbeit – erste Fassung in CLI, Batch und App ✔
+     - Offen: unbekannte Kombinationen (Delay), Oberfläche, Batch-Lauf für EQ
    - **6b Modulation** – Chorus, Flanger, Phaser, Tremolo
 7. **Builder-Agent (Weg B)** – Faust-Schleife, Analyst-Agent mit REA und `spec.md`, Clean-Room-Trennung,
    Klassifizierung durch LLM für Plugins ohne Klasse

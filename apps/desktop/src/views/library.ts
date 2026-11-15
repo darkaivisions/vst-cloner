@@ -6,7 +6,7 @@ import type { ProfileSummary } from "../types.ts";
 import { ProfileDetailsDialog } from "./details.ts";
 
 /** measurement types a clone can be built from */
-const CLONEABLE = new Set(["eq", "dynamics", "distortion"]);
+const CLONEABLE = new Set(["eq", "dynamics", "distortion", "delay", "reverb"]);
 
 /** Saved profiles: rebuild clones without the original, export, import, delete. */
 export class LibraryView {
@@ -50,7 +50,7 @@ export class LibraryView {
             h("div.profile-meta", {},
               h("span", {}, formatDate(p.createdAt)),
               h("span", {}, `${p.renders} Messungen`),
-              h("span", {}, { eq: "EQ-Messung", dynamics: "Dynamik-Messung", distortion: "Verzerrer-Messung" }[p.planner] ?? "allgemein"),
+              h("span", {}, { eq: "EQ-Messung", dynamics: "Dynamik-Messung", distortion: "Verzerrer-Messung", delay: "Delay-Messung", reverb: "Hall-Messung" }[p.planner] ?? "allgemein"),
               h("span", {}, formatBytes(p.bytes)))),
           p.verdict
             ? h("span.pill", { class: verdictClass(p.verdict), title: `Abweichung ${formatDb(p.rmsDb ?? 0)}` }, `Klon: ${p.verdict}`)
