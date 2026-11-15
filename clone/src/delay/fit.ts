@@ -1,8 +1,8 @@
 import { decodeWav, type Profile } from "@vst-cloner/profile";
 import { fft, nextPowerOfTwo } from "../dsp/fft.ts";
 import { nelderMead } from "../dsp/optimize.ts";
-import { tableAt, type Errors, type ParamTable } from "../dynamics/fit.ts";
-import { renderCondition } from "../dynamics/plan.ts";
+import { pchip, tableAt, type Errors, type ParamTable } from "../dynamics/fit.ts";
+import { renderCondition, SWITCH_STATES } from "../dynamics/plan.ts";
 import { HP_OFF, hpActive, LP_OFF, lpActive, MAX_FEEDBACK_DB, OFF_DB, onePole, packDelay, processDelay, unpackDelay, type DelayParams, type DelayStructure } from "./model.ts";
 
 export interface DelayInput {
@@ -111,8 +111,14 @@ export function compareResponses(model: ArrayLike<number>, measured: ArrayLike<n
 
 /** analysis bands (Hz, logarithmic) */
 const BANDS = Array.from({ length: 25 }, (_, i) => 60 * (16000 / 60) ** (i / 24));
-/** repeats quieter than this (peak, re. the unit impulse) are not analysed */
-const MIN_ECHO = 5e-4;
+/**
+ * Repeats quieter than this are not analysed: relative to the loudest sample of the response – an output level
+ * turned far down makes everything quiet, not the echo inaudible – and absolutely, where only rounding is left.
+ */
+const MIN_ECHO_RELATIVE = 1e-3;
+const MIN_LEVEL = 2e-6;
+/** a further repeat this far below the first one is the end of the tail */
+const MIN_REPEAT_RELATIVE = 3e-3;
 /** the dry signal ends, and the first repeat can begin, after this time */
 const DRY_SECONDS = 0.0015;
 
@@ -206,6 +212,27 @@ const peakIn = (h: ArrayLike<number>, from: number, to: number) => {
   return { at, value: h[at] ?? 0, abs: top };
 };
 
+/**
+ * Where the repeats begin: the first millisecond (after the dry signal) whose level rises clearly above what came
+ * in the 30 ms before. A dry path with filters or tubes rings on for a while – that tail only falls, and is no
+ * repeat, however loud it is next to a quiet echo. Returns −1 if nothing rises.
+ */
+function repeatOnset(h: ArrayLike<number>, guard: number, sampleRate: number, audible: number): number {
+  const block = Math.max(1, Math.round(0.001 * sampleRate)), recent = 30;
+  const first = Math.ceil(guard / block), count = Math.floor(h.length / block);
+  const level = (b: number) => peakIn(h, b * block, (b + 1) * block).abs;
+  const levels: number[] = [];
+  for (let b = first; b < count; b++) {
+    const current = level(b);
+    // right after the guard there is nothing to compare with: a repeat only if no dry signal came before
+    let before = levels.length ? 0 : peakIn(h, 0, first * block).abs > audible ? Infinity : 0;
+    for (let k = Math.max(0, levels.length - recent); k < levels.length; k++) before = Math.max(before, levels[k]!);
+    if (current > audible && current > 2 * before) return b * block;
+    levels.push(current);
+  }
+  return -1;
+}
+
 export interface DelayAnalysis {
   params: DelayParams;
   structure: DelayStructure;
@@ -223,10 +250,13 @@ export function analyseResponse(h: ArrayLike<number>, sampleRate: number, fallba
   const off: DelayParams = fallback ?? { delaySeconds: 0.25, dryDb: OFF_DB, wetDb: OFF_DB, feedbackDb: OFF_DB, loopLp: LP_OFF, loopHp: HP_OFF, wetLp: LP_OFF, wetHp: HP_OFF };
   const guard = Math.round(DRY_SECONDS * sampleRate);
   const dry = peakIn(h, 0, guard);
-  const dryDb = dry.abs > 1e-4 ? 20 * Math.log10(dry.abs) : OFF_DB;
+  const top = peakIn(h, 0, h.length).abs;
+  const audible = Math.max(MIN_LEVEL, MIN_ECHO_RELATIVE * top);
+  const dryDb = dry.abs > audible ? Math.max(OFF_DB, 20 * Math.log10(dry.abs)) : OFF_DB;
   const structure: DelayStructure = { drySign: dry.value < 0 ? -1 : 1, wetSign: 1, feedbackSign: 1 };
-  const first = peakIn(h, guard, h.length);
-  if (first.abs < MIN_ECHO) return { params: { ...off, dryDb, wetDb: OFF_DB }, structure, echoes: 0 };
+  const onset = repeatOnset(h, guard, sampleRate, audible);
+  const first = onset < 0 ? { at: guard, value: 0, abs: 0 } : peakIn(h, onset, h.length);
+  if (first.abs < audible) return { params: { ...off, dryDb, wetDb: OFF_DB }, structure, echoes: 0 };
 
   // the first repeat is the loudest one; an earlier, quieter one would be a pre-echo of a multi-tap delay
   const delay = first.at;
@@ -241,7 +271,7 @@ export function analyseResponse(h: ArrayLike<number>, sampleRate: number, fallba
   let echoes = 1, previous = first;
   for (let k = 2; k * delay + length < h.length && k <= 6; k++) {
     const peak = peakIn(h, k * delay - pre, k * delay + Math.min(length, Math.floor(delay / 2)));
-    if (peak.abs < MIN_ECHO) break;
+    if (peak.abs < Math.max(MIN_LEVEL, MIN_REPEAT_RELATIVE * first.abs)) break;
     if (k === 2) structure.feedbackSign = peak.value * previous.value < 0 ? -1 : 1;
     const a = levelsOf(k - 1), b = levelsOf(k);
     ratios.push(b.map((v, i) => v - a[i]!));
@@ -291,6 +321,11 @@ export interface DelayTables {
   base: DelayParams;
   baseValues: { index: number; value: number }[];
   tables: ParamTable[];
+  /**
+   * How the times of several controls combine. Missing: they multiply (a tempo and a note value) – the changes
+   * of the packed (logarithmic) value add up. "sum": the changes in seconds add up (a delay and an offset).
+   */
+  timeRule?: "sum";
 }
 
 /**
@@ -319,6 +354,76 @@ export interface DelayModel extends DelayTables {
   };
 }
 
+/** a control moves the delay time if the longest measured time is this much longer than the shortest */
+const TIME_CONTROL_RATIO = 1.2;
+/** points added between two sweep points of a time control */
+const TIME_STEPS = 8;
+
+/**
+ * Table of a delay-time control, made exact enough for echoes to line up:
+ * - Sweep points without a visible repeat (time so short that it merges with the dry signal, or longer than the
+ *   measurement) say nothing about time and levels. Their time is continued from the neighbouring points, the
+ *   rest is taken from the nearest point that shows a repeat.
+ * - A control that is linear in seconds (or, a tempo, in the rate) bends in the logarithmic packed value, sharply
+ *   near zero. Where the measured points lie on a line on such a scale rather than in log seconds, points on that
+ *   line are added between them, so the interpolation of the table (the same in the plugin) follows it.
+ */
+export function refineTimeTable(table: ParamTable, visible: (value: number) => boolean): void {
+  if (table.discrete) return;
+  const pts = table.points;
+  const seen = pts.filter((pt) => visible(pt.value));
+  if (seen.length < 3) return;
+  const times = seen.map((pt) => pt.packed[0]!);
+  if (Math.max(...times) - Math.min(...times) < Math.log(TIME_CONTROL_RATIO)) return;
+
+  // which scale is the control linear in – seconds, their logarithm, or the rate (a tempo control)? Each inner
+  // point is predicted from its neighbours on every scale.
+  const xs = seen.map((pt) => pt.value);
+  const scales: { name: string; to: (logSeconds: number) => number; from: (v: number) => number }[] = [
+    { name: "log", to: (l) => l, from: (v) => v },
+    { name: "seconds", to: (l) => Math.exp(l), from: (v) => Math.log(Math.max(v, 1e-4)) },
+    { name: "rate", to: (l) => Math.exp(-l), from: (v) => -Math.log(Math.max(v, 1e-2)) },
+  ];
+  const errorOn = (scale: (typeof scales)[number]) => {
+    let error = 0;
+    for (let i = 1; i < seen.length - 1; i++) {
+      const t = (xs[i]! - xs[i - 1]!) / (xs[i + 1]! - xs[i - 1]!);
+      const a = scale.to(times[i - 1]!), b = scale.to(times[i + 1]!);
+      error += Math.abs(scale.from(a + t * (b - a)) - times[i]!);
+    }
+    return error;
+  };
+  const chosen = scales.reduce((best, scale) => (errorOn(scale) < errorOn(best) - 1e-12 ? scale : best));
+  const linear = chosen.name !== "log";
+  const scale = chosen.to, unscale = chosen.from;
+  const ys = times.map(scale);
+  /** time on the control's scale: interpolated between the visible points, continued along the outer two beyond */
+  const timeAt = (value: number) => {
+    const n = xs.length;
+    if (value < xs[0]!) return ys[0]! + ((value - xs[0]!) * (ys[1]! - ys[0]!)) / (xs[1]! - xs[0]!);
+    if (value > xs[n - 1]!) return ys[n - 1]! + ((value - xs[n - 1]!) * (ys[n - 1]! - ys[n - 2]!)) / (xs[n - 1]! - xs[n - 2]!);
+    return pchip(xs, ys, value);
+  };
+
+  for (const pt of pts) {
+    if (visible(pt.value)) continue;
+    const nearest = seen.reduce((best, other) => (Math.abs(other.value - pt.value) < Math.abs(best.value - pt.value) ? other : best));
+    pt.packed = [unscale(timeAt(pt.value)), ...nearest.packed.slice(1)];
+  }
+  if (!linear) return;
+  const original: ParamTable = { ...table, points: pts.map((pt) => ({ value: pt.value, packed: [...pt.packed] })) };
+  const dense: ParamTable["points"] = [];
+  for (let i = 0; i < pts.length; i++) {
+    dense.push(pts[i]!);
+    if (i === pts.length - 1) break;
+    for (let k = 1; k < TIME_STEPS; k++) {
+      const value = pts[i]!.value + (k / TIME_STEPS) * (pts[i + 1]!.value - pts[i]!.value);
+      dense.push({ value, packed: [unscale(timeAt(value)), ...tableAt(original, value).slice(1)] });
+    }
+  }
+  table.points = dense;
+}
+
 const summarize = (rows: DelayRenderReport[]): Errors | undefined =>
   rows.length ? { rmsDb: rows.reduce((s, r) => s + r.rmsDb, 0) / rows.length, maxDb: Math.max(...rows.map((r) => r.maxDb)) } : undefined;
 
@@ -332,6 +437,7 @@ export function activeVariant<V extends { index: number; range: [number, number]
 
 const combine = (model: DelayTables, values: Map<number, number>): DelayParams => {
   const packed = packDelay(model.base);
+  let seconds = Math.exp(packed[0]!);
   const baseValues = new Map(model.baseValues.map((v) => [v.index, v.value]));
   for (const table of model.tables) {
     const reference = baseValues.get(table.index);
@@ -339,7 +445,9 @@ const combine = (model: DelayTables, values: Map<number, number>): DelayParams =
     if (value === undefined || reference === undefined) continue;
     const at = tableAt(table, value), ref = tableAt(table, reference);
     for (let i = 0; i < packed.length; i++) packed[i]! += at[i]! - ref[i]!;
+    seconds += Math.exp(at[0]!) - Math.exp(ref[0]!);
   }
+  if (model.timeRule === "sum") packed[0] = Math.log(Math.max(seconds, 1e-4));
   return unpackDelay(packed);
 };
 
@@ -390,6 +498,8 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
   const fitTables = (baseObservation: DelayObservation, sweeps: DelayObservation[], fallback?: DelayParams): DelayTables & { echoes: number } => {
     const baseFit = analyseResponse(baseObservation.response, input.sampleRate, fallback);
     const tables = new Map<number, ParamTable>();
+    /** per table: plugin values whose render shows a repeat */
+    const visible = new Map<number, Set<number>>();
     for (const o of sweeps) {
       onProgress?.(done++, train.length, o.label);
       const p = swept(o)!;
@@ -399,6 +509,9 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
         ?? { index: p.index, name: info.name, discrete: info.discrete, points: [{ value: baseValues.get(p.index)!, packed: packDelay(baseFit.params) }] };
       table.points.push({ value: p.value, packed: packDelay(fit.params) });
       tables.set(p.index, table);
+      const shown = visible.get(p.index) ?? new Set(baseFit.echoes > 0 ? [baseValues.get(p.index)!] : []);
+      if (fit.echoes > 0) shown.add(p.value);
+      visible.set(p.index, shown);
     }
     for (const [index, table] of tables) {
       // points at the same plugin value carry no information and break the interpolation (see fitDynamics)
@@ -406,7 +519,10 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
       // a control that changes nothing needs no table
       const moves = table.points.some((pt) => pt.packed.some((v, k) => Math.abs(v - table.points[0]!.packed[k]!) > 1e-6));
       if (table.points.length < 2 || !moves) tables.delete(index);
-      else table.points.sort((a, b) => a.value - b.value);
+      else {
+        table.points.sort((a, b) => a.value - b.value);
+        refineTimeTable(table, (value) => visible.get(index)!.has(value));
+      }
     }
     return {
       structure: baseFit.structure,
@@ -421,7 +537,34 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
     return compareResponses(modelResponse(predicted.params, predicted.structure, input), o.response, input.sampleRate);
   };
 
-  const { echoes, ...main } = fitTables(base, train.filter((o) => !condition(o)));
+  const { echoes, ...fitted } = fitTables(base, train.filter((o) => !condition(o)));
+  const main: DelayTables = fitted;
+
+  // Several controls that move the delay time: do their changes multiply or add up? Decided on the combinations
+  // measured for the fit, by the time of the first repeat alone.
+  const timeTables = main.tables.filter((t) => {
+    const times = t.points.map((pt) => pt.packed[0]!);
+    return Math.max(...times) - Math.min(...times) > Math.log(TIME_CONTROL_RATIO);
+  });
+  if (timeTables.length >= 2) {
+    const switchLike = new Set(parameters.filter((p) => p.discrete && p.numSteps >= 2 && p.numSteps <= SWITCH_STATES).map((p) => p.index));
+    const mixes = observations.filter((o) => o.purpose === "train" && o.kind === "random"
+      && o.params.every((p) => !switchLike.has(p.index) || Math.abs(p.value - (baseValues.get(p.index) ?? p.value)) < 1e-4));
+    const errors = { product: [] as number[], sum: [] as number[] };
+    for (const o of mixes) {
+      const values = new Map(o.params.map((p) => [p.index, p.value]));
+      const product = combine(main, values), sum = combine({ ...main, timeRule: "sum" }, values);
+      for (const [rule, predicted] of [["product", product], ["sum", sum]] as const) {
+        const seen = analyseResponse(o.response, input.sampleRate, predicted);
+        if (seen.echoes > 0) errors[rule].push(Math.abs(Math.log(seen.params.delaySeconds / predicted.delaySeconds)));
+      }
+    }
+    const median = (list: number[]) => [...list].sort((a, b) => a - b)[list.length >> 1] ?? Infinity;
+    // the sum must be clearly better where the product is clearly wrong (more than 1 % in time)
+    if (errors.sum.length >= 4 && errors.product.length >= 4 && median(errors.product) > 0.01 && median(errors.sum) < 0.5 * median(errors.product)) {
+      main.timeRule = "sum";
+    }
+  }
 
   // switch positions: a model of its own where it predicts the renders of that position clearly better
   const variants: DelayVariant[] = [];
@@ -435,7 +578,7 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
   for (const position of positions.values()) {
     const start = train.find((o) => !condition(o) && swept(o)!.index === position.index && Math.abs(swept(o)!.value - position.value) < 1e-4);
     if (!start) continue;
-    const { echoes: _, ...own } = fitTables(start, position.sweeps, main.base);
+    const { echoes: _, ...own }: DelayTables & { echoes: number } = { ...fitTables(start, position.sweeps, main.base), ...(main.timeRule ? { timeRule: main.timeRule } : {}) };
     // Tables reproduce their own sweep points by construction, so a better fit of those proves nothing. The
     // decision is made on the random combinations measured in this position, which no table has seen.
     const checks = observations.filter((o) => o.purpose === "train" && o.kind === "random" && o.params.some((p) => p.index === position.index && Math.abs(p.value - position.value) < 1e-4));

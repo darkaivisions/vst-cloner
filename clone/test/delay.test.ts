@@ -63,6 +63,10 @@ test("delay tables combine: time controls multiply, levels add in dB", () => {
   const p = predictDelay(model, new Map([[0, 1], [1, 1]]));
   assert.ok(Math.abs(p.delaySeconds - 0.25) < 1e-9);
   assert.ok(Math.abs(p.wetDb + 12) < 1e-9);
+  // delay and offset: with the sum rule the changes add up in seconds (0.25 + 0.25 − 0.125)
+  const summed = predictDelay({ ...model, timeRule: "sum" }, new Map([[0, 1], [1, 1]]));
+  assert.ok(Math.abs(summed.delaySeconds - 0.375) < 1e-9);
+  assert.ok(Math.abs(summed.wetDb + 12) < 1e-9);
 });
 
 const parameter = (index: number, name: string, value = 0.5): Parameter => ({
@@ -94,4 +98,29 @@ test("delay probe opens the mix when the initial state has no echo", () => {
   assert.equal(probe.candidates.length, 5);
   assert.equal(probe.choose([dryOnly, withEcho, withEcho, withEcho, withEcho], input, SR), 1);
   assert.equal(probe.choose([withEcho, withEcho, withEcho, withEcho, withEcho], input, SR), 0);
+});
+
+test("time tables: points without a visible repeat are continued, a control linear in seconds stays linear", async () => {
+  const { refineTimeTable } = await import("../src/delay/fit.ts");
+  const { tableAt } = await import("../src/dynamics/fit.ts");
+  // delay = 2 s × value; at 0 the repeat merges with the dry signal: the analysis fell back to the base time and "no wet"
+  const seconds = (value: number) => 2 * value;
+  const values = [0, 0.05, 0.15, 0.3, 0.5, 0.7, 0.85, 0.95, 1];
+  const point = (value: number) => ({ value, packed: value === 0 ? [Math.log(1), -80, 0, 0] : [Math.log(seconds(value)), -6, 0, 0] });
+  const table = { index: 0, name: "Time", discrete: false, points: values.map(point) };
+  refineTimeTable(table, (value) => value > 0);
+  assert.ok(table.points.length > values.length, "points added between the sweep points");
+  for (const value of [0.02, 0.07, 0.1, 0.22, 0.6, 0.97]) {
+    const at = tableAt(table, value);
+    assert.ok(Math.abs(Math.exp(at[0]!) / seconds(value) - 1) < 0.003, `time at ${value}: ${Math.exp(at[0]!)} s`);
+    assert.equal(Math.round(at[1]!), -6, "level of the nearest visible point");
+  }
+  // a control that is logarithmic in time keeps its points
+  const log = { index: 0, name: "Time", discrete: false, points: values.map((value) => ({ value, packed: [Math.log(0.01 * 200 ** value), -6] })) };
+  refineTimeTable(log, () => true);
+  assert.equal(log.points.length, values.length);
+  // a level control is no time control
+  const level = { index: 1, name: "Level", discrete: false, points: values.map((value) => ({ value, packed: [Math.log(0.25), -60 + 60 * value] })) };
+  refineTimeTable(level, (value) => value > 0.1);
+  assert.deepEqual(level.points.map((p) => p.packed[1]), values.map((value) => -60 + 60 * value));
 });

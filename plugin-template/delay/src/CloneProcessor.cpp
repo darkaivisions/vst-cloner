@@ -66,6 +66,19 @@ void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     }
     double target[vch::numPacked];
     vch::predictPacked (model->basePacked, vch::numPacked, model->tables, model->numTables, valueOf, target);
+    if (model->timeSum)
+    {
+        // combine() in fit.ts
+        double at[vch::numPacked], ref[vch::numPacked];
+        double seconds = std::exp (model->basePacked[0]);
+        for (int t = 0; t < model->numTables; ++t)
+        {
+            vch::tableAt (model->tables[t], vch::numPacked, valueOf (model->tables[t].param), at);
+            vch::tableAt (model->tables[t], vch::numPacked, model->tables[t].baseValue, ref);
+            seconds += std::exp (at[0]) - std::exp (ref[0]);
+        }
+        target[0] = std::log (std::max (seconds, 1e-4));
+    }
     const bool polarityChanged = structure.drySign != model->structure.drySign || structure.wetSign != model->structure.wetSign
                                  || structure.feedbackSign != model->structure.feedbackSign;
     structure = model->structure;

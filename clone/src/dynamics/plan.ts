@@ -146,7 +146,7 @@ export function renderCondition(
  * Single-parameter sweeps (training) plus random combinations (validation) of all selected parameters.
  * Shared by the dynamics and distortion planners.
  */
-export function planSweeps(parameters: Parameter[], options: PlanOptions, ignored: RegExp, extra: { switches?: boolean } = {}): CapturePlan {
+export function planSweeps(parameters: Parameter[], options: PlanOptions, ignored: RegExp, extra: { switches?: boolean; combinations?: number } = {}): CapturePlan {
   const exclude = options.exclude ? new RegExp(`${options.exclude.source}|${ignored.source}`, "i") : ignored;
   const selected = selectParameters(parameters, { ...(options.include ? { include: options.include } : {}), exclude });
   const stepped = (p: Parameter) => p.discrete && p.numSteps >= 2 && p.numSteps <= 64;
@@ -211,6 +211,21 @@ export function planSweeps(parameters: Parameter[], options: PlanOptions, ignore
         }
       }
       if (renders.length + block.length + options.random <= options.maxRenders) renders.push(...block);
+    }
+  }
+  // Combinations for the fit (not for validation): from them it learns how controls work together. Switches
+  // stay in their base position – what they change is the business of the models per position.
+  if (extra.combinations && renders.length + extra.combinations + options.random <= options.maxRenders) {
+    const mixes = createRandom(options.seed + 500);
+    const isSwitch = (p: Parameter) => stepped(p) && p.numSteps <= SWITCH_STATES;
+    for (let i = 0; i < extra.combinations; i++) {
+      renders.push({
+        kind: "random", purpose: "train", label: `Kombination ${i + 1}`,
+        params: [
+          ...fixed.filter((f) => !selected.some((p) => p.index === f.index)),
+          ...selected.map((p) => ({ index: p.index, value: isSwitch(p) ? base(p) : stepped(p) ? Math.floor(mixes() * p.numSteps) / (p.numSteps - 1) : mixes() })),
+        ],
+      });
     }
   }
   const random = createRandom(options.seed);

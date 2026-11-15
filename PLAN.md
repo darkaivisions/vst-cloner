@@ -138,7 +138,7 @@ Stand der Batch-Läufe (12.–15.11.):
 | Klasse | Plugins | Ergebnis |
 |---|---|---|
 | Dynamik | 9 Kompressoren/Limiter + ZamGate | 0,27–2,32 dB; 2× ausgezeichnet, 4× sehr gut, 2× gut, 1× brauchbar, 1× „keine Kompression gemessen“; unbekannte Kombinationen 0,43–9,72 dB |
-| Delay | 12 | 1× sehr gut, 3× gut, 3× brauchbar, 5× ungenau; unbekannte Kombinationen meist 11–26 dB |
+| Delay | 12 | 3× sehr gut (ZamDelay 1,41 dB, Gxdigital_delay 1,95/1,94 dB), 2× brauchbar, 6× ungenau, 1× „kein Echo gemessen“; unbekannte Kombinationen 0,78–6,1 dB bei vier Plugins, sonst 13–26 dB |
 | Reverb | 18 (+1 Fehler beim Messen) | 5× sehr gut, 6× gut, 6× brauchbar, 1× ungenau; unbekannte Kombinationen 2–30 dB |
 | Verzerrer | 73 (+4 Fehler: 3× Absturz beim Messen, 1× Klon lädt nicht) | 0,06–18,4 dB; 12× ausgezeichnet, 20× sehr gut, 14× gut, 14× brauchbar, 13× ungenau; unbekannte Kombinationen meist nahe am Gesamtwert, Ausreißer bis 28 dB |
 | EQ | 5 (+1 Fehler: ZamEQ2 gibt im Mess-Host nur NaN aus) | MultiEQ 0,04 dB (ausgezeichnet), x42-eq 0,47 dB (sehr gut, jetzt mit Shelves und Hoch-/Tiefpass), ZamGEQ31 0,66 dB, GxBarkGraphicEQ 0,62 dB, GxGraphicEQ 0,83 dB (gut); mehrere Bänder zugleich 0,25–2,13 dB |
@@ -199,7 +199,14 @@ vst-cloner/
    - **5c Amps mit NAM** – lokales Training (CPU/GPU), Swanky Amp, TONE3000
 6. **Delay + Reverb + Modulation**
    - **6a Delay + Reverb** ← in Arbeit – erste Fassung in CLI, Batch und App ✔
-     - Offen: unbekannte Kombinationen (Delay), Oberfläche
+     - Delay-Kombinationen, erster Schritt ✔ – Echo-Erkennung relativ zum Pegel und am Anstieg, Zeit-Tabellen
+       (Punkte ohne sichtbares Echo, Regler linear in Sekunden oder Tempo), Kombinationsmessungen für den Fit,
+       Summenregel für mehrere Zeitregler; ZamDelay 2,71 → 0,78 dB, GxDelay-Stereo 10,9 → 6,1 dB
+     - Offen bei Delays: ZynEcho (24 dB, Ursache offen), Sync- und Modus-Schalter, die andere Regler umdeuten
+       (Tal-Dub-3, Gxdigital_delay, GxEcho), Rückgang von GxEcho-Stereo und GxDelay-Stereo seit dem 12.11.;
+       außerhalb des Modells: Bandecho mit mehreren Köpfen (GxEchoCat), Röhrensättigung (GxTubeDelay),
+       Ducking (Gxduck_delay), DualDelay
+     - Offen: Oberfläche für Delay und Reverb
      - EQ-Erkennung erweitert ✔ – Bandgruppen mit eigenen Formen (MultiEQ), benannte Bänder mit fester Form
        (Lowshelf, Highpass, L/H), Regler grafischer EQs, stufenlos gemeldete Schalter; räumliche Effekte
        (DirectivityShaper) ausgeschlossen; Gegenprobe mit mehreren Bändern zugleich

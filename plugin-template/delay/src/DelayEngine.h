@@ -40,6 +40,8 @@ struct DelayModelData
     const ParamTable* tables;
     int numTables;
     DelayStructure structure;
+    /** timeRule "sum" in fit.ts: the changes of the delay time add up in seconds instead of multiplying */
+    bool timeSum = false;
 };
 
 /** unpackDelay() in model.ts */

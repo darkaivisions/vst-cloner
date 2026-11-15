@@ -44,10 +44,13 @@ export function detectDelay(parameters: Parameter[], category = "", name = ""): 
   return { roles, other };
 }
 
-/** Single-parameter sweeps (training) plus random combinations (validation). */
+/** combinations measured for the fit: how several time controls work together (see fitDelay) */
+export const DELAY_COMBINATIONS = 12;
+
+/** Single-parameter sweeps and a few combinations (training) plus random combinations (validation). */
 export function planDelay(parameters: Parameter[], options: PlanOptions, category = "", name = ""): CapturePlan & { mapping: DelayMapping } {
   const mapping = detectDelay(parameters, category, name);
-  return { ...planSweeps(parameters, options, IGNORED, { switches: true }), mapping };
+  return { ...planSweeps(parameters, options, IGNORED, { switches: true, combinations: DELAY_COMBINATIONS }), mapping };
 }
 
 /** Energy of everything after the first 2 ms of the impulse's answer, relative to the impulse (dB). */

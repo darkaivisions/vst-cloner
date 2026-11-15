@@ -27,12 +27,13 @@ Batch-Läufe über alle installierten Plugins einer Klasse (ohne Oberfläche, St
 | Klasse | Plugins | Klon vs. Original |
 |---|---|---|
 | Kompressoren, Limiter, Gate | 10 | 0,27–2,32 dB (z. B. x42-dpl 0,27 · ZamComp 0,45 · OmniCompressor 0,70 · ZamGate 1,88) |
-| Delays | 12 | 1,96–16,7 dB: 4 gut oder besser, 3 brauchbar, 5 ungenau |
+| Delays | 12 | 1,41–16,2 dB: 3 sehr gut (ZamDelay 1,41 · Gxdigital_delay 1,95), 2 brauchbar, 6 ungenau, 1 ohne messbares Echo |
 | Reverbs | 18 | 1,48–13,0 dB: 11 gut oder besser, 6 brauchbar, 1 ungenau |
 | Verzerrer | 73 | 0,06–18,4 dB: 46 gut oder besser, 14 brauchbar, 13 ungenau (z. B. GxMicroAmp 0,06 · Wolf Shaper 0,44 · GxBoss DS1 1,15 · GxTubeScreamer 1,93) |
 | EQs | 5 | 0,04–0,83 dB: IEM MultiEQ 0,04 · x42-eq 0,47 · ZamGEQ31 0,66 · GxBarkGraphicEQ 0,62 · GxGraphicEQ 0,83 |
 
-Bei Delays und Reverbs weichen Reglerkombinationen, die nicht einzeln gemessen wurden, noch deutlich stärker ab.
+Bei Reverbs und den meisten Delays weichen Reglerkombinationen, die nicht einzeln gemessen wurden, noch deutlich stärker ab
+(Delays: 0,8–6 dB bei vier Plugins, sonst 13–26 dB).
 
 ## Voraussetzungen
 
@@ -176,7 +177,8 @@ npm run vch -- clone mein-delay.vcprofile -o ./mein-delay-clone
 
 - **Delay:** Gemessen wird ein Impuls mit langer Stille (plus Rauschburst). Das Modell ist eine Delay-Line
   mit Feedback, Tief-/Hochpass in der Schleife und im Wet-Pfad sowie Dry- und Wet-Pegel; verglichen wird
-  der Pegel über Zeit und Frequenzband.
+  der Pegel über Zeit und Frequenzband. Zwölf Kombinationsmessungen zeigen dem Fit, ob sich mehrere
+  Zeitregler multiplizieren (Tempo und Notenwert) oder addieren (Delay und Versatz).
 - **Reverb:** Gemessen wird ein Impuls samt Ausklang. Das Modell ist ein Feedback-Delay-Netzwerk hinter
   einem Pre-Delay, das den Ausklang so wiedergibt, wie er klingt: Pegel und Nachhallzeit in drei Bändern,
   Dry-Pegel, Einsatz des Ausklangs. Verglichen werden die Abklingkurven pro Band.
