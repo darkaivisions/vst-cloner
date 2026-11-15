@@ -260,7 +260,7 @@ async function runOne(entry: Pick<PluginEntry, "path" | "name" | "format">, opti
     if (options.effectClass === "eq") {
       const result = await cloneProfile(common);
       const v = result.verify;
-      if (v) row.quality = { value: v.overall.rmsDb, verdict: verdict(v.overall.rmsDb), text: `${v.overall.rmsDb.toFixed(2)} dB (${verdict(v.overall.rmsDb)})` };
+      if (v) row.quality = { value: v.overall.rmsDb, verdict: verdict(v.overall.rmsDb), text: `${v.overall.rmsDb.toFixed(2)} dB (${verdict(v.overall.rmsDb)})`, ...(v.combined ? { validate: v.combined.rmsDb } : {}) };
       if (result.gui) row.gui = { controls: result.gui.controls, ...(result.gui.comparison ? { similarity: result.gui.comparison.similarity } : {}) };
     } else if (options.effectClass === "dynamics") {
       const result = await cloneDynamicsProfile(common);

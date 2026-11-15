@@ -5,7 +5,7 @@ import { pluginInfo, regenerateTestSignal, runHost, type RenderJob } from "@vst-
 import { decodeWav, encodeWav, type Profile } from "@vst-cloner/profile";
 import { cascadeDb } from "./dsp/biquad.ts";
 import { findSegment, logGrid, magnitudeDb, maxDifference, rmsDifference } from "./dsp/response.ts";
-import { extractObservations } from "./eq/fit.ts";
+import { extractCombinations, extractObservations, resolveObservation } from "./eq/fit.ts";
 import { bandSections, type EqModel, type FitStats } from "./eq/model.ts";
 import { cloneParameters } from "./eq/params.ts";
 import type { Logger } from "./build.ts";
@@ -19,6 +19,8 @@ export interface VerifyReport {
   renders: number;
   /** clone vs. original for all settings the model supports exactly */
   overall: FitStats;
+  /** several bands set at once (settings the fit has not seen) */
+  combined?: FitStats;
   /** settings with unsupported shapes or approximated slopes */
   limited: (FitStats & { labels: string[] }) | undefined;
   shapes: VerifyShapeResult[];
@@ -92,17 +94,19 @@ export async function verifyClone(profile: Profile, model: EqModel, clonePath: s
     const impulse = findSegment(profile, "impulse");
     const amplitude = impulse.params?.amplitude ?? 1;
     const observations = extractObservations(profile, model.mapping, grid, new Float64Array(grid.length).fill(model.baselineDb));
-    const fits = new Map(model.shapes.map((s) => [s.label, s.fit]));
+    const cloneCurve = async (renderId: string) => {
+      const wav = decodeWav(await readFile(join(workDir, "out", `${renderId}.wav`)));
+      const ir = wav.channels[0]!.slice(impulse.start, impulse.start + impulse.length).map((v) => v / amplitude);
+      return magnitudeDb(ir, sampleRate, grid);
+    };
 
     const rows: { label: string; shape: string; rms: number; max: number; limited: boolean }[] = [];
     let engineMaxDb = 0;
     let engineWorst = "";
 
     for (const o of observations) {
-      const wav = decodeWav(await readFile(join(workDir, "out", `${o.renderId}.wav`)));
-      const ir = wav.channels[0]!.slice(impulse.start, impulse.start + impulse.length).map((v) => v / amplitude);
-      const cloneDb = magnitudeDb(ir, sampleRate, grid);
-      const fit = fits.get(o.shapeLabel);
+      const cloneDb = await cloneCurve(o.renderId);
+      const { fit, settings } = resolveObservation(model, o);
       // brickwall cuts are exact once the elliptic fit exists
       const approximate = o.approximate && !(o.settings.brickwall && fit?.brickwall);
       rows.push({
@@ -113,11 +117,23 @@ export async function verifyClone(profile: Profile, model: EqModel, clonePath: s
         limited: !fit || approximate,
       });
 
-      const predicted = fit && !approximate ? cascadeDb(bandSections(o.settings, fit, sampleRate), sampleRate, grid) : undefined;
+      const predicted = fit && !approximate ? cascadeDb(bandSections(settings, fit, sampleRate), sampleRate, grid) : undefined;
       const engineDifference = predicted ? maxDifference(predicted, cloneDb) : 0;
       if (engineDifference > engineMaxDb) {
         engineMaxDb = engineDifference;
         engineWorst = o.label;
+      }
+    }
+
+    // several bands at once: the clone against the original, and against the model (engine check)
+    const combinedRows: { rms: number; max: number }[] = [];
+    for (const c of extractCombinations(profile, model, grid)) {
+      const cloneDb = await cloneCurve(c.renderId);
+      combinedRows.push({ rms: rmsDifference(cloneDb, c.measuredDb), max: maxDifference(cloneDb, c.measuredDb) });
+      const engineDifference = maxDifference(c.modelDb, cloneDb);
+      if (engineDifference > engineMaxDb) {
+        engineMaxDb = engineDifference;
+        engineWorst = c.label;
       }
     }
 
@@ -127,7 +143,11 @@ export async function verifyClone(profile: Profile, model: EqModel, clonePath: s
     const worst = [...exact].sort((a, b) => b.rms - a.rms).slice(0, 5).map((r) => ({ label: r.label, rmsDb: r.rms, maxDb: r.max }));
     const limited = limitedRows.length > 0 ? { ...summarize(limitedRows), labels: [...new Set(limitedRows.map((r) => r.shape))] } : undefined;
 
-    return { clone: clonePath, renders: rows.length, overall: summarize(exact), limited, shapes, worst, engineMaxDb, engineWorst };
+    return {
+      clone: clonePath, renders: rows.length, overall: summarize(exact),
+      ...(combinedRows.length ? { combined: summarize(combinedRows) } : {}),
+      limited, shapes, worst, engineMaxDb, engineWorst,
+    };
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }

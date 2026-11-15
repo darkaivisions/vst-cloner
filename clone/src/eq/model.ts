@@ -19,6 +19,8 @@ export interface ShapeFit {
   qMode?: CutQMode;
   /** tilt shelf only: 1 = first order, 2 = second order */
   tiltOrder?: 1 | 2;
+  /** cuts of a band without slope control: filter order found by the fit */
+  order?: number;
   /** cuts with a "Brickwall" slope: elliptic lowpass prototype (passband edge = 1) */
   brickwall?: BrickwallFit;
 }
@@ -52,13 +54,18 @@ export interface ShapeReport {
   validate?: FitStats;
   /** settings the model can only approximate (not used for fitting) */
   approximate?: FitStats;
+  /** band group the shape belongs to (missing = 0) */
+  group?: number;
   /** "Brickwall" slope, modelled by the elliptic fit */
   brickwall?: FitStats;
   note?: string;
 }
 
-/** Raised whenever the fit learns something new; older stored models are fitted again. 2: Flat Tilt, Brickwall */
-export const FIT_REVISION = 2;
+/**
+ * Raised whenever the fit learns something new; older stored models are fitted again.
+ * 2: Flat Tilt, Brickwall · 3: band groups, bands with a fixed shape, graphic EQs
+ */
+export const FIT_REVISION = 3;
 
 export interface EqModel {
   type: "parametric-eq";
@@ -69,6 +76,8 @@ export interface EqModel {
   sampleRate: number;
   mapping: EqMapping;
   shapes: ShapeModel[];
+  /** shapes per band group (see EqMapping.groups); the first entry is `shapes`. Missing before revision 3. */
+  groups?: { shapes: ShapeModel[] }[];
   /** fit used when the plugin has no shape parameter */
   defaultFit?: ShapeFit;
   defaultKind?: ShapeKind;
@@ -77,6 +86,8 @@ export interface EqModel {
   report: {
     shapes: ShapeReport[];
     baselineFlatnessDb: number;
+    /** model vs. original with several bands set at once */
+    combined?: FitStats;
     mappingErrors: { parameter: number; name: string; maxRelativeError: number }[];
   };
 }
@@ -121,7 +132,7 @@ export function analogSections(settings: BandSettings, fit: ShapeFit): AnalogSec
     case "bandPass": return [prototypes.bandPass(f, q)];
     case "lowCut":
     case "highCut": {
-      const { qs, firstOrder } = cutSectionQs(settings.order, q, fit.qMode ?? "scaleAll");
+      const { qs, firstOrder } = cutSectionQs(fit.order ?? settings.order, q, fit.qMode ?? "scaleAll");
       const second = settings.kind === "lowCut" ? prototypes.highPass2 : prototypes.lowPass2;
       const sections = qs.map((sq) => second(f, Math.max(sq, 1e-3)));
       if (firstOrder) sections.push(settings.kind === "lowCut" ? prototypes.highPass1(f) : prototypes.lowPass1(f));
@@ -174,7 +185,7 @@ export function brickwallSections(kind: "lowCut" | "highCut", frequency: number,
 }
 
 export function bandSections(settings: BandSettings, fit: ShapeFit, sampleRate: number): DigitalSection[] {
-  if (settings.brickwall && fit.brickwall && (settings.kind === "lowCut" || settings.kind === "highCut")) {
+  if (settings.brickwall && !fit.order && fit.brickwall && (settings.kind === "lowCut" || settings.kind === "highCut")) {
     return brickwallSections(settings.kind, settings.frequency * fit.freqScale, fit.brickwall, sampleRate);
   }
   if (settings.kind === "flatTilt") {
@@ -187,3 +198,10 @@ export function bandSections(settings: BandSettings, fit: ShapeFit, sampleRate: 
 }
 
 export { IDENTITY };
+
+export function groupShapes(model: EqModel, group: number): ShapeModel[] {
+  return model.groups?.[group]?.shapes ?? (group === 0 ? model.shapes : []);
+}
+
+/** Frequency a band without a frequency control is designed at before the fit scales it. */
+export const NOMINAL_FREQUENCY = 1000;

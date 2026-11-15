@@ -68,12 +68,12 @@ float CloneProcessor::valueOf (int paramIndex) const
 void CloneProcessor::readTargets (BandState& band, size_t index)
 {
     const auto& info = clonemodel::bands[index];
-    if (info.frequency >= 0) band.targetFrequency = std::max (1.0, (double) valueOf (info.frequency));
+    band.targetFrequency = info.frequency >= 0 ? std::max (1.0, (double) valueOf (info.frequency)) : info.fixedFrequency;
     if (info.gain >= 0)      band.targetGain = valueOf (info.gain);
     band.targetQ = std::max (1e-3, info.q >= 0 ? (double) valueOf (info.q) : clonemodel::defaultQ);
     band.targetActive = info.enable < 0 || valueOf (info.enable) > 0.5f;
     band.targetOrder = info.slope >= 0 ? clonemodel::slopeOrders[juce::jlimit (0, clonemodel::numSlopes - 1, (int) valueOf (info.slope))] : 2;
-    band.targetShape = info.shape >= 0 ? juce::jlimit (0, clonemodel::numShapes - 1, (int) valueOf (info.shape)) : 0;
+    band.targetShape = info.shapeOffset + (info.shape >= 0 ? juce::jlimit (0, info.numShapes - 1, (int) valueOf (info.shape)) : 0);
 
     if (! band.initialised)
     {
@@ -252,11 +252,11 @@ double CloneProcessor::responseDb (double frequency)
             continue;
 
         vch::BandSettings settings;
-        if (info.frequency >= 0) settings.frequency = valueOf (info.frequency);
+        settings.frequency = info.frequency >= 0 ? (double) valueOf (info.frequency) : info.fixedFrequency;
         if (info.gain >= 0)      settings.gainDb = valueOf (info.gain);
         settings.q = info.q >= 0 ? valueOf (info.q) : clonemodel::defaultQ;
         settings.order = info.slope >= 0 ? clonemodel::slopeOrders[juce::jlimit (0, clonemodel::numSlopes - 1, (int) valueOf (info.slope))] : 2;
-        const int shape = info.shape >= 0 ? juce::jlimit (0, clonemodel::numShapes - 1, (int) valueOf (info.shape)) : 0;
+        const int shape = info.shapeOffset + (info.shape >= 0 ? juce::jlimit (0, info.numShapes - 1, (int) valueOf (info.shape)) : 0);
 
         std::array<vch::Coeffs, vch::maxSections> coeffs {};
         const int count = vch::designBand (settings, clonemodel::shapes[shape], sampleRate, coeffs);

@@ -72,6 +72,7 @@ test("display values and labels are parsed", () => {
   assert.deepEqual(parseValue("2.5 kHz"), { value: 2500, unit: "Hz" });
   assert.deepEqual(parseValue("+6.00 dB"), { value: 6, unit: "dB" });
   assert.equal(parseValue("-INF dB")!.value, -Infinity);
+  assert.ok(Math.abs(parseValue("1.90735e-06")!.value) < 1e-5);
   assert.equal(classifyShape("Low Shelf"), "lowShelf");
   assert.equal(classifyShape("High Cut"), "highCut");
   assert.equal(classifyShape("Peak"), "bell");
@@ -194,7 +195,8 @@ test("EQ detection and display tables", () => {
 
 test("EQ plan switches other bands off and covers every shape", () => {
   const plan = planEq(syntheticParameters(), { seed: 1 });
-  const renders = plan.renders.filter((r) => r.purpose);
+  const renders = plan.renders.filter((r) => r.purpose && !r.label!.startsWith("Kombination"));
+  assert.equal(plan.renders.length - renders.length - 1, 6, "six settings of both bands at once");
   assert.ok(renders.every((r) => r.params.some((p) => p.index === 6 && p.value === 0)), "band 2 off");
   assert.ok(renders.every((r) => r.params.some((p) => p.index === 0 && p.value === 1)), "band 1 on");
   for (const shape of SHAPES) assert.ok(renders.some((r) => r.label!.startsWith(shape)), shape);
@@ -320,4 +322,104 @@ test("stepped parameters from value-text plateaus map back to the original's val
   assert.deepEqual(steps.labels, ["Full", "Masked", "Unmasked"]);
   assert.equal(stepIndex(steps, 0.27), 1);
   assert.equal(stepIndex(steps, 0.95), 2);
+});
+
+// ---- bands with a fixed shape, graphic EQs -----------------------------------------------------
+
+function namedParameters(list: { name: string; texts?: { value: number; text: string }[]; steps?: number }[]): Parameter[] {
+  return list.map((p, index) => ({
+    index, id: String(index), name: p.name, default: 0.5, value: 0.5, automatable: true,
+    numSteps: p.steps ?? 2147483647, discrete: p.steps !== undefined, boolean: p.steps === 2,
+    ...(p.texts ? { texts: p.texts } : {}),
+  }));
+}
+const dbTexts = texts((n) => (-12 + 24 * n).toFixed(1));
+const hzTexts = texts((n) => `${freqOf(n).toFixed(1)}`);
+
+test("EQ detection: named bands, sliders, stepped shape controls; spatial effects and lone tone filters are no EQ", () => {
+  const onOff = [{ value: 0, text: "Off" }, { value: 1, text: "On" }];
+  // numbered sections plus a shelf and a high-pass with names of their own
+  const mixed = detectEq(namedParameters([
+    { name: "Section 1", steps: 2, texts: onOff }, { name: "Frequency 1", texts: hzTexts }, { name: "Bandwidth 1", texts: texts((n) => (0.1 + 4 * n).toFixed(2)) }, { name: "Gain 1", texts: dbTexts },
+    { name: "Section 2", steps: 2, texts: onOff }, { name: "Frequency 2", texts: hzTexts }, { name: "Bandwidth 2", texts: texts((n) => (0.1 + 4 * n).toFixed(2)) }, { name: "Gain 2", texts: dbTexts },
+    { name: "Lowshelf", steps: 2, texts: onOff }, { name: "Lowshelf Frequency", texts: hzTexts }, { name: "Lowshelf Gain", texts: dbTexts },
+    { name: "Highpass", steps: 2, texts: onOff }, { name: "Highpass Frequency", texts: hzTexts }, { name: "Highpass Resonance", texts: texts((n) => (1.4 * n).toFixed(2)) },
+    { name: "Boost/Cut H", texts: dbTexts }, { name: "Frequency H", texts: hzTexts },
+  ]));
+  assert.equal(mixed.bands.length, 5);
+  assert.deepEqual(mixed.groups!.map((g) => g.hint), [undefined, "lowShelf", "lowCut", undefined]);
+  assert.deepEqual(mixed.bands.map((b) => b.group ?? 0), [0, 0, 1, 2, 3]);
+  assert.deepEqual(mixed.bands[0]!.params, { enable: 0, frequency: 1, q: 2, gain: 3 });
+  assert.equal(mixed.bands[3]!.params.enable, 11);
+  assert.equal(mixed.bands[4]!.label, "H");
+
+  // a graphic EQ: the frequency comes from the name where there is one
+  const graphic = detectEq(namedParameters([
+    { name: "Master Gain", texts: dbTexts }, { name: "32Hz", texts: dbTexts }, { name: "2.5 kHz", texts: dbTexts }, { name: "G3", texts: dbTexts },
+  ]));
+  assert.deepEqual(graphic.bands.map((b) => b.fixedFrequency), [32, 2500, undefined]);
+  assert.equal(graphic.outputGain, 0);
+  assert.equal(graphic.groups!.length, 3);
+  // levels from 0 to 1 are no gains in dB, two sliders are no graphic EQ
+  assert.throws(() => detectEq(namedParameters(["G1", "G2", "G3"].map((name) => ({ name, texts: texts((n) => n.toFixed(2)) })))), /Keine EQ-Bänder/);
+  assert.throws(() => detectEq(namedParameters([{ name: "G1", texts: dbTexts }, { name: "G2", texts: dbTexts }])), /Keine EQ-Bänder/);
+
+  // shape and switch reported as continuous controls; the bands differ in their shapes
+  const plateaus = (labels: string[]) => texts((n) => labels[Math.min(labels.length - 1, Math.floor(n * labels.length))]!);
+  const band = (n: number, shapes: string[]) => [
+    { name: `Filter Enablement ${n}`, texts: plateaus(["OFF", "ON"]) }, { name: `Filter Type ${n}`, texts: plateaus(shapes) },
+    { name: `Filter Frequency ${n}`, texts: hzTexts }, { name: `Filter Q ${n}`, texts: texts((n2) => qOf(n2).toFixed(2)) }, { name: `Filter Gain ${n}`, texts: dbTexts },
+  ];
+  const stepped = detectEq(namedParameters([
+    ...band(1, ["HP (6dB/oct)", "HP (24dB/oct)", "Low-shelf"]), ...band(2, ["Low-shelf", "Peak", "High-shelf"]), ...band(3, ["Low-shelf", "Peak", "High-shelf"]),
+  ]));
+  assert.deepEqual(stepped.bands.map((b) => b.group ?? 0), [0, 1, 1]);
+  assert.deepEqual(stepped.groups![0]!.shapes!.map((s) => [s.kind, s.order]), [["lowCut", 1], ["lowCut", 4], ["lowShelf", undefined]]);
+  assert.ok(stepped.groups![0]!.shapes!.every((s) => s.value !== undefined));
+  assert.deepEqual(stepped.bands[0]!.params, { enable: 0, shape: 1, frequency: 2, q: 3, gain: 4 });
+  assert.deepEqual(stepped.enableValues, { on: 1, off: 0 });
+
+  assert.throws(() => detectEq(namedParameters([...band(1, ["Low-shelf", "Peak", "High-shelf"]), { name: "Azimuth Band 1" }])), /Räumlicher Effekt/);
+  assert.throws(() => detectEq(namedParameters([{ name: "LowShelf Frequency", texts: hzTexts }, { name: "LowShelf Gain", texts: dbTexts }])), /Keine EQ-Bänder/);
+});
+
+test("graphic EQ: the fit finds where each slider works and what it is", () => {
+  const parameters = namedParameters(["G1", "G2", "G3"].map((name) => ({ name, texts: dbTexts })));
+  // what the sliders really do: displayed gain × 0.5 for the first, a shelf at the top
+  const truth: { kind: "bell" | "highShelf"; frequency: number; q: number; gainScale: number }[] = [
+    { kind: "bell", frequency: 120, q: 1.4, gainScale: 0.5 }, { kind: "bell", frequency: 1500, q: 2, gainScale: 1 }, { kind: "highShelf", frequency: 6000, q: 0.7, gainScale: 1 },
+  ];
+  const plan = planEq(parameters, { seed: 3 });
+  const signal = generateTestSignal({ sampleRate: SR, channels: 1, preset: "eq" });
+  const files = new Map<string, Uint8Array>();
+  const renders: CaptureRender[] = plan.renders.map((r) => {
+    const values = new Map(r.params.map((p) => [p.index, p.value]));
+    const sections = truth.flatMap((t, i) => {
+      const gainDb = (-12 + 24 * (values.get(i) ?? 0.5)) * t.gainScale;
+      return Math.abs(gainDb) < 1e-9 ? [] : bandSections({ kind: t.kind, frequency: t.frequency, gainDb, q: t.q, order: 2 }, { design: "matched", freqScale: 1, qScale: 1 }, SR);
+    });
+    const file = `captures/${r.id}.wav`;
+    files.set(file, encodeWav({ sampleRate: SR, channels: [filterSignal(signal.audio.channels[0]!, sections)] }));
+    return {
+      id: r.id, file, kind: r.kind, ...(r.purpose ? { purpose: r.purpose } : {}), ...(r.label ? { label: r.label } : {}),
+      params: r.params.map((p) => ({ ...p, text: (-12 + 24 * p.value).toFixed(1) })), latencySamples: 0, peak: 1, mono: true,
+    };
+  });
+  const profile: Profile = { ...syntheticProfile(), parameters: { parameters }, testSignals: signal.set, captures: { renders }, files };
+
+  const model = fitEq(profile);
+  assert.deepEqual(model.groups!.map((g) => g.shapes[0]!.kind), ["bell", "bell", "highShelf"]);
+  model.mapping.bands.forEach((band, i) => {
+    const fit = model.groups![i]!.shapes[0]!.fit!;
+    const frequency = band.fixedFrequency! * fit.freqScale;
+    assert.ok(Math.abs(Math.log2(frequency / truth[i]!.frequency)) < 0.03, `slider ${i + 1} at ${frequency} Hz`);
+    assert.ok(Math.abs((fit.gainScale ?? 1) - truth[i]!.gainScale) < 0.02, `slider ${i + 1} gain scale ${fit.gainScale}`);
+  });
+  for (const r of model.report.shapes) assert.ok(r.validate && r.validate.rmsDb < 0.1, `${r.label} validate ${r.validate?.rmsDb}`);
+  assert.ok(model.report.combined && model.report.combined.rmsDb < 0.1, `sliders together ${model.report.combined?.rmsDb}`);
+
+  const { header } = generateModelHeader(model, parameters, "Graphic");
+  assert.match(header, /numBands = 3;/);
+  assert.match(header, /\{ -1, -1, 0, -1, -1, -1, 0, 1, \d+\.0 \}/);
+  assert.match(header, /\{ -1, -1, 2, -1, -1, -1, 2, 1, \d+\.0 \}/);
 });

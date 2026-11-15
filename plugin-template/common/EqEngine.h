@@ -29,6 +29,8 @@ struct ShapeFit
     const PrototypeSection* brickwall = nullptr;
     int brickwallSections = 0;
     double brickwallEdge = 1.0;
+    /** cuts of a band without slope control: order found by the fit (0 = the order of the slope control) */
+    int fixedOrder = 0;
 };
 
 struct BandSettings
@@ -196,9 +198,13 @@ namespace detail
 }
 
 /** Fills `out` with the sections of one band; returns the number of sections. */
-inline int designBand (const BandSettings& settings, const ShapeFit& fit, double sampleRate, std::array<Coeffs, maxSections>& out)
+inline int designBand (const BandSettings& requested, const ShapeFit& fit, double sampleRate, std::array<Coeffs, maxSections>& out)
 {
     using detail::Analog;
+
+    BandSettings settings = requested;
+    if (fit.fixedOrder > 0)
+        settings.order = fit.fixedOrder;
 
     if (! fit.fitted || fit.kind == Kind::unsupported)
         return 0;

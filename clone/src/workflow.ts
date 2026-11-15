@@ -69,6 +69,7 @@ export function formatModelReport(model: EqModel): string[] {
 export function formatVerifyReport(report: VerifyReport): string[] {
   const lines = [`Klon vs. Original (${report.overall.renders} Einstellungen): ${stat(report.overall)} – ${verdict(report.overall.rmsDb)}`];
   for (const s of report.shapes) lines.push(`  ${s.label.padEnd(14)} ${stat(s).padEnd(20)} ${verdict(s.rmsDb)}`);
+  if (report.combined) lines.push(`Mehrere Bänder zugleich (${report.combined.renders} Einstellungen): ${stat(report.combined)} – ${verdict(report.combined.rmsDb)}`);
   if (report.limited) {
     lines.push(`Nicht exakt nachgebildet (${report.limited.renders} Einstellungen: ${report.limited.labels.join(", ")}): ${stat(report.limited)}`);
   }

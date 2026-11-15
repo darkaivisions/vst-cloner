@@ -1,7 +1,7 @@
 import type { Parameter } from "@vst-cloner/profile";
-import type { EqModel, ShapeFit } from "./model.ts";
+import { groupShapes, NOMINAL_FREQUENCY, type EqModel, type ShapeFit } from "./model.ts";
 import { cloneParameters, type CloneParam } from "./params.ts";
-import type { ShapeKind } from "./mapping.ts";
+import { bandGroups, type ShapeKind } from "./mapping.ts";
 
 /** C++ string literal (UTF-8 safe). */
 export function cppString(text: string): string {
@@ -25,7 +25,7 @@ function shapeFit(kind: ShapeKind, fit: ShapeFit | undefined, index: number): st
   const f: ShapeFit = fit ?? { design: "matched", freqScale: 1, qScale: 1 };
   const brickwall = f.brickwall ? `brickwall${index}, ${f.brickwall.sections.length}, ${cppNumber(f.brickwall.edgeScale)}` : "nullptr, 0, 1.0";
   return `{ vch::Kind::${KIND[kind]}, ${fit ? "true" : "false"}, vch::Design::${f.design}, ${cppNumber(f.freqScale)}, ${cppNumber(f.qScale)}, ` +
-    `${cppNumber(f.qExponent ?? 1)}, ${cppNumber(f.gainScale ?? 1)}, vch::QMode::${f.qMode ?? "scaleAll"}, ${f.tiltOrder ?? 2}, ${brickwall} }`;
+    `${cppNumber(f.qExponent ?? 1)}, ${cppNumber(f.gainScale ?? 1)}, vch::QMode::${f.qMode ?? "scaleAll"}, ${f.tiltOrder ?? 2}, ${brickwall}, ${f.order ?? 0} }`;
 }
 
 /** Parameter declarations shared by all plugin templates (see plugin-template/common/CloneParameters.h). */
@@ -75,12 +75,24 @@ export function generateModelHeader(model: EqModel, parameters: Parameter[], plu
     "{",
     `inline constexpr const char* pluginName = ${cppString(pluginName)};`,
     "",
-    "struct BandInfo { int enable, frequency, gain, q, shape, slope; };",
+    "// shapeOffset/numShapes: the band's shapes within `shapes`; fixedFrequency: band without frequency control",
+    "struct BandInfo { int enable, frequency, gain, q, shape, slope, shapeOffset, numShapes; double fixedFrequency; };",
     "",
     ...parameterLines(params),
   ];
 
-  const shapes = model.shapes.length > 0 ? model.shapes : [{ label: "bell", kind: (model.defaultKind ?? "bell") as ShapeKind, fit: model.defaultFit }];
+  // the shapes of all band groups in one table; every band points at the part of its group
+  const groupCount = bandGroups(model.mapping).length;
+  const offsets: number[] = [];
+  const counts: number[] = [];
+  const shapes: { label: string; kind: ShapeKind; fit?: ShapeFit | undefined }[] = [];
+  for (let g = 0; g < groupCount; g++) {
+    const own = groupShapes(model, g);
+    const list = own.length > 0 ? own : [{ label: "bell", kind: (model.defaultKind ?? "bell") as ShapeKind, fit: model.defaultFit }];
+    offsets.push(shapes.length);
+    counts.push(list.length);
+    shapes.push(...list);
+  }
   shapes.forEach((s, i) => {
     const sections = s.fit?.brickwall?.sections;
     if (sections) {
@@ -99,7 +111,11 @@ export function generateModelHeader(model: EqModel, parameters: Parameter[], plu
   lines.push("inline const BandInfo bands[] =", "{");
   for (const band of model.mapping.bands) {
     const p = `b${band.band}_`;
-    lines.push(`    { ${ref(`${p}enable`)}, ${ref(`${p}freq`)}, ${ref(`${p}gain`)}, ${ref(`${p}q`)}, ${ref(`${p}shape`)}, ${ref(`${p}slope`)} },`);
+    const g = band.group ?? 0;
+    lines.push(
+      `    { ${ref(`${p}enable`)}, ${ref(`${p}freq`)}, ${ref(`${p}gain`)}, ${ref(`${p}q`)}, ${ref(`${p}shape`)}, ${ref(`${p}slope`)}, ` +
+        `${offsets[g]}, ${counts[g]}, ${cppNumber(band.fixedFrequency ?? NOMINAL_FREQUENCY)} },`,
+    );
   }
   lines.push(
     "};",

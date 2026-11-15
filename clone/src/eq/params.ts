@@ -1,5 +1,5 @@
 import type { Parameter } from "@vst-cloner/profile";
-import { optionIndex, tableRange, tableValue, textDecimals } from "./mapping.ts";
+import { bandGroups, optionIndex, tableRange, tableValue, textDecimals } from "./mapping.ts";
 import type { EqModel } from "./model.ts";
 
 export interface CloneParam {
@@ -50,6 +50,7 @@ export function cloneParameters(model: EqModel, parameters: Parameter[]): CloneP
   for (const band of model.mapping.bands) {
     const prefix = `b${band.band}_`;
     const p = band.params;
+    const shapes = bandGroups(model.mapping)[band.group ?? 0]?.shapes;
     if (p.enable !== undefined) {
       const param = byIndex.get(p.enable)!;
       const on = model.mapping.enableValues?.on ?? 1;
@@ -61,11 +62,15 @@ export function cloneParameters(model: EqModel, parameters: Parameter[]): CloneP
       const param = continuous(index, `${prefix}${suffix}`);
       if (param) result.push(param);
     }
-    if (p.shape !== undefined && model.mapping.shapes) {
+    if (p.shape !== undefined && shapes) {
       const param = byIndex.get(p.shape)!;
+      // an original that reports the control as continuous: the option whose value is nearest
+      const stepped = shapes[0]!.value !== undefined;
+      const nearest = shapes.reduce((best, s, i) => (Math.abs((s.value ?? 0) - base(param)) < Math.abs((shapes[best]!.value ?? 0) - base(param)) ? i : best), 0);
       result.push({
         id: `${prefix}shape`, name: param.name, original: p.shape, kind: "choice",
-        defaultValue: optionIndex(base(param), model.mapping.shapes.length), choices: model.mapping.shapes.map((s) => s.label),
+        defaultValue: stepped ? nearest : optionIndex(base(param), shapes.length), choices: shapes.map((s) => s.label),
+        ...(stepped ? { stepValues: shapes.map((s) => s.value!) } : {}),
       });
     }
     if (p.slope !== undefined && model.mapping.slopes) {

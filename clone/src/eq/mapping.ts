@@ -20,11 +20,29 @@ export interface ValueTable {
 export interface BandMapping {
   band: number;
   params: Partial<Record<BandRole, number>>;
+  /** index into EqMapping.groups (missing = 0): the bands of a group share shapes and fit */
+  group?: number;
+  /** name of a band without a number ("Lowshelf", "H", "32 Hz") */
+  label?: string;
+  /** centre frequency of a band without a frequency control: from its name, otherwise found by the fit */
+  fixedFrequency?: number;
 }
 
 export interface ShapeOption {
   label: string;
   kind: ShapeKind;
+  /** filter order named by the label ("HP (24dB/oct)") */
+  order?: number;
+  /** normalised value that selects the option, for shape controls the original reports as continuous */
+  value?: number;
+}
+
+/** Bands with the same controls and shapes: one of them (the template) is measured, the fit holds for all. */
+export interface BandGroup {
+  template: number;
+  shapes?: ShapeOption[];
+  /** no shape control, but the name says what the band is ("Highpass", "Lowshelf") */
+  hint?: ShapeKind;
 }
 
 export interface SlopeOption {
@@ -39,8 +57,10 @@ export interface SlopeOption {
 
 export interface EqMapping {
   bands: BandMapping[];
-  /** band used as template for measurements (usually band 1) */
+  /** template band of the first group */
   templateBand: number;
+  /** missing in models fitted before revision 3: one group with `templateBand` and `shapes` */
+  groups?: BandGroup[];
   tables: Record<number, ValueTable>;
   shapes?: ShapeOption[];
   slopes?: SlopeOption[];
@@ -63,7 +83,8 @@ export class NotAnEqError extends Error {
 export function parseValue(text: string): { value: number; unit: string } | undefined {
   const t = text.trim();
   if (/^-\s*inf/i.test(t)) return { value: -Infinity, unit: /db/i.test(t) ? "dB" : "" };
-  const match = /([+-]?\d+(?:[.,]\d+)?)\s*(k)?\s*(hz|db|%|ms|s\b|oct)?/i.exec(t);
+  // with exponent: some plugins show zero as "1.90735e-06"
+  const match = /([+-]?\d+(?:[.,]\d+)?(?:e[+-]?\d+)?)\s*(k)?\s*(hz|db|%|ms|s\b|oct)?/i.exec(t);
   if (!match) return undefined;
   let value = Number(match[1]!.replace(",", "."));
   if (match[2]) value *= 1000;
@@ -72,7 +93,8 @@ export function parseValue(text: string): { value: number; unit: string } | unde
 }
 
 export function classifyShape(label: string): ShapeKind {
-  const l = label.toLowerCase();
+  // "Low-shelf", "High_Pass": separators count as spaces
+  const l = label.toLowerCase().replace(/[-_]+/g, " ");
   if (/flat\s*tilt/.test(l)) return "flatTilt";
   if (/tilt/.test(l)) return "tiltShelf";
   if (/low\s*shelf|bass\s*shelf|ls\b/.test(l)) return "lowShelf";
@@ -167,86 +189,207 @@ export function tableRange(table: ValueTable): [number, number] {
 // ---- detection ---------------------------------------------------------------------------------
 
 const EXCLUDED = /dynamic|solo|side\s*chain|speaker|stereo|placement|threshold|range|ratio|attack|release|analy[sz]er|display|midi/i;
+/** panners and beam formers have filters per band too, but their bands are directions */
+const SPATIAL = /azimuth|elevation/i;
+const ROLE_WORDS = /freq|gain|\bq\b|shape|type|slope|enable|used|active|boost|bandwidth|\bbw\b|resonance|section/i;
+const NAMED_BAND = /^(low\s*shelf|high\s*shelf|high\s*pass|low\s*pass|low\s*cut|high\s*cut|hpf|lpf)\b\s*(.*)$/i;
+const LETTER_BAND = /^(frequency|freq|gain|boost\s*\/\s*cut|bandwidth|q)\s+(l|h|lf|hf|lo|hi|low|high)$/i;
+/** sliders of a graphic EQ: "32Hz", "Gain 2.5 kHz", "G7" */
+const FREQUENCY_BAND = /^(?:gain\s+)?(\d+(?:[.,]\d+)?)\s*(k)?hz$/i;
+const SLIDER_BAND = /^g(\d+)$/i;
 
-function bandOf(name: string): { band: number; rest: string } | undefined {
-  const prefix = /^band\s*(\d+)\s*[:\-]?\s*(.+)$/i.exec(name);
-  if (prefix) return { band: Number(prefix[1]), rest: prefix[2]!.trim() };
-  const suffix = /^(.+?)\s*(?:band\s*)?(\d+)$/i.exec(name);
-  if (suffix && /freq|gain|\bq\b|shape|type|slope|enable|used|active/i.test(suffix[1]!)) return { band: Number(suffix[2]), rest: suffix[1]!.trim() };
+interface BandName {
+  /** bands with the same key belong together */
+  key: string;
+  number?: number;
+  rest: string;
+  label?: string;
+  frequency?: number;
+  hint?: ShapeKind;
+  /** slider of a graphic EQ: a gain and nothing else */
+  slider?: boolean;
+}
+
+function bandOf(name: string): BandName | undefined {
+  const text = name.trim();
+  const prefix = /^band\s*(\d+)\s*[:\-]?\s*(.+)$/i.exec(text);
+  if (prefix) return { key: `n${prefix[1]}`, number: Number(prefix[1]), rest: prefix[2]!.trim() };
+  const suffix = /^(.+?)\s*(?:band\s*)?(\d+)$/i.exec(text);
+  if (suffix && ROLE_WORDS.test(suffix[1]!) && !SLIDER_BAND.test(text)) return { key: `n${suffix[2]}`, number: Number(suffix[2]), rest: suffix[1]!.trim() };
+  const named = NAMED_BAND.exec(text);
+  if (named) {
+    const label = named[1]!;
+    const hint = classifyShape(label);
+    return { key: `p${label.toLowerCase().replace(/\s+/g, "")}`, rest: named[2]!.trim(), label, ...(hint !== "unsupported" ? { hint } : {}) };
+  }
+  const letter = LETTER_BAND.exec(text);
+  if (letter) return { key: `l${letter[2]!.toLowerCase()}`, rest: letter[1]!, label: letter[2]! };
+  const frequency = FREQUENCY_BAND.exec(text);
+  if (frequency) {
+    const hz = Number(frequency[1]!.replace(",", ".")) * (frequency[2] ? 1000 : 1);
+    return { key: `f${hz}`, rest: "gain", label: `${frequency[1]} ${frequency[2] ? "kHz" : "Hz"}`, frequency: hz, slider: true };
+  }
+  const slider = SLIDER_BAND.exec(text);
+  if (slider) return { key: `g${slider[1]}`, rest: "gain", label: text, slider: true };
   return undefined;
 }
 
-function roleOf(rest: string, param: Parameter): BandRole | undefined {
+/** a switch with two positions, also one the original reports as a continuous control with two value texts */
+function isSwitch(param: Parameter): boolean {
+  return param.boolean || param.numSteps === 2 || parameterSteps(param)?.labels.length === 2;
+}
+
+function roleOf(text: string, param: Parameter): BandRole | undefined {
+  // "Filter Frequency", "Filter Q": the word says nothing about the role
+  const rest = text.replace(/^filter\s+(?=\S)/i, "");
   if (EXCLUDED.test(rest)) return undefined;
+  if (rest === "") return isSwitch(param) ? "enable" : undefined;
   if (/\bslope\b/i.test(rest) && param.discrete) return "slope";
-  if (/\b(shape|type|filter|curve|mode)\b/i.test(rest) && param.discrete && param.numSteps > 2) return "shape";
+  if (/\b(shape|type|filter|curve|mode)\b/i.test(rest)) {
+    const steps = param.discrete ? param.numSteps : parameterSteps(param)?.labels.length ?? 0;
+    if (steps > 2) return "shape";
+  }
   if (/\bfreq(uency)?\b|\bhz\b/i.test(rest)) return "frequency";
   if (/^(q|bandwidth|bw|width|resonance|quality)$/i.test(rest)) return "q";
-  if (/\bgain\b/i.test(rest) && !/scale/i.test(rest)) return "gain";
-  if (/\b(used|enabled?|active|on|power)\b/i.test(rest) && (param.boolean || param.numSteps === 2)) return "enable";
+  if ((/\bgain\b/i.test(rest) && !/scale/i.test(rest)) || /^boost\s*\/\s*cut$/i.test(rest)) return "gain";
+  if (/\b(used|enabled?|enablement|active|on|power|section)\b/i.test(rest) && isSwitch(param)) return "enable";
   return undefined;
 }
 
 function onOffValues(param: Parameter): { on: number; off: number } {
   const texts = param.texts ?? [];
-  const on = texts.find((t) => /^(used|enabled?|on|active|true)$/i.test(t.text.trim()));
-  const off = texts.find((t) => /^(unused|disabled?|off|inactive|bypass(ed)?|false)$/i.test(t.text.trim()));
+  const isOn = (t: { text: string }) => /^(used|enabled?|on|active|true)$/i.test(t.text.trim());
+  const isOff = (t: { text: string }) => /^(unused|disabled?|off|inactive|bypass(ed)?|false)$/i.test(t.text.trim());
+  // the outermost value of each plateau: safe for originals that report the switch as continuous
+  const on = texts.filter(isOn).sort((a, b) => b.value - a.value)[0];
+  const off = texts.filter(isOff).sort((a, b) => a.value - b.value)[0];
   return { on: on?.value ?? 1, off: off?.value ?? 0 };
 }
 
+/** Options of a shape control: declared steps, or the plateaus of its value texts. */
+function shapeOptions(param: Parameter): ShapeOption[] | undefined {
+  const option = (label: string): ShapeOption => {
+    const kind = classifyShape(label);
+    const slope = /(\d+)\s*db\s*\/\s*oct/i.exec(label);
+    return { label, kind, ...(slope && (kind === "lowCut" || kind === "highCut") ? { order: Math.max(1, Math.round(Number(slope[1]) / 6)) } : {}) };
+  };
+  if (param.discrete) return param.texts?.map((t) => option(t.text));
+  const steps = parameterSteps(param);
+  return steps?.labels.map((label, i) => ({ ...option(label), value: steps.values[i]! }));
+}
+
+export function bandGroups(mapping: EqMapping): BandGroup[] {
+  return mapping.groups ?? [{ template: mapping.templateBand, ...(mapping.shapes ? { shapes: mapping.shapes } : {}) }];
+}
+
+export function bandLabel(band: BandMapping): string {
+  return band.label ?? `Band ${band.band}`;
+}
+
 /**
- * Detects a multi-band parametric EQ from parameter names. Throws NotAnEqError if no band structure
- * with at least frequency and gain/shape parameters is found.
+ * Detects an EQ from parameter names: numbered bands ("Band 1 Frequency", "Gain 3"), named bands with a fixed
+ * shape ("Lowshelf Gain", "Highpass Frequency", "Frequency L") and the sliders of a graphic EQ ("32Hz", "G7").
+ * Throws NotAnEqError if no band with a frequency control or at least three sliders are found.
  */
 export function detectEq(parameters: Parameter[], renders: CaptureRender[] = []): EqMapping {
-  const bands = new Map<number, BandMapping>();
+  if (parameters.some((p) => SPATIAL.test(p.name))) {
+    throw new NotAnEqError("Räumlicher Effekt (Azimut/Elevation): die Bänder sind Richtungen, kein EQ");
+  }
+  const found = new Map<string, { name: BandName; mapping: BandMapping }>();
   const byIndex = new Map(parameters.map((p) => [p.index, p]));
 
   for (const param of parameters) {
-    const band = bandOf(param.name);
-    if (!band) continue;
-    const role = roleOf(band.rest, param);
+    const name = bandOf(param.name);
+    if (!name) continue;
+    const role = name.slider ? (param.discrete ? undefined : "gain") : roleOf(name.rest, param);
     if (!role) continue;
-    const mapping = bands.get(band.band) ?? { band: band.band, params: {} };
-    if (mapping.params[role] === undefined) mapping.params[role] = param.index;
-    bands.set(band.band, mapping);
+    const entry = found.get(name.key) ?? { name, mapping: { band: name.number ?? 0, params: {} } };
+    if (entry.mapping.params[role] === undefined) entry.mapping.params[role] = param.index;
+    found.set(name.key, entry);
   }
 
-  const usable = [...bands.values()]
-    .filter((b) => b.params.frequency !== undefined && (b.params.gain !== undefined || b.params.shape !== undefined))
-    .sort((a, b) => a.band - b.band);
-
-  if (usable.length === 0) {
-    throw new NotAnEqError("Keine EQ-Bänder gefunden (erwartet werden Parameter wie „Band 1 Frequency“, „Band 1 Gain“)");
-  }
-
-  const template = usable.reduce((best, b) => (Object.keys(b.params).length > Object.keys(best.params).length ? b : best));
   const tables: Record<number, ValueTable> = {};
-  for (const band of usable) {
+  for (const { mapping } of found.values()) {
     for (const role of ["frequency", "gain", "q"] as const) {
-      const index = band.params[role];
+      const index = mapping.params[role];
       if (index === undefined) continue;
       const table = buildTable(byIndex.get(index)!, renders);
       if (table) tables[index] = table;
-      else delete band.params[role];
+      else delete mapping.params[role];
     }
   }
 
-  const mapping: EqMapping = { bands: usable, templateBand: template.band, tables };
+  /** a gain in dB can cut and boost; a level from 0 to 1 is something else */
+  const cutsAndBoosts = (index: number | undefined) => {
+    if (index === undefined) return false;
+    const [lo, hi] = tableRange(tables[index]!);
+    return lo < 0 && hi > 0;
+  };
+  const parametric = [...found.values()].filter(({ name, mapping: b }) =>
+    !name.slider && b.params.frequency !== undefined && (b.params.gain !== undefined || b.params.shape !== undefined || name.hint !== undefined));
+  const sliders = [...found.values()].filter(({ name, mapping: b }) => name.slider && cutsAndBoosts(b.params.gain));
+  const graphic = sliders.length >= 3;
+  // a low and a high shelf alone are the tone filters of some other effect; an EQ has numbered bands or sliders as well
+  const numbered = parametric.some(({ name }) => name.number !== undefined);
+  const entries = numbered || graphic ? [...parametric, ...(graphic ? sliders : [])] : [];
 
-  const shapeParam = template.params.shape !== undefined ? byIndex.get(template.params.shape) : undefined;
-  if (shapeParam?.texts) mapping.shapes = shapeParam.texts.map((t) => ({ label: t.text, kind: classifyShape(t.text) }));
+  if (entries.length === 0) {
+    throw new NotAnEqError("Keine EQ-Bänder gefunden (erwartet werden Parameter wie „Band 1 Frequency“, „Band 1 Gain“ oder die Regler eines grafischen EQs)");
+  }
+
+  // bands without a number get one after the numbered ones, in the order of their parameters
+  let next = Math.max(100, ...entries.map((e) => e.name.number ?? 0)) + 1;
+  for (const { name, mapping: b } of entries) {
+    if (name.number === undefined) {
+      b.band = next++;
+      if (name.label) b.label = name.label;
+      if (name.frequency !== undefined) b.fixedFrequency = name.frequency;
+    }
+  }
+  entries.sort((a, b) => a.mapping.band - b.mapping.band);
+
+  // numbered bands with the same controls and shapes form a group; every other band stands alone
+  const groups: BandGroup[] = [];
+  const groupBySignature = new Map<string, number>();
+  for (const { name, mapping: b } of entries) {
+    const shapeParam = b.params.shape !== undefined ? byIndex.get(b.params.shape) : undefined;
+    const shapes = shapeParam ? shapeOptions(shapeParam) : undefined;
+    if (!shapes) delete b.params.shape;
+    const signature = name.number === undefined
+      ? name.key
+      : `${Object.keys(b.params).sort().join(",")}|${shapes?.map((s) => s.label).join("/") ?? ""}`;
+    let group = groupBySignature.get(signature);
+    if (group === undefined) {
+      group = groups.length;
+      groups.push({ template: b.band, ...(shapes ? { shapes } : {}), ...(name.hint ? { hint: name.hint } : {}) });
+      groupBySignature.set(signature, group);
+    }
+    if (group > 0) b.group = group;
+  }
+
+  const usable = entries.map((e) => e.mapping);
+  const first = groups[0]!;
+  const template = usable.find((b) => b.band === first.template)!;
+  const mapping: EqMapping = { bands: usable, templateBand: template.band, groups, tables: {} };
+  for (const band of usable) {
+    for (const role of ["frequency", "gain", "q"] as const) {
+      const index = band.params[role];
+      if (index !== undefined) mapping.tables[index] = tables[index]!;
+    }
+  }
+  if (first.shapes) mapping.shapes = first.shapes;
 
   const slopeParam = template.params.slope !== undefined ? byIndex.get(template.params.slope) : undefined;
   if (slopeParam?.texts) mapping.slopes = slopeParam.texts.map((t) => parseSlope(t.text));
 
-  const enableParam = template.params.enable !== undefined ? byIndex.get(template.params.enable) : undefined;
-  if (enableParam) mapping.enableValues = onOffValues(enableParam);
+  const enableBand = usable.find((b) => b.params.enable !== undefined);
+  if (enableBand) mapping.enableValues = onOffValues(byIndex.get(enableBand.params.enable!)!);
 
-  const output = parameters.find((p) => /^(output|out)\s*(level|gain|volume)?$/i.test(p.name.trim()) && !p.discrete);
+  const output = parameters.find((p) => /^(output|out|master)\s*(level|gain|volume)?$/i.test(p.name.trim()) && !p.discrete);
   if (output) {
     const table = buildTable(output, renders);
-    if (table && /db/i.test(table.unit)) {
+    // without a unit: a level that cuts and boosts is one in dB
+    if (table && (/db/i.test(table.unit) || (table.unit === "" && tableRange(table)[0] < 0 && tableRange(table)[1] > 0))) {
       mapping.outputGain = output.index;
       mapping.tables[output.index] = table;
     }

@@ -30,7 +30,7 @@ Batch-Läufe über alle installierten Plugins einer Klasse (ohne Oberfläche, St
 | Delays | 12 | 1,96–16,7 dB: 4 gut oder besser, 3 brauchbar, 5 ungenau |
 | Reverbs | 18 | 1,48–13,0 dB: 11 gut oder besser, 6 brauchbar, 1 ungenau |
 | Verzerrer | 73 | 0,06–18,4 dB: 46 gut oder besser, 14 brauchbar, 13 ungenau (z. B. GxMicroAmp 0,06 · Wolf Shaper 0,44 · GxBoss DS1 1,15 · GxTubeScreamer 1,93) |
-| EQs | 3 | x42-eq 0,01 dB; IEM MultiEQ und DirectivityShaper weichen ab (Erkennung und Fit noch offen) |
+| EQs | 5 | 0,04–0,83 dB: IEM MultiEQ 0,04 · x42-eq 0,47 · ZamGEQ31 0,66 · GxBarkGraphicEQ 0,62 · GxGraphicEQ 0,83 |
 
 Bei Delays und Reverbs weichen Reglerkombinationen, die nicht einzeln gemessen wurden, noch deutlich stärker ab.
 
@@ -97,6 +97,12 @@ npm run vch -- capture ~/.vst3/MeinEQ.vst3 --class eq --tail 0.25 -o mein-eq.vcp
 # 2. Klon bauen, mit dem Original vergleichen und optional installieren
 npm run vch -- clone mein-eq.vcprofile -o ./mein-eq-clone --install
 ```
+
+Erkannt werden EQs mit nummerierten Bändern („Band 1 Frequency“, „Gain 3“), Bänder mit fester Form
+(„Lowshelf Gain“, „Highpass Frequency“) und grafische EQs („32Hz“, „G7“). Bänder mit unterschiedlichen
+Filterformen werden getrennt vermessen; bei Bändern ohne Formwahl und bei den Reglern grafischer EQs
+bestimmt der Fit Form, Frequenz, Güte und Gain-Maßstab aus der Messung. Einige Einstellungen mit mehreren
+Bändern zugleich prüfen, ob sich die Bänder wie im Modell addieren.
 
 Der Klon ist ein eigenständiges VST3- und LV2-Plugin mit denselben Parameternamen und Regelwegen
 wie das Original (gleiche normierte Werte → gleiche Einstellung). Ablauf:

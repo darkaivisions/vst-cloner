@@ -95,7 +95,7 @@ finden, entscheidet später das LLM (Meilenstein 7).
 
 | Klasse | Messung | Modell (Weg A) | Stand |
 |---|---|---|---|
-| EQ / Filter | Impulsantwort pro Filterform × Frequenz × Gain × Güte | Biquad-Kette, elliptische Brickwall-Flanken, gefittete Q-Kennlinie | ✔ – offen: linearphasig |
+| EQ / Filter | Impulsantwort pro Bandgruppe und Filterform × Frequenz × Gain × Güte, dazu mehrere Bänder zugleich | Biquad-Kette, elliptische Brickwall-Flanken, gefittete Q-Kennlinie; Bänder mit fester Form und Regler grafischer EQs: Form, Frequenz, Güte und Gain-Maßstab aus der Messung | ✔ – offen: linearphasig |
 | Kompressor / Limiter | Pegeltreppe, Bursts, lange Pausen, 100-Hz-Stufen, Rauschen | Detektor (RMS/Peak, FF/FB), Kennlinie mit Knick, Attack/Release, Opto-Speicher, Sättigung | ✔ |
 | Gate / Expander / Ducker | wie Kompressor | Expander-Kennlinie mit Range, invertierte Kennlinie | ✔ |
 | Verzerrer (Pedale) | Sinus-Pegeltreppen bei mehreren Frequenzen, Rauschen, leiser Sweep | Wiener-Hammerstein (Vorfilter → Begrenzung → Nachfilter) | ✔ – 73 Plugins im Batch, 46 gut oder besser |
@@ -141,7 +141,7 @@ Stand der Batch-Läufe (12.–15.11.):
 | Delay | 12 | 1× sehr gut, 3× gut, 3× brauchbar, 5× ungenau; unbekannte Kombinationen meist 11–26 dB |
 | Reverb | 18 (+1 Fehler beim Messen) | 5× sehr gut, 6× gut, 6× brauchbar, 1× ungenau; unbekannte Kombinationen 2–30 dB |
 | Verzerrer | 73 (+4 Fehler: 3× Absturz beim Messen, 1× Klon lädt nicht) | 0,06–18,4 dB; 12× ausgezeichnet, 20× sehr gut, 14× gut, 14× brauchbar, 13× ungenau; unbekannte Kombinationen meist nahe am Gesamtwert, Ausreißer bis 28 dB |
-| EQ | 3 | x42-eq 0,01 dB (ausgezeichnet); MultiEQ 30,7 dB und DirectivityShaper 4,3 dB abweichend – Erkennung zu eng, sechs grafische/feste EQs bekommen keine Klasse |
+| EQ | 5 (+1 Fehler: ZamEQ2 gibt im Mess-Host nur NaN aus) | MultiEQ 0,04 dB (ausgezeichnet), x42-eq 0,47 dB (sehr gut, jetzt mit Shelves und Hoch-/Tiefpass), ZamGEQ31 0,66 dB, GxBarkGraphicEQ 0,62 dB, GxGraphicEQ 0,83 dB (gut); mehrere Bänder zugleich 0,25–2,13 dB |
 
 ## Profilformat `.vcprofile`
 Details: [docs/profile-format.md](docs/profile-format.md). ZIP-Container, versioniertes JSON-Schema:
@@ -200,8 +200,12 @@ vst-cloner/
 6. **Delay + Reverb + Modulation**
    - **6a Delay + Reverb** ← in Arbeit – erste Fassung in CLI, Batch und App ✔
      - Offen: unbekannte Kombinationen (Delay), Oberfläche
-     - EQ-Batch gelaufen; offen: Erkennung für grafische und feste EQs (ZamEQ2, ZamGEQ31, Luftikus, 3 Band EQ,
-       GxGraphicEQ, GxBarkGraphicEQ), DirectivityShaper ausschließen, Fit bei IEM MultiEQ
+     - EQ-Erkennung erweitert ✔ – Bandgruppen mit eigenen Formen (MultiEQ), benannte Bänder mit fester Form
+       (Lowshelf, Highpass, L/H), Regler grafischer EQs, stufenlos gemeldete Schalter; räumliche Effekte
+       (DirectivityShaper) ausgeschlossen; Gegenprobe mit mehreren Bändern zugleich
+     - Offen bei EQs: Hoch-/Tiefpass von x42-eq (1,7 dB – Form hängt von der Frequenz ab), 24-dB-Flanken von
+       MultiEQ (0,3 dB), ZamEQ2 (NaN im Mess-Host), EQs mit Reglern ohne dB-Anzeige (Luftikus, EQinox) und
+       Crossover-EQs (3 Band EQ) bekommen keine Klasse
    - **6b Modulation** – Chorus, Flanger, Phaser, Tremolo
 7. **Builder-Agent (Weg B)** – Faust-Schleife, Analyst-Agent mit REA und `spec.md`, Clean-Room-Trennung,
    Klassifizierung durch LLM für Plugins ohne Klasse
