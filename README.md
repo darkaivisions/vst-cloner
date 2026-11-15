@@ -8,11 +8,12 @@ neu gebaut. Kein dekompilierter Code, keine extrahierten Samples – nur gemesse
 
 Gesamtplan und Meilensteine: [PLAN.md](PLAN.md) · Profilformat: [docs/profile-format.md](docs/profile-format.md)
 
-**Stand: Meilenstein 5 in Arbeit** – Desktop-App, Capture-Host, Profilformat und LLM-Anbindung funktionieren.
-Klone (VST3/LV2) gibt es für **parametrische EQs**, **Kompressoren/Limiter** und **Verzerrer**
-(Overdrive/Distortion), jeweils mit nachgebauter Oberfläche des Originals.
-Amp-Simulationen mit NAM folgen.
-Getestet unter Linux mit nativen VST3-Plugins und Windows-Plugins über yabridge.
+**Stand: Meilenstein 6 in Arbeit** – Desktop-App, Capture-Host, Profilformat und LLM-Anbindung funktionieren.
+Klone (VST3/LV2) gibt es für **parametrische EQs**, **Kompressoren/Limiter**, **Gates/Expander** und
+**Verzerrer** (Overdrive/Distortion), jeweils mit nachgebauter Oberfläche des Originals.
+**Delays** und **Reverbs** lassen sich in einer ersten Fassung über die Kommandozeile klonen (noch nicht in der App).
+Amp-Simulationen mit NAM, Modulationseffekte und der Builder-Agent (Faust) für alle übrigen Plugins folgen.
+Getestet unter Linux mit nativen VST3-/LV2-Plugins und Windows-Plugins über yabridge.
 
 | Klon | Original | Abweichung | Oberfläche |
 |---|---|---|---|
@@ -20,6 +21,16 @@ Getestet unter Linux mit nativen VST3-Plugins und Windows-Plugins über yabridge
 | Open Optical Clone | Open Optical (Opto-Kompressor) | 0,50 dB Pegelverlauf über 44 Einstellungen, Oberwellen meist ±2 dB | 82 % Struktur, 95 % Farbe |
 | DirectionalCompressor Clone | IEM Directional Compressor | 0,71 dB Pegelverlauf über 224 Einstellungen | 75 % Struktur, 96 % Farbe |
 | GxBoss DS1 Clone | GxBoss DS1 (Guitarix, LV2) | Grundton 0,68 dB, Oberwellen 1,8 dB, Kleinsignal 1,23 dB | noch grob |
+
+Batch-Läufe über alle installierten Plugins einer Klasse (ohne Oberfläche, Stand 12./13.11.):
+
+| Klasse | Plugins | Klon vs. Original |
+|---|---|---|
+| Kompressoren, Limiter, Gate | 10 | 0,27–2,32 dB (z. B. x42-dpl 0,27 · ZamComp 0,45 · OmniCompressor 0,70 · ZamGate 1,88) |
+| Delays | 12 | 1,96–16,7 dB: 4 gut oder besser, 3 brauchbar, 5 ungenau |
+| Reverbs | 18 | 1,48–13,0 dB: 11 gut oder besser, 6 brauchbar, 1 ungenau |
+
+Bei Delays und Reverbs weichen Reglerkombinationen, die nicht einzeln gemessen wurden, noch deutlich stärker ab.
 
 ## Voraussetzungen
 
@@ -48,13 +59,13 @@ Test). Unten zeigt das **Protokoll** jeden Schritt, nach Phasen gegliedert; „D
 Ausgaben von Compiler und Host ein.
 
 Im Bereich Klonen wählt die App den Messmodus passend zum Plugin: **EQ-Messung**, **Kompressor-Messung**,
-**Verzerrer-Messung** oder **Allgemein**. Plugins, deren Kategorie eine andere Effektklasse nennt
+**Verzerrer-Messung** oder **Allgemein** (Delay und Reverb vorerst nur über die Kommandozeile). Plugins, deren Kategorie eine andere Effektklasse nennt
 (Delay, Hall, Modulation …), werden dabei nicht als Kompressor oder Verzerrer eingestuft. Beim Klonen kann sie außerdem die **Oberfläche des Originals nachbauen** (das Original
 wird dafür einmal unsichtbar geöffnet, siehe unten).
 
 Profile und Klone liegen unter `~/.local/share/vst-cloner/` (Windows: `%APPDATA%\vst-cloner`).
 Voraussetzung zusätzlich zu oben: Rust (`cargo`) und unter Linux WebKitGTK 4.1.
-Die App nutzt vorerst Node.js und den Projektordner – eigenständige Installationspakete folgen mit Meilenstein 8.
+Die App nutzt vorerst Node.js und den Projektordner – eigenständige Installationspakete folgen mit Meilenstein 9.
 
 ## Benutzung (Kommandozeile)
 
@@ -141,6 +152,41 @@ er verändert (beim DS1: LEVEL nur den Ausgang, TONE das Nachfilter, DRIVE Einga
 läuft parallel in Worker-Threads (~2 min). Die Laufzeit des Originals wird gemessen und übernommen. Das
 Plugin (`plugin-template/distortion`) rechnet sample-genau wie das TypeScript-Modell.
 
+### Gates und Expander
+
+Gates, Expander und Ducker laufen über dieselbe Messung und denselben Befehl wie Kompressoren; der Fit
+wählt die Kennlinie (Absenkung unter der Schwelle, optional mit Range) selbst. Multiband-Kompressoren und
+dynamische EQs werden erkannt und nicht geklont – das Ein-Band-Modell kann sie nicht abbilden.
+
+### Delay und Reverb klonen
+
+```bash
+npm run vch -- capture /usr/lib/lv2/MeinDelay.lv2 --class delay -o mein-delay.vcprofile
+npm run vch -- capture ~/.vst3/MeinHall.vst3 --class reverb -o mein-hall.vcprofile
+npm run vch -- clone mein-delay.vcprofile -o ./mein-delay-clone
+```
+
+- **Delay:** Gemessen wird ein Impuls mit langer Stille (plus Rauschburst). Das Modell ist eine Delay-Line
+  mit Feedback, Tief-/Hochpass in der Schleife und im Wet-Pfad sowie Dry- und Wet-Pegel; verglichen wird
+  der Pegel über Zeit und Frequenzband.
+- **Reverb:** Gemessen wird ein Impuls samt Ausklang. Das Modell ist ein Feedback-Delay-Netzwerk hinter
+  einem Pre-Delay, das den Ausklang so wiedergibt, wie er klingt: Pegel und Nachhallzeit in drei Bändern,
+  Dry-Pegel, Einsatz des Ausklangs. Verglichen werden die Abklingkurven pro Band.
+
+Schalter mit bis zu vier Stellungen bekommen ein eigenes Modell pro Stellung, wenn das die Gegenprobe
+deutlich besser trifft (Dynamik und Delay).
+
+### Alle Plugins einer Klasse (Batch)
+
+```bash
+npm run vch -- batch --class dynamics -o ./batch-dynamics [--match <regex>] [--limit <n>] [--gui]
+```
+
+Misst und klont jedes installierte Plugin der Klasse (`eq`, `dynamics`, `distortion`, `delay`, `reverb`),
+ohne etwas zu installieren: 60 s Zeitlimit fürs Laden, 15 min pro Plugin, ein Protokoll pro Plugin,
+`report.md`/`report.json` nach jedem Plugin. Ein neuer Start setzt fort. Der Bericht nennt auch, welche
+Plugins einer anderen oder keiner Klasse zugeordnet wurden und welche sich nicht laden ließen.
+
 ### Oberfläche nachbauen
 
 Mit `--gui` (bzw. der Option in der App) öffnet `vch-gui` den Editor des Originals unsichtbar (unter
@@ -179,7 +225,8 @@ Ab Meilenstein 3 erzeugt die App solche Messpläne automatisch je nach Effekt-Kl
 
 ## KI-Modelle einrichten
 
-Der spätere Klon-Agent kann lokale und Cloud-Modelle nutzen. Metadaten (Kontextlänge,
+Die bisherigen Klone entstehen ohne KI. Der spätere Builder-Agent (Meilenstein 7, für Plugins ohne passende
+Effektklasse) kann lokale und Cloud-Modelle nutzen. Metadaten (Kontextlänge,
 Tool-Unterstützung, Preise) kommen aus dem Anbieter selbst und dem täglich aktualisierten
 [models.dev](https://models.dev)-Katalog.
 
@@ -212,13 +259,16 @@ profile/   JSON-Schemas, Reader/Writer mit Prüfsummen, WAV-I/O
 capture/   Testsignale, Messplan, Ansteuerung von vch-host, CLI `vch`
 agent/     LLM-Anbieter (Vercel AI SDK), models.dev-Katalog, Schlüsselbund, Fähigkeitstests, Rollen
 clone/     Analyse, Messpläne, Fits und Codegeneratoren: eq/ (Filter-Fit), dynamics/ (Kompressor-Modell),
-           distortion/ (Wiener-Hammerstein-Modell, paralleler Fit),
+           distortion/ (Wiener-Hammerstein-Modell, paralleler Fit), delay/ (Delay-Line mit Feedback),
+           reverb/ (Feedback-Delay-Netzwerk), batch.ts (Klassifizierung, Batch-Lauf),
            gui/ (Oberflächen-Analyse, Texterkennung), dsp/ (Biquads, elliptische Filter, Optimierer);
            Plugin-Build und Vergleich mit dem Original
 plugin-template/
            eq/        C++/JUCE-EQ-Engine (Formeln identisch mit clone/src/dsp/biquad.ts)
            dynamics/  C++/JUCE-Kompressor-Engine (identisch mit clone/src/dynamics/model.ts)
            distortion/ C++/JUCE-Verzerrer-Engine (identisch mit clone/src/distortion/model.ts)
+           delay/     C++/JUCE-Delay-Engine (identisch mit clone/src/delay/model.ts)
+           reverb/    C++/JUCE-Reverb-Engine (identisch mit clone/src/reverb/model.ts)
            common/    Parameter und nachgebauter Editor, gemeinsam für alle Vorlagen
 host/      zusätzlich vch-gui: öffnet Plugin-Editoren unsichtbar und nimmt sie auf
 bridge/    JSON-Zeilen-Schnittstelle zwischen Oberfläche und den Paketen (Jobs, Fortschritt, Protokoll)
