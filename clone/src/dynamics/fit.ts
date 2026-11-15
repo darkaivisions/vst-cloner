@@ -14,7 +14,7 @@ import {
   type Detector,
   type Topology,
 } from "./model.ts";
-import { detectDynamics, renderCondition } from "./plan.ts";
+import { detectDynamics, renderCondition, steppedParameter } from "./plan.ts";
 
 /** Comparison windows: 8 blocks = 256 samples (5.3 ms at 48 kHz). */
 export const WINDOW_BLOCKS = 8;
@@ -787,7 +787,7 @@ export function fitDynamics(profile: Profile, onProgress?: (done: number, total:
       const p = swept(o)!;
       const info = parameters.find((x) => x.index === p.index)!;
       const table = tables.get(p.index)
-        ?? { index: p.index, name: info.name, discrete: info.discrete, points: [{ value: baseValues.get(p.index)!, packed: pack(baseFit.params) }] };
+        ?? { index: p.index, name: info.name, discrete: steppedParameter(info), points: [{ value: baseValues.get(p.index)!, packed: pack(baseFit.params) }] };
       table.points.push({ value: p.value, packed: pack(fit.params) });
       tables.set(p.index, table);
     });

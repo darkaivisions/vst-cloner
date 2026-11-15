@@ -1,3 +1,4 @@
+import { steppedParameter } from "../dynamics/plan.ts";
 import { CancelledError, regenerateTestSignal } from "@vst-cloner/capture";
 import { decodeWav, type Profile } from "@vst-cloner/profile";
 import { cascadeDb } from "../dsp/biquad.ts";
@@ -484,7 +485,7 @@ export async function fitDistortion(
     const candidate = GROUP_CANDIDATES.findIndex((_, c) => errorOf(c) <= best * 1.1 + 0.03);
     const info = parameters.find((q) => q.index === index)!;
     chosenGroups.push({ index, name: info.name, groups: GROUP_CANDIDATES[candidate]! });
-    const table: ParamTable = { index, name: info.name, discrete: info.discrete, points: [{ value: baseValues.get(index)!, packed: x0 }] };
+    const table: ParamTable = { index, name: info.name, discrete: steppedParameter(info), points: [{ value: baseValues.get(index)!, packed: x0 }] };
     for (const o of points) table.points.push({ value: o.params[0]!.value, packed: fits[jobs.findIndex((j) => j.o === o && j.candidate === candidate)]!.x });
     tables.set(index, table);
   }

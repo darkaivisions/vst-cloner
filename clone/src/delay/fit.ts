@@ -2,7 +2,7 @@ import { decodeWav, type Profile } from "@vst-cloner/profile";
 import { fft, nextPowerOfTwo } from "../dsp/fft.ts";
 import { nelderMead } from "../dsp/optimize.ts";
 import { pchip, tableAt, type Errors, type ParamTable } from "../dynamics/fit.ts";
-import { renderCondition, SWITCH_STATES } from "../dynamics/plan.ts";
+import { renderCondition, steppedParameter, SWITCH_STATES } from "../dynamics/plan.ts";
 import { HP_OFF, hpActive, LP_OFF, lpActive, MAX_FEEDBACK_DB, OFF_DB, onePole, packDelay, processDelay, unpackDelay, type DelayParams, type DelayStructure } from "./model.ts";
 
 export interface DelayInput {
@@ -506,7 +506,7 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
       const info = parameters.find((x) => x.index === p.index)!;
       const fit = analyseResponse(o.response, input.sampleRate, baseFit.params);
       const table = tables.get(p.index)
-        ?? { index: p.index, name: info.name, discrete: info.discrete, points: [{ value: baseValues.get(p.index)!, packed: packDelay(baseFit.params) }] };
+        ?? { index: p.index, name: info.name, discrete: steppedParameter(info), points: [{ value: baseValues.get(p.index)!, packed: packDelay(baseFit.params) }] };
       table.points.push({ value: p.value, packed: packDelay(fit.params) });
       tables.set(p.index, table);
       const shown = visible.get(p.index) ?? new Set(baseFit.echoes > 0 ? [baseValues.get(p.index)!] : []);

@@ -202,10 +202,12 @@ vst-cloner/
      - Delay-Kombinationen, erster Schritt ✔ – Echo-Erkennung relativ zum Pegel und am Anstieg, Zeit-Tabellen
        (Punkte ohne sichtbares Echo, Regler linear in Sekunden oder Tempo), Kombinationsmessungen für den Fit,
        Summenregel für mehrere Zeitregler; ZamDelay 2,71 → 0,78 dB, GxDelay-Stereo 10,9 → 6,1 dB
-     - Offen bei Delays: ZynEcho (24 dB, Ursache offen), Sync- und Modus-Schalter, die andere Regler umdeuten
-       (Tal-Dub-3, Gxdigital_delay, GxEcho), Rückgang von GxEcho-Stereo und GxDelay-Stereo seit dem 12.11.;
-       außerhalb des Modells: Bandecho mit mehreren Köpfen (GxEchoCat), Röhrensättigung (GxTubeDelay),
-       Ducking (Gxduck_delay), DualDelay
+     - Regler mit vielen Stufen (0 … 127, Zyn-Plugins) werden interpoliert statt wie Schalter auf den nächsten
+       Messpunkt gesetzt – alle Klassen; ZynEcho 24,5 → 20,3 dB
+     - Offen bei Delays: Sync- und Modus-Schalter, die andere Regler umdeuten (Tal-Dub-3, Gxdigital_delay,
+       GxEcho), Rückgang von GxEcho-Stereo und GxDelay-Stereo seit dem 12.11.; außerhalb des Modells: zwei
+       Leitungen mit Übersprechen (ZynEcho, „L/R Delay“), Bandecho mit mehreren Köpfen (GxEchoCat),
+       Röhrensättigung (GxTubeDelay), Ducking (Gxduck_delay), DualDelay
      - Offen: Oberfläche für Delay und Reverb
      - EQ-Erkennung erweitert ✔ – Bandgruppen mit eigenen Formen (MultiEQ), benannte Bänder mit fester Form
        (Lowshelf, Highpass, L/H), Regler grafischer EQs, stufenlos gemeldete Schalter; räumliche Effekte

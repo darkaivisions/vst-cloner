@@ -124,3 +124,11 @@ test("time tables: points without a visible repeat are continued, a control line
   refineTimeTable(level, (value) => value > 0.1);
   assert.deepEqual(level.points.map((p) => p.packed[1]), values.map((value) => -60 + 60 * value));
 });
+
+test("controls with many steps are interpolated, switches take the nearest measured position", async () => {
+  const { steppedParameter } = await import("../src/dynamics/plan.ts");
+  // 0 … 127: swept at nine points like a continuous control – the values in between need interpolation
+  assert.equal(steppedParameter({ discrete: true, numSteps: 128 }), false);
+  assert.equal(steppedParameter({ discrete: true, numSteps: 4 }), true);
+  assert.equal(steppedParameter({ discrete: false, numSteps: 2147483647 }), false);
+});

@@ -143,13 +143,19 @@ export function renderCondition(
 }
 
 /**
+ * A parameter whose every step is measured: its table holds one point per position. One with more steps
+ * (0 … 127) is swept like a continuous control, and its table must be interpolated like one.
+ */
+export const steppedParameter = (p: Pick<Parameter, "discrete" | "numSteps">) => p.discrete && p.numSteps >= 2 && p.numSteps <= 64;
+
+/**
  * Single-parameter sweeps (training) plus random combinations (validation) of all selected parameters.
  * Shared by the dynamics and distortion planners.
  */
 export function planSweeps(parameters: Parameter[], options: PlanOptions, ignored: RegExp, extra: { switches?: boolean; combinations?: number } = {}): CapturePlan {
   const exclude = options.exclude ? new RegExp(`${options.exclude.source}|${ignored.source}`, "i") : ignored;
   const selected = selectParameters(parameters, { ...(options.include ? { include: options.include } : {}), exclude });
-  const stepped = (p: Parameter) => p.discrete && p.numSteps >= 2 && p.numSteps <= 64;
+  const stepped = steppedParameter;
   // the working point (if a probe found one) takes the place of the plugin's initial state
   const working = options.workingPoint ?? [];
   const workingValue = new Map(working.map((w) => [w.index, w.value]));

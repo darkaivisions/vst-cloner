@@ -1,3 +1,4 @@
+import { steppedParameter } from "../dynamics/plan.ts";
 import { decodeWav, type Profile } from "@vst-cloner/profile";
 import { tableAt, type Errors, type ParamTable } from "../dynamics/fit.ts";
 import {
@@ -310,7 +311,7 @@ export function fitReverb(profile: Profile, onProgress?: (done: number, total: n
     // measurement noise, which would add up over the tables
     if (Math.abs(fit.params.predelaySeconds - baseFit.params.predelaySeconds) < MIN_PREDELAY_CHANGE) fit.params.predelaySeconds = baseFit.params.predelaySeconds;
     const table = tables.get(p.index)
-      ?? { index: p.index, name: info.name, discrete: info.discrete, points: [{ value: baseValues.get(p.index)!, packed: packReverb(baseFit.params) }] };
+      ?? { index: p.index, name: info.name, discrete: steppedParameter(info), points: [{ value: baseValues.get(p.index)!, packed: packReverb(baseFit.params) }] };
     table.points.push({ value: p.value, packed: packReverb(fit.params) });
     tables.set(p.index, table);
   });
