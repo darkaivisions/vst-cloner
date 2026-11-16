@@ -29,6 +29,10 @@ export interface DistortionObservation {
   renderId: string;
   label: string;
   purpose: "train" | "validate";
+  /** kind of the render ("default": the base setting, i.e. the initial state or the working point) */
+  kind?: string;
+  /** the control a sweep render moved away from the base */
+  sweepParameter?: number;
   params: { index: number; value: number }[];
   /** small-signal response (dB) on `grid` */
   smallDb: Float64Array;
@@ -140,6 +144,8 @@ export function distortionObservations(profile: Profile, input: DistortionInput)
       renderId: r.id,
       label: r.label ?? r.id,
       purpose: r.purpose === "validate" ? "validate" : "train",
+      kind: r.kind,
+      ...(r.sweepParameter !== undefined ? { sweepParameter: r.sweepParameter } : {}),
       params: r.params.map((p) => ({ index: p.index, value: p.value })),
       smallDb: smallSignalDb(input, output),
       steps: stepsOf(input, output),
@@ -401,6 +407,16 @@ export interface JobResult {
   error: number;
 }
 
+/** loudest sine step of the output (dBFS) below which a render counts as silent: a closed gate, a control at zero */
+export const SILENT_STEP_DB = -90;
+
+/** Nothing comes out for any sine step: there is no curve to fit, only "off". */
+export const silentObservation = (o: Pick<DistortionObservation, "steps">) =>
+  o.steps.length > 0 && o.steps.every((s) => !(s.levelDb + s.gainDb > SILENT_STEP_DB));
+
+/** output level of a setting in which the original is silent */
+const MUTED_OUTPUT_DB = -120;
+
 /** Runs jobs on worker threads (one per core, at most `jobs.length`). */
 async function runJobs(input: DistortionInput, jobs: DistortionJob[], onDone: (done: number) => void, signal?: AbortSignal): Promise<JobResult[]> {
   if (signal?.aborted) throw new CancelledError();
@@ -457,8 +473,13 @@ export async function fitDistortion(
   const input = distortionInput(profile);
   const observations = distortionObservations(profile, input);
   const parameters = profile.parameters.parameters;
-  const base = observations.find((o) => o.params.length === 0) ?? observations[0]!;
-  const train = observations.filter((o) => o.purpose === "train" && o !== base && o.params.length === 1);
+  // the measurement is centred on the working point when the capture found one (else the initial state)
+  const working = new Map(((profile.manifest.capture.plan?.workingPoint as { index: number; value: number }[] | undefined) ?? []).map((w) => [w.index, w.value]));
+  const base = observations.find((o) => o.kind === "default") ?? observations.find((o) => o.params.length === 0) ?? observations[0]!;
+  /** the one parameter a training render moved away from the base */
+  const swept = (o: DistortionObservation) =>
+    o.sweepParameter !== undefined ? o.params.find((p) => p.index === o.sweepParameter) : o.params.length === 1 ? o.params[0] : undefined;
+  const train = observations.filter((o) => o.purpose === "train" && o !== base && o.kind !== "random" && swept(o) !== undefined);
   const starts = baseStarts(base, input);
   const total = starts.length + train.length;
 
@@ -473,12 +494,17 @@ export async function fitDistortion(
   const fits = await runJobs(input, jobs.map((j) => ({ kind: "sweep", observation: j.o, x0, groups: GROUP_CANDIDATES[j.candidate]! })),
     (d) => onProgress?.(starts.length + Math.round((d / jobs.length) * train.length), total, "Regler"), signal);
 
-  const baseValues = new Map(parameters.map((p) => [p.index, p.value ?? p.default]));
+  const baseValues = new Map(parameters.map((p) => [p.index, working.get(p.index) ?? p.value ?? p.default]));
   const tables = new Map<number, ParamTable>();
-  const controls = [...new Set(train.map((o) => o.params[0]!.index))];
+  const controls = [...new Set(train.map((o) => swept(o)!.index))];
+  // a silent setting is the base with the output turned off – a fit of silence wanders anywhere
+  const muted = x0.slice();
+  muted[muted.length - 1] = MUTED_OUTPUT_DB - x0[0]!;
+  const fitted = (o: DistortionObservation, candidate: number) =>
+    silentObservation(o) && !silentObservation(base) ? muted : fits[jobs.findIndex((j) => j.o === o && j.candidate === candidate)]!.x;
   const chosenGroups: { index: number; name: string; groups: GroupName[] }[] = [];
   for (const index of controls) {
-    const points = train.filter((o) => o.params[0]!.index === index);
+    const points = train.filter((o) => swept(o)!.index === index);
     const errorOf = (candidate: number) =>
       points.reduce((s, o) => s + fits[jobs.findIndex((j) => j.o === o && j.candidate === candidate)]!.error, 0) / points.length;
     const best = errorOf(GROUP_CANDIDATES.length - 1);
@@ -486,7 +512,7 @@ export async function fitDistortion(
     const info = parameters.find((q) => q.index === index)!;
     chosenGroups.push({ index, name: info.name, groups: GROUP_CANDIDATES[candidate]! });
     const table: ParamTable = { index, name: info.name, discrete: steppedParameter(info), points: [{ value: baseValues.get(index)!, packed: x0 }] };
-    for (const o of points) table.points.push({ value: o.params[0]!.value, packed: fits[jobs.findIndex((j) => j.o === o && j.candidate === candidate)]!.x });
+    for (const o of points) table.points.push({ value: swept(o)!.value, packed: fitted(o, candidate) });
     tables.set(index, table);
   }
   for (const table of tables.values()) table.points.sort((a, b) => a.value - b.value);

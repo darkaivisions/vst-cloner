@@ -77,3 +77,26 @@ test("distortion detection: drive control or category, other effect classes excl
   assert.ok(detectDynamics(ducker));
   assert.throws(() => detectDynamics(ducker, "Delay Plugin"));
 });
+
+test("distortion probe: a silent initial state gets a working point, a sounding one keeps it", async () => {
+  const { distortionProbe } = await import("../src/distortion/plan.ts");
+  const { silentObservation } = await import("../src/distortion/fit.ts");
+  const probe = distortionProbe([parameter(0, "DRIVE"), parameter(1, "FUZZ"), parameter(2, "LEVEL")], "Distortion Plugin")!;
+  // initial state, each drive-like control on its own and both together, at 0.75 and at 1
+  assert.deepEqual(probe.candidates.map((c) => c.map((v) => `${v.index}=${v.value}`).join(",")),
+    ["", "0=0.75", "1=0.75", "0=0.75,1=0.75", "0=1", "1=1", "0=1,1=1"]);
+  const input = new Float32Array(48000).map((_, i) => 0.3 * Math.sin(i / 5));
+  const scaled = (gainDb: number) => input.map((v) => v * 10 ** (gainDb / 20));
+  // a switch-on thump in the first part does not count as sound
+  const thump = new Float32Array(48000).map((_, i) => (i < 9600 ? 0.5 * Math.exp(-i / 2000) : 0));
+  const pick = (gains: number[], first = scaled(gains[0]!)) => probe.choose([first, ...gains.slice(1).map(scaled)], input, 48000);
+  assert.equal(pick([-6, -3, 0, 0, 0, 0, 0]), 0);
+  assert.equal(pick([-200, -80, -20, -10, -30, -5, 0], thump), 2);
+  assert.equal(pick([-200, -80, -60, -50, -45, -35, -30]), 6);
+  assert.equal(pick([-200, -200, -200, -200, -200, -200, -200]), 0);
+  assert.equal(distortionProbe([parameter(0, "Frequency")]), undefined);
+
+  const step = (levelDb: number, gainDb: number) => ({ frequency: 1000, levelDb, gainDb, harmonicsDb: [] });
+  assert.ok(silentObservation({ steps: [step(-30, -160), step(-6, -150)] }));
+  assert.ok(!silentObservation({ steps: [step(-30, -160), step(-6, -20)] }));
+});

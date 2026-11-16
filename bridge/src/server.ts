@@ -359,6 +359,7 @@ function captureMessage(event: CaptureProgress, names: Map<number, string>): str
         ? `Als Schalter erkannt: ${event.stepped.map((s) => `${names.get(s.index) ?? `#${s.index}`} (${s.positions} Stellungen)`).join(", ")}`
         : "Keine versteckten Schalter gefunden";
     case "retry": return `Messung wird wiederholt: ${event.reason}`;
+    case "settle": return `Das Plugin schwingt nach dem Laden aus (Einschaltknacks) – Vorlauf auf ${event.prerollSeconds.toFixed(1)} s verlängert`;
     case "plan": return `${event.parameters} Parameter gefunden, ${event.selected} werden gemessen – ${event.renders} Einstellungen`;
     case "write": return `Profil wird gespeichert: ${event.path}`;
     default: return undefined;

@@ -140,7 +140,7 @@ Stand der Batch-Läufe (16.11. mit neu gebautem Host; Delay 15.11.):
 | Dynamik | 12 (9 Kompressoren/Limiter, 2 Gates, 1 Expander) | 0,34–3,55 dB; 3× ausgezeichnet, 2× sehr gut, 4× gut, 2× brauchbar (GxCompressor 2,37 dB, GxExpander 3,55 dB), 1× „keine Kompression gemessen“; unbekannte Kombinationen 0,41–9,97 dB |
 | Delay | 12 | 3× sehr gut (ZamDelay 1,43 dB, Gxdigital_delay 1,95/1,94 dB), 2× gut (Tal-Dub-3 2,87 dB, GxEcho-Stereo 3,12 dB), 2× brauchbar, 4× ungenau, 1× „kein Echo gemessen“; unbekannte Kombinationen 0,78–10,5 dB bei sieben Plugins, sonst 15–26 dB |
 | Reverb | 19 | 1,48–6,97 dB; 5× sehr gut, 7× gut, 7× brauchbar; unbekannte Kombinationen 2–16 dB; 11 Plugins nicht wiederholbar und isoliert gemessen (FdnReverb 13,0 → 4,08 dB, ZynReverb lässt sich jetzt messen) |
-| Verzerrer | 73 (+4 Fehler: 3× Absturz beim Messen, 1× Klon lädt nicht) | 0,06–18,4 dB und ein Ausreißer (GxFuzzFaceFuller 58,7, vorher 11,8 – Ursache offen); 12× ausgezeichnet, 20× sehr gut, 14× gut, 14× brauchbar, 13× ungenau; 17 Plugins nicht wiederholbar und isoliert gemessen (dRowAudio Distortion 3,30 → 1,96); unbekannte Kombinationen meist nahe am Gesamtwert, sonst bis 28 dB |
+| Verzerrer | 73 (+4 Fehler: 3× Absturz beim Messen, 1× Klon lädt nicht) | 0,06–18,4 dB (GxFuzzFaceFuller nach Korrektur 13,95, im Lauf vom 16.11. noch 58,7); 12× ausgezeichnet, 20× sehr gut, 14× gut, 14× brauchbar, 13× ungenau; 17 Plugins nicht wiederholbar und isoliert gemessen (dRowAudio Distortion 3,30 → 1,96); unbekannte Kombinationen meist nahe am Gesamtwert, sonst bis 28 dB |
 | EQ | 5 (+1 Fehler: ZamEQ2 gibt im Mess-Host nur NaN aus) | MultiEQ 0,04 dB (ausgezeichnet), x42-eq 0,50 dB (sehr gut, jetzt mit Shelves und Hoch-/Tiefpass), ZamGEQ31 0,66 dB, GxBarkGraphicEQ 0,62 dB, GxGraphicEQ 0,83 dB (gut); mehrere Bänder zugleich 0,25–2,13 dB |
 
 ## Profilformat `.vcprofile`
@@ -197,7 +197,11 @@ vst-cloner/
    - **5b Verzerrer (Pedale)** ✔ – Wiener-Hammerstein; GxBoss DS1: Grundton 0,68 dB, Oberwellen 1,8 dB
      - Erkennung geschärft (97 → 77 Treffer: ein Gain-Regler allein reicht nicht mehr); Batch über 77 Plugins:
        73 geklont, 46 gut oder besser
-     - Offen: GxFuzzFaceFuller seit der isolierten Messung 58,7 statt 11,8 (Teilwerte unverändert);
+     - Stumme Grundeinstellung ✔ – der Messplan sucht einen Arbeitspunkt (Drive-Regler aufdrehen), wenn in der
+       Grundeinstellung nichts herauskommt; stumme Reglerstellungen werden als „aus“ modelliert; die Aufnahme
+       verlängert den Vorlauf, wenn das Plugin nach dem Laden noch ausschwingt (Einschaltknacks, alle Klassen);
+       GxFuzzFaceFuller 58,7 → 13,95
+     - Offen: Gate-Verhalten von Fuzz-Pedalen (GxFuzzFaceFuller lässt leise Signale nicht durch);
        Fuzz-Pedale mit Grundton-Fehlern über 10 dB (GxAxisFace, GxFuzzFaceFuller, GxSunFace, Hip2B),
        Bitcrusher (Bitta, MaBitcrush – brauchen ein anderes Modell), Absturz beim Messen (GxAmplifier-X,
        GxCabinet), Zeitbereichs-Term im Fit

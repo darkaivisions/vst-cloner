@@ -29,13 +29,15 @@ Batch-Läufe über alle installierten Plugins einer Klasse (ohne Oberfläche, St
 | Kompressoren, Limiter, Gates, Expander | 12 | 0,34–3,55 dB: 9 gut oder besser, 2 brauchbar, 1 ohne messbare Kompression (z. B. OmniCompressor 0,34 · x42-dpl 0,40 · ZamComp 0,45 · Open Optical 0,52 · ZamGate 1,88) |
 | Delays | 12 | 1,43–15,7 dB: 3 sehr gut (ZamDelay 1,43 · Gxdigital_delay 1,95), 2 gut (Tal-Dub-3 2,87 · GxEcho-Stereo 3,12), 2 brauchbar, 4 ungenau, 1 ohne messbares Echo |
 | Reverbs | 19 | 1,48–6,97 dB: 12 gut oder besser, 7 brauchbar (z. B. ZamVerb 1,48 · Dragonfly Hall 1,67 · Tal-Reverb-III 1,68 · FdnReverb 4,08) |
-| Verzerrer | 73 | 0,06–18,4 dB und ein Ausreißer (GxFuzzFaceFuller 58,7): 46 gut oder besser, 14 brauchbar, 13 ungenau (z. B. GxMicroAmp 0,06 · Wolf Shaper 0,44 · GxBoss DS1 1,15 · GxTubeScreamer 1,93) |
+| Verzerrer | 73 | 0,06–18,4 dB: 46 gut oder besser, 14 brauchbar, 13 ungenau (z. B. GxMicroAmp 0,06 · Wolf Shaper 0,44 · GxBoss DS1 1,15 · GxTubeScreamer 1,93) |
 | EQs | 5 | 0,04–0,83 dB: IEM MultiEQ 0,04 · x42-eq 0,50 · ZamGEQ31 0,66 · GxBarkGraphicEQ 0,62 · GxGraphicEQ 0,83 |
 
 Bei Reverbs und den meisten Delays weichen Reglerkombinationen, die nicht einzeln gemessen wurden, noch deutlich stärker ab
 (Delays: 0,8–10 dB bei sieben Plugins, sonst 15–26 dB; Reverbs: 2–16 dB).
 Plugins, die sich zwischen zwei Messungen einen Zustand merken (11 der 19 Reverbs, 17 der 73 Verzerrer), werden
-automatisch mit einer frischen Instanz pro Einstellung gemessen.
+automatisch mit einer frischen Instanz pro Einstellung gemessen. Schwingt ein Plugin nach dem Laden noch aus
+(Einschaltknacks), verlängert die Aufnahme den Vorlauf; ist ein Verzerrer in der Grundeinstellung stumm, sucht sie
+einen Arbeitspunkt, an dem er klingt.
 
 ## Voraussetzungen
 

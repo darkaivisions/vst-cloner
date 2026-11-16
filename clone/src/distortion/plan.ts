@@ -1,4 +1,4 @@
-import { DEFAULT_PLAN, type CapturePlan, type CapturePlanner, type HostInfo, type PlanOptions } from "@vst-cloner/capture";
+import { DEFAULT_PLAN, type CapturePlan, type CaptureProbe, type CapturePlanner, type FixedValue, type HostInfo, type PlanOptions } from "@vst-cloner/capture";
 import type { Parameter } from "@vst-cloner/profile";
 import { IGNORED, OTHER_CLASS_CATEGORY, planSweeps } from "../dynamics/plan.ts";
 
@@ -71,8 +71,59 @@ export function planDistortion(parameters: Parameter[], options: PlanOptions, ca
   return { ...planSweeps(parameters, options, IGNORED), mapping };
 }
 
+/** output below this level against the input (dB, later part of the test signal): the setting lets nothing through */
+const PROBE_AUDIBLE_DB = -40;
+/** level a working point should reach */
+const PROBE_WANTED_DB = -25;
+
+/**
+ * Candidate settings for the working point: gated fuzzes and starved amps are silent in their initial state,
+ * and a silent base render says nothing about any control. Then the drive-like controls are turned up, one at a
+ * time and together, and the plan measures around the first setting that sounds.
+ */
+export function distortionProbe(parameters: Parameter[], category = "", name = ""): CaptureProbe | undefined {
+  let mapping: DistortionMapping;
+  try {
+    mapping = detectDistortion(parameters, category, name);
+  } catch {
+    return undefined;
+  }
+  const drives = parameters
+    .filter((p) => p.automatable && !p.meta && !IGNORED.test(p.name) && !p.discrete && (STRONG_DRIVE.test(p.name) || p.index === mapping.roles.drive || /^(input|gain|pre.?gain)$/i.test(p.name)))
+    .slice(0, 4);
+  if (!drives.length) return undefined;
+  const candidates: FixedValue[][] = [[]];
+  for (const value of [0.75, 1]) {
+    for (const p of drives) candidates.push([{ index: p.index, value }]);
+    if (drives.length > 1) candidates.push(drives.map((p) => ({ index: p.index, value })));
+  }
+  return {
+    candidates,
+    choose(outputs, input) {
+      // the first seconds may hold a switch-on thump: level over the later 60 % of the signal
+      const level = (signal: Float32Array, length: number) => {
+        let sum = 0;
+        const from = Math.floor(length * 0.4);
+        for (let i = from; i < length; i++) sum += signal[i]! * signal[i]!;
+        return 10 * Math.log10(sum / Math.max(1, length - from) + 1e-30);
+      };
+      const gains = outputs.map((o) => {
+        const length = Math.min(o.length, input.length);
+        return level(o, length) - level(input, length);
+      });
+      if (gains[0]! >= PROBE_AUDIBLE_DB) return 0;
+      // candidates are ordered from the smallest change to the largest
+      const wanted = gains.findIndex((g, i) => i > 0 && g >= PROBE_WANTED_DB);
+      if (wanted > 0) return wanted;
+      const loudest = gains.reduce((best, g, i) => (g > gains[best]! ? i : best), 0);
+      return gains[loudest]! >= Math.max(PROBE_AUDIBLE_DB, gains[0]! + 10) ? loudest : 0;
+    },
+  };
+}
+
 export const distortionPlanner: CapturePlanner = {
   name: "distortion",
   signalPreset: "distortion",
   plan: (info: HostInfo, options: PlanOptions) => planDistortion(info.parameters, { ...DEFAULT_PLAN, ...options }, info.plugin.category, info.plugin.name),
+  probe: (info: HostInfo) => distortionProbe(info.parameters, info.plugin.category, info.plugin.name),
 };

@@ -50,6 +50,8 @@ export type CaptureProgress =
   | { stage: "step"; step: "repeat" | "probe" | "survey"; done: number; total: number }
   | { stage: "repeat"; repeatable: boolean }
   | { stage: "retry"; reason: string }
+  /** the plugin was still settling after loading (switch-on thump): renders get a longer pre-roll */
+  | { stage: "settle"; prerollSeconds: number }
   | { stage: "survey"; renders: number; stepped: { index: number; positions: number }[] }
   | { stage: "plan"; parameters: number; selected: number; renders: number }
   | { stage: "workdir"; path: string }
@@ -86,6 +88,9 @@ export interface CaptureProbe {
   /** index of the chosen candidate; `outputs[i]` is the first channel of candidate i */
   choose(outputs: Float32Array[], input: Float32Array, sampleRate: number): number;
 }
+
+/** longest pre-roll given to a plugin that settles slowly after loading */
+const MAX_PREROLL_SECONDS = 8;
 
 /** Re-encodes a WAV file as mono when all channels are bit-identical (halves the profile size for stereo-linked effects). */
 export function collapseIdenticalChannels(bytes: Uint8Array): { bytes: Uint8Array; mono: boolean } {
@@ -203,6 +208,28 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
       const repeatable = !(difference > 1e-3 * Math.max(peak, 1e-6));
       progress({ stage: "repeat", repeatable });
       if (!repeatable) jobBase.isolate = true;
+
+      // Settling: output that decays while the input is still silent is no answer to the test signal (bias and
+      // coupling capacitors of a circuit model charging after the reset). The pre-roll is made long enough for
+      // it to fall below -100 dBFS; steady noise does not decay and stays as it is.
+      const lead = signal.set.segments[0];
+      if (lead?.kind === "silence" && lead.start === 0 && lead.length >= 512) {
+        const half = Math.floor(lead.length / 2);
+        const peakDb = (from: number) => {
+          let m = 0;
+          for (let i = from; i < from + half; i++) m = Math.max(m, Math.abs(before[i] ?? 0));
+          return 20 * Math.log10(m + 1e-12);
+        };
+        const early = peakDb(0), late = peakDb(half);
+        const rate = (early - late) / (half / options.sampleRate); // dB per second
+        if (late > -100 && rate > 5) {
+          const prerollSeconds = Math.min(MAX_PREROLL_SECONDS, Math.ceil((options.prerollSeconds + ((late + 100) / rate) * 1.25) * 10) / 10);
+          if (prerollSeconds > jobBase.prerollSeconds) {
+            jobBase.prerollSeconds = prerollSeconds;
+            progress({ stage: "settle", prerollSeconds });
+          }
+        }
+      }
     }
 
     // probe: the planner looks at a few candidate settings and picks the one to measure around
@@ -323,7 +350,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
           sampleRate: options.sampleRate,
           blockSize: options.blockSize,
           channels: options.channels,
-          prerollSeconds: options.prerollSeconds,
+          prerollSeconds: jobBase.prerollSeconds,
           tailSeconds: options.tailSeconds,
           plan: {
             planner: options.planner?.name ?? "generic",
