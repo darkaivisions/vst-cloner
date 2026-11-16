@@ -1,7 +1,6 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { call } from "../bridge.ts";
-import { clear, formatBytes, formatDate, formatDb, h, toast, verdictClass } from "../dom.ts";
+import { clear, formatBytes, formatDate, formatDb, h, openInSystem, revealInFolder, toast, verdictClass } from "../dom.ts";
 import type { ProfileSummary } from "../types.ts";
 import { ProfileDetailsDialog } from "./details.ts";
 
@@ -20,7 +19,7 @@ export class LibraryView {
       h("section.card", {},
         h("header.step-header", {}, h("h2", {}, "Bibliothek"), h("div.spacer"),
           h("button.ghost.small", { onclick: () => this.importProfile() }, "Profil importieren …"),
-          h("button.ghost.small", { onclick: () => this.profilesDir && openPath(this.profilesDir) }, "Ordner öffnen")),
+          h("button.ghost.small", { onclick: () => this.profilesDir && openInSystem(this.profilesDir) }, "Ordner öffnen")),
         h("p.hint", {}, "Gespeicherte Messungen (.vcprofile). Aus einem Profil lässt sich der Klon jederzeit neu bauen – ohne das Original-Plugin."),
         this.list));
   }
@@ -59,11 +58,11 @@ export class LibraryView {
             h("button.ghost.small", { onclick: () => this.details.show(p.path) }, "Details"),
             h("button.primary.small", {
               disabled: !CLONEABLE.has(p.planner),
-              title: CLONEABLE.has(p.planner) ? "" : "Klone sind bisher nur für EQ-, Dynamik- und Verzerrer-Messungen möglich",
+              title: CLONEABLE.has(p.planner) ? "" : "Klone sind bisher nur für EQ-, Dynamik-, Verzerrer-, Delay- und Hall-Messungen möglich",
               onclick: () => this.onBuild(p),
             }, "Klon bauen"),
             h("button.ghost.small", { onclick: () => this.exportProfile(p) }, "Exportieren …"),
-            h("button.ghost.small", { onclick: () => revealItemInDir(p.path) }, "Zeigen"),
+            h("button.ghost.small", { onclick: () => revealInFolder(p.path) }, "Zeigen"),
             h("button.ghost.small.danger-text", { onclick: () => this.deleteProfile(p) }, "Löschen"))),
       );
     }

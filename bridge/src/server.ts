@@ -583,8 +583,10 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
     const profilePath = str(params, "profile");
     const install = params.install === true;
     const refit = params.refit === true;
-    // rebuild the editor of the original unless switched off (needs the original plugin once)
-    const gui = params.gui !== false;
+    // rebuild the editor of the original unless switched off (needs the original plugin once);
+    // refitGui captures it again instead of using the layout stored in the profile
+    const refitGui = params.refitGui === true;
+    const gui = params.gui !== false || refitGui;
     const pluginPath = typeof params.plugin === "string" && params.plugin ? params.plugin : undefined;
     return startJob("clone", async (ctx) => {
       const summary = await summarizeProfile(profilePath);
@@ -597,6 +599,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
           ...(install ? { install: true } : {}),
           ...(refit ? { refit: true } : {}),
           gui,
+          ...(refitGui ? { refitGui: true } : {}),
           ...(pluginPath ? { pluginPath } : {}),
           signal: ctx.signal,
           onStage: (stage) => ctx.stage(stage, STAGE_TITLES[stage]),
@@ -675,6 +678,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
           ...(install ? { install: true } : {}),
           ...(refit ? { refit: true } : {}),
           gui,
+          ...(refitGui ? { refitGui: true } : {}),
           ...(pluginPath ? { pluginPath } : {}),
           signal: ctx.signal,
           onStage: (stage) => ctx.stage(stage, STAGE_TITLES[stage]),
@@ -718,6 +722,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
         install,
         refit,
         gui,
+        ...(refitGui ? { refitGui: true } : {}),
         ...(pluginPath ? { pluginPath } : {}),
         signal: ctx.signal,
         onStage: (stage) => ctx.stage(stage, STAGE_TITLES[stage]),

@@ -1,6 +1,5 @@
-import { openPath } from "@tauri-apps/plugin-opener";
 import { call } from "../bridge.ts";
-import { clear, formatBytes, formatDate, h, toast, verdictClass } from "../dom.ts";
+import { clear, formatBytes, formatDate, h, openInSystem, toast, verdictClass, zoomImage } from "../dom.ts";
 import type { ProfileDetails } from "../types.ts";
 
 const seconds = (s: number) => (s >= 10 ? `${s.toFixed(0)} s` : `${s.toFixed(1)} s`);
@@ -57,11 +56,11 @@ export class ProfileDetailsDialog {
       this.body.appendChild(section("Oberfläche",
         h("div.preview-grid", {},
           h("figure.preview", {},
-            h("img", { src: d.gui.layout, alt: "Nachgebautes Layout", style: `aspect-ratio: ${d.gui.width} / ${d.gui.height}` }),
+            h("img", { src: d.gui.layout, alt: "Nachgebautes Layout", style: `aspect-ratio: ${d.gui.width} / ${d.gui.height}`, onclick: () => zoomImage(d.gui!.layout, "Nachgebautes Layout") }),
             h("figcaption", {}, `Nachgebautes Layout · ${d.gui.controls} Bedienelemente · ${d.gui.width}×${d.gui.height}`)),
           d.gui.compare
             && h("figure.preview", {},
-              h("img", { src: d.gui.compare, alt: "Original und Klon" }),
+              h("img", { src: d.gui.compare, alt: "Original und Klon", onclick: () => zoomImage(d.gui!.compare!, "Original (links) und Klon (rechts)") }),
               h("figcaption", {}, "Original (links) und gebauter Klon (rechts) – nur lokal gespeichert"))),
       ));
     } else {
@@ -106,6 +105,6 @@ export class ProfileDetailsDialog {
     this.body.appendChild(section("Modell",
       d.model ? h("ul.model-summary", {}, ...d.model.summary.map((line) => h("li", {}, line))) : h("p.hint", {}, "Noch nicht analysiert – „Klon bauen“ erstellt das Modell.")));
 
-    this.body.appendChild(h("div.actions", {}, h("button.ghost.small", { onclick: () => openPath(d.path.replace(/[\\/][^\\/]+$/, "")) }, "Ordner öffnen")));
+    this.body.appendChild(h("div.actions", {}, h("button.ghost.small", { onclick: () => openInSystem(d.path.replace(/[\\/][^\\/]+$/, "")) }, "Ordner öffnen")));
   }
 }

@@ -247,7 +247,7 @@ input:focus, select:focus { border-color: var(--accent); }
   position: fixed; right: 20px; bottom: 250px; max-width: 420px;
   background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
   padding: 10px 14px; border-radius: 8px; box-shadow: 0 8px 30px #0008;
-  opacity: 0; transform: translateY(8px); transition: all 0.25s; z-index: 10;
+  opacity: 0; transform: translateY(8px); transition: all 0.25s; z-index: 100;
 }
 .toast.visible { opacity: 1; transform: none; }
 .toast.error { border-color: #5a2326; color: #ffb4b6; }
@@ -285,3 +285,13 @@ input:focus, select:focus { border-color: var(--accent); }
 .note { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; padding: 7px 10px; color: var(--muted); line-height: 1.45; }
 .note strong { color: var(--text); }
 .note.warn { border-left-color: var(--warn); }
+
+/* enlarged image (preview images, comparison with the original) */
+.lightbox { position: fixed; inset: 0; z-index: 80; background: rgba(0, 0, 0, 0.85); display: flex; flex-direction: column; }
+.lightbox-bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.lightbox-title { font-weight: 600; }
+.lightbox-frame { flex: 1; min-height: 0; overflow: auto; display: flex; padding: 16px; }
+/* fitted: as large as the window allows, small editors are scaled up too */
+.lightbox-image { margin: auto; width: 100%; height: 100%; object-fit: contain; cursor: zoom-in; }
+.lightbox.actual-size .lightbox-image { width: auto; height: auto; cursor: zoom-out; }
+.check.sub { margin-left: 26px; }

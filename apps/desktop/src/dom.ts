@@ -1,3 +1,5 @@
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+
 type Child = Node | string | number | false | null | undefined;
 type Attrs = Record<string, string | number | boolean | EventListener | undefined | null>;
 
@@ -66,4 +68,58 @@ export function toast(message: string, kind: "info" | "error" = "info"): void {
     el.classList.remove("visible");
     setTimeout(() => el.remove(), 300);
   }, kind === "error" ? 6000 : 3000);
+}
+
+/** Opens a file or folder with the system's default program; failures are shown instead of swallowed. */
+export async function openInSystem(path: string): Promise<void> {
+  try {
+    await openPath(path);
+  } catch (error) {
+    toast(`Konnte nicht geöffnet werden: ${path} (${errorText(error)})`, "error");
+  }
+}
+
+/** Shows a file in the file manager. */
+export async function revealInFolder(path: string): Promise<void> {
+  try {
+    await revealItemInDir(path);
+  } catch {
+    // some file managers do not support selecting an item: open the folder instead
+    await openInSystem(path.replace(/[\\/][^\\/]+$/, ""));
+  }
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Enlarged view of an image inside the app: fitted to the window, a click shows it at full size (scrollable),
+ * Escape, the close button or a click beside the image closes it. `file` adds a button for the system viewer.
+ */
+export function zoomImage(src: string, alt: string, file?: string): void {
+  const image = h("img.lightbox-image", { src, alt });
+  const frame = h("div.lightbox-frame", {}, image);
+  const close = () => {
+    overlay.remove();
+    window.removeEventListener("keydown", onKey, true);
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key !== "Escape") return;
+    // the lightbox may sit above a dialog that closes on Escape too: only the lightbox goes
+    e.stopPropagation();
+    e.preventDefault();
+    close();
+  };
+  const overlay = h("div.lightbox", { onclick: (e: Event) => (e.target === overlay || e.target === frame) && close() },
+    h("div.lightbox-bar", {},
+      h("span.lightbox-title", {}, alt),
+      h("span.muted.small", {}, "Klick aufs Bild: Originalgröße · Esc: schließen"),
+      h("div.spacer"),
+      file ? h("button.ghost.small", { onclick: () => void openInSystem(file) }, "Im Bildbetrachter öffnen") : "",
+      h("button.ghost.small", { onclick: close }, "Schließen")),
+    frame);
+  image.addEventListener("click", () => overlay.classList.toggle("actual-size"));
+  window.addEventListener("keydown", onKey, true);
+  document.body.appendChild(overlay);
 }

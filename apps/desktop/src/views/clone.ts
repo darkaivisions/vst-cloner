@@ -1,7 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { call, startJob, type JobHandle } from "../bridge.ts";
-import { clear, formatBytes, formatDb, h, toast, verdictClass } from "../dom.ts";
+import { clear, formatBytes, formatDb, h, openInSystem, revealInFolder, toast, verdictClass, zoomImage } from "../dom.ts";
 import { Progress } from "../progress.ts";
 import type { CaptureResult, CloneResult, PluginEntry, PluginInfo, ProfileSummary } from "../types.ts";
 
@@ -30,6 +29,8 @@ export class CloneView {
   private readonly profileLine = h("div.profile-line");
   private readonly installBox = h("input", { type: "checkbox", checked: true });
   private readonly guiBox = h("input", { type: "checkbox", checked: true });
+  private readonly refitGuiBox = h("input", { type: "checkbox" });
+  private readonly refitBox = h("input", { type: "checkbox" });
   private readonly cloneButton = h("button.primary", {}, "Klon bauen");
   private readonly cloneProgress = new Progress();
   private readonly result = h("div.result");
@@ -39,6 +40,7 @@ export class CloneView {
     this.search.addEventListener("input", () => this.renderList());
     this.captureButton.addEventListener("click", () => (this.captureJob ? this.captureJob.cancel() : this.capture()));
     this.cloneButton.addEventListener("click", () => (this.cloneJob ? this.cloneJob.cancel() : this.buildClone()));
+    this.guiBox.addEventListener("change", () => this.update());
 
     const step1 = h("section.card.step", {},
       h("header.step-header", {}, h("span.step-number", {}, "1"), h("h2", {}, "Plugin wählen"),
@@ -58,6 +60,10 @@ export class CloneView {
       h("label.check", {}, this.installBox, "Nach dem Bau installieren (für die DAW sichtbar)"),
       h("label.check", { title: "Das Original-Plugin wird dafür kurz unsichtbar geöffnet und jeder Regler einmal bewegt" },
         this.guiBox, "Oberfläche des Originals nachbauen"),
+      h("label.check.sub", { title: "Eine im Profil gespeicherte Oberfläche wird sonst wiederverwendet. Neu erfassen nutzt die aktuelle Erkennung – das Original-Plugin muss installiert sein." },
+        this.refitGuiBox, "Oberfläche neu erfassen (statt der im Profil gespeicherten)"),
+      h("label.check", { title: "Ein im Profil gespeichertes Modell wird sonst wiederverwendet. Neu berechnen dauert je nach Effektart Sekunden bis wenige Minuten." },
+        this.refitBox, "Modell neu berechnen (statt des im Profil gespeicherten)"),
       h("div.actions", {}, this.cloneButton), this.cloneProgress.element, this.result);
 
     this.steps = [step1, step2, step3];
@@ -202,7 +208,7 @@ export class CloneView {
     clear(this.profileLine);
     if (this.profile) {
       this.profileLine.append(h("span.muted", {}, "Profil: "), h("strong", {}, this.profile.name), h("span.muted", {}, ` · ${this.profile.renders} Messungen · `),
-        h("button.link", { onclick: () => revealItemInDir(this.profile!.path) }, "im Ordner zeigen"));
+        h("button.link", { onclick: () => revealInFolder(this.profile!.path) }, "im Ordner zeigen"));
     } else {
       this.profileLine.append(h("span.muted", {}, "Nach dem Messen geht es hier weiter – oder ein Profil aus der Bibliothek wählen."));
     }
@@ -211,6 +217,8 @@ export class CloneView {
     this.cloneButton.classList.toggle("danger", Boolean(this.cloneJob));
     this.installBox.disabled = busy;
     this.guiBox.disabled = busy;
+    this.refitGuiBox.disabled = busy || !this.guiBox.checked;
+    this.refitBox.disabled = busy;
     this.steps[2]!.classList.toggle("disabled", !this.profile);
   }
 
@@ -282,7 +290,12 @@ export class CloneView {
     const plugin = this.info && this.profile.name === this.info.name ? this.info.path : undefined;
     try {
       this.cloneJob = await startJob<CloneResult>("clone.start",
-        { profile: this.profile.path, install: this.installBox.checked, gui: this.guiBox.checked, ...(plugin ? { plugin } : {}) }, (event) => {
+        {
+          profile: this.profile.path, install: this.installBox.checked, gui: this.guiBox.checked,
+          ...(this.guiBox.checked && this.refitGuiBox.checked ? { refitGui: true } : {}),
+          ...(this.refitBox.checked ? { refit: true } : {}),
+          ...(plugin ? { plugin } : {}),
+        }, (event) => {
           if (event.kind === "stage") this.cloneProgress.busy(titles[event.stage] ?? event.title);
           else if (event.kind === "progress") this.cloneProgress.set(event.done, event.total, event.label ?? `${event.done} / ${event.total}`);
         });
@@ -373,10 +386,10 @@ export class CloneView {
           h("strong", {}, "Oberfläche nachgebaut"),
           h("span.muted", {}, ` · ${g.controls} Bedienelemente${g.similarity !== undefined ? ` · ${Math.round(g.similarity * 100)} % Struktur-, ${Math.round((g.colorSimilarity ?? 0) * 100)} % Farbähnlichkeit` : ""}`),
           g.comparePng ? h("span.muted", {}, " · ") : "",
-          g.comparePng ? h("button.link", { onclick: () => openPath(g.comparePng!) }, "Vergleichsbild öffnen") : ""),
+          g.comparePng ? h("button.link", { onclick: () => openInSystem(g.comparePng!) }, "Vergleichsbild öffnen") : ""),
         g.preview
           ? h("figure.preview", {},
-            h("img", { src: g.preview, alt: "Original und Klon", onclick: () => g.comparePng && openPath(g.comparePng) }),
+            h("img", { src: g.preview, alt: "Original und Klon", onclick: () => zoomImage(g.preview!, "Original (links) und Klon (rechts)", g.comparePng) }),
             h("figcaption", {}, "So sieht der Klon aus: Original (links), Klon (rechts)"))
           : "",
       );
@@ -388,7 +401,7 @@ export class CloneView {
         result.installed.length > 0
           ? h("div.muted", {}, `Installiert: ${result.installed.join(", ")}`)
           : h("div.muted", {}, "Nicht installiert – zum Installieren „Nach dem Bau installieren“ anhaken und erneut bauen."),
-        h("div.actions", {}, h("button.ghost", { onclick: () => openPath(folder) }, "Ordner öffnen"))),
+        h("div.actions", {}, h("button.ghost", { onclick: () => openInSystem(folder) }, "Ordner öffnen"))),
     );
   }
 }
