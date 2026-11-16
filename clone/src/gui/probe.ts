@@ -119,7 +119,8 @@ function sweep(p: Parameter): number[] {
     const count = Math.min(steps.values.length, 8);
     return Array.from({ length: count }, (_, i) => steps.values[Math.round((i / Math.max(1, count - 1)) * (steps.values.length - 1))]!);
   }
-  return [0, 0.25, 0.5, 0.75, 1];
+  // dense enough for the pointer positions of a knob to outline its circle
+  return [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1];
 }
 
 export interface ProbeOptions {

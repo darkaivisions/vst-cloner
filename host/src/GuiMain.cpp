@@ -22,6 +22,7 @@ Usage:
   vch-gui --version
 
 Job: { "plugin", "identifier"?, "state"?, "output", "settleMs", "stepMs", "audioMs"? (default 1500), "dismissKeys"? (e.g. ["Escape"], default none),
+       "process"? (default true: silent audio runs through the plugin in every step),
        "clicks"? [ { "dx", "dy" } ] (left clicks relative to the editor centre, e.g. to close a trial notice),
        "steps": [ { "id", "params": [ { "index", "value" } ], "png"?, "audio"? { "frequency", "levelDb" } } ] }
 A step with "audio" feeds a sine through the plugin while waiting, so that level meters move.
@@ -240,8 +241,12 @@ Each step starts from the plugin's initial parameter values. Results are JSON li
                 }
             }
 
+            // Audio runs in every step, silent unless the step asks for a tone: many editors (LV2 in particular) learn
+            // about parameter changes only from the processing callback and would never move otherwise.
             if (auto audio = step["audio"]; audio.isObject())
                 feed.run ((int) job.getProperty ("audioMs", 1500), (double) audio.getProperty ("frequency", 1000.0), (double) audio.getProperty ("levelDb", -10.0));
+            else if ((bool) job.getProperty ("process", true))
+                feed.run (stepMs, 1000.0, -200.0);
             else
                 pump (stepMs);
 

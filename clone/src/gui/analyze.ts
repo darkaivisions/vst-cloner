@@ -19,7 +19,7 @@ import {
 } from "./image.ts";
 import type { Circle, Control, Display, Fill, GuiModel, Line, Needle, Panel, Readout, RotaryStyle, TextItem } from "./model.ts";
 import type { GuiProbe, ProbedParameter } from "./probe.ts";
-import { plausibleText, recognizeBlocks } from "./ocr.ts";
+import { findTesseract, plausibleText, recognizeBlocks } from "./ocr.ts";
 
 const TAU = Math.PI * 2;
 
@@ -238,12 +238,21 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
   const { frames, main } = fp;
   const width = median.width;
   const searchBox = clampBox(grow(main, 4), median);
-  const indicator = frames.map((f) => maskPoints(diffMask(f, median, 30, noise), width, searchBox));
-  if (indicator.flat().length < 6) return undefined;
+  const moving = frames.map((f) => maskPoints(diffMask(f, median, 30, noise), width, searchBox));
+  if (moving.flat().length < 6) return undefined;
+  // A pointer passes a pixel once; what changes in the same place again and again is a value text drawn on the
+  // knob (or its arc). With enough frames those pixels are told apart and kept out of the pointer.
+  const seen = new Map<number, number>();
+  for (const pts of moving) for (const [x, y] of pts) seen.set(y * width + x, (seen.get(y * width + x) ?? 0) + 1);
+  const repeats = frames.length >= 7 ? 3 : Infinity;
+  const passing = moving.map((pts) => pts.filter(([x, y]) => seen.get(y * width + x)! < repeats));
+  const indicator = passing.flat().length >= 6 ? passing : moving;
 
   // Value arcs: if most changing pixels lie on a ring, that ring is centred on the knob axis.
   // a ring larger than the control itself belongs to something else (value text, neighbouring display)
-  const fittedRing = fitRing(indicator.flat());
+  // (a value arc lights the same pixels in many frames; pointer marks near the rim lie on a ring too, but each once)
+  const lasting = moving.flat().filter(([x, y]) => seen.get(y * width + x)! >= repeats);
+  const fittedRing = frames.length >= 7 ? (lasting.length >= moving.flat().length * 0.3 ? fitRing(lasting) : undefined) : fitRing(moving.flat());
   const ring = fittedRing && fittedRing.r <= Math.max(main.w, main.h) * 0.6 ? fittedRing : undefined;
   // The centroid of a rotating pointer moves on a circle around the knob axis.
   let cx = ring ? ring.cx : main.x + main.w / 2;
@@ -265,7 +274,7 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
   const pointerReach = percentile(indicator.flat().filter(inside).map(dist), 0.95) || (ring ? ring.r * 0.7 : 0);
 
   // knob body: first radius where the ring colour departs from the centre colour
-  const centre = ringMedian(median, cx, cy, Math.max(2, pointerReach * 0.25));
+  let centre = ringMedian(median, cx, cy, Math.max(2, pointerReach * 0.25));
   let radius = pointerReach * 1.05;
   const maxRadius = ring ? ring.r - ring.width / 2 - 1 : pointerReach * 2.2;
   for (let r = pointerReach * 0.5; r < maxRadius; r += 0.5) {
@@ -274,6 +283,20 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
       break;
     }
     radius = Math.min(maxRadius, Math.max(radius, r));
+  }
+  // Better: the rim of the disc in the still image – the first full circle at or beyond the pointer tip, widened
+  // over bevel rings right outside of it. The centre moves to where the circles are complete.
+  const half = Math.max(main.w, main.h) / 2;
+  const edges = circleEdges(median, cx, cy, Math.max(4, pointerReach * 0.92), ring ? ring.r - ring.width / 2 - 1 : Math.max(pointerReach * 1.8, half * 1.35), ring ? 1 : 3);
+  if (process.env.VCH_GUI_DEBUG) console.error(`rotary ${fp.param.name}: main ${main.x},${main.y} ${main.w}x${main.h} frames ${frames.length} points ${moving.map((m) => m.length).join("/")} passing ${passing.map((m) => m.length).join("/")} ring ${ring ? ring.r.toFixed(1) : "-"} centre ${cx.toFixed(1)},${cy.toFixed(1)} reach ${pointerReach.toFixed(1)} oldRadius ${radius.toFixed(1)} edges ${edges ? `${edges.cx.toFixed(1)},${edges.cy.toFixed(1)} [${edges.radii.join(" ")}]` : "-"}`);
+  // without a rim the body cannot be larger than what moved
+  if (!edges && !ring) radius = Math.min(radius, Math.max(pointerReach * 1.12, half * 0.95));
+  if (edges) {
+    const rim = edges.radii[0]!;
+    radius = edges.radii.filter((r) => r <= rim * 1.3).pop()!;
+    cx = edges.cx;
+    cy = edges.cy;
+    centre = ringMedian(median, cx, cy, Math.max(2, radius * 0.3));
   }
 
   const first = indicator[0]!;
@@ -328,6 +351,12 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
   const outer = middleDistances.length ? percentile(middleDistances, 0.95) / radius : 0.9;
   const pointerColor = middle.length ? dominantAt(frames[indicator.length >> 1]!, middle) : luminance(centre) > 128 ? [30, 30, 30] as Rgb : [235, 235, 235] as Rgb;
   const length = Math.max(1, (outer - inner) * radius);
+  // a short line pointing outwards is longer along the radius than across it; a dot is as wide as long
+  const middleAngles = middle.map((p) => angleOf(p[0] - cx, p[1] - cy));
+  const meanAngle = middleAngles.length ? Math.atan2(middleAngles.reduce((s, a) => s + Math.sin(a), 0), middleAngles.reduce((s, a) => s + Math.cos(a), 0)) : 0;
+  const across = middle.map((p, i) => Math.sin(middleAngles[i]! - meanAngle) * dist(p));
+  const acrossExtent = across.length ? percentile(across, 0.95) - percentile(across, 0.05) + 1 : length;
+  const radialMark = length >= acrossExtent * 1.5;
 
   const top = pixel(median, Math.round(cx), Math.max(0, Math.round(cy - radius * 0.65)));
   const bottom = pixel(median, Math.round(cx), Math.min(median.height - 1, Math.round(cy + radius * 0.65)));
@@ -339,20 +368,55 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
 
   const edge = ringMedian(median, cx, cy, radius);
   const outside = ringMedian(median, cx, cy, radius * 1.25 + 3);
-  const outline = colorDistance(edge, centre) > 30 && colorDistance(edge, outside) > 30 ? hex(edge) : undefined;
+  let outline = colorDistance(edge, centre) > 30 && colorDistance(edge, outside) > 30 ? hex(edge) : undefined;
+  // A thin ring of its own colour right around the disc (a coloured or bevelled rim): it differs from the body
+  // and from what lies a little further out. The body then reaches to the middle of that ring.
+  if (!outline) {
+    let best: { r: number; c: Rgb; d: number } | undefined;
+    for (let r = radius + 0.5; r <= radius + 3; r += 0.5) {
+      const c = ringMedian(median, cx, cy, r);
+      const d = Math.min(colorDistance(c, centre), colorDistance(c, ringMedian(median, cx, cy, r + 3)));
+      if (d > 40 && (!best || d > best.d)) best = { r, c, d };
+    }
+    if (best) {
+      const like = (r: number) => colorDistance(ringMedian(median, cx, cy, r), best!.c) < 40;
+      let r0 = best.r, r1 = best.r;
+      while (r0 - 0.5 > radius - 1 && like(r0 - 0.5)) r0 -= 0.5;
+      while (r1 + 0.5 < best.r + 4 && like(r1 + 0.5)) r1 += 0.5;
+      if (r1 - r0 <= 3) {
+        outline = hex(best.c);
+        radius = (r0 + r1) / 2;
+      }
+    }
+  }
 
   // tick marks around the knob: short marks at regular angles on a ring outside the body
   let ticks: RotaryStyle["ticks"];
   const background = outside;
-  for (let r = radius * 1.12; r < radius * 1.7 && !ticks; r += 1) {
+  for (let r = radius * 1.12; r < radius * 1.45 && !ticks; r += 1) {
     const samples = 360;
-    const hits: number[] = [];
+    const ringColors: (Rgb | undefined)[] = [];
     for (let k = 0; k < samples; k++) {
       const a = (k / samples) * TAU;
       const x = Math.round(cx + Math.sin(a) * r);
       const y = Math.round(cy - Math.cos(a) * r);
-      if (x < 0 || y < 0 || x >= median.width || y >= median.height) continue;
-      if (colorDistance(pixel(median, x, y), background) > 50) hits.push(k);
+      ringColors.push(x < 0 || y < 0 || x >= median.width || y >= median.height ? undefined : pixel(median, x, y));
+    }
+    // A mark stands out from the background next to it on the same ring: the background may change around the
+    // knob (a panel on one side, a display on the other).
+    const localBackground = (k: number): Rgb => {
+      const near: Rgb[] = [];
+      for (let j = -12; j <= 12; j++) {
+        const c = ringColors[(k + j + samples) % samples];
+        if (c) near.push(c);
+      }
+      const ch = (i: 0 | 1 | 2) => percentile(near.map((c) => c[i]), 0.5);
+      return near.length ? [ch(0), ch(1), ch(2)] : background;
+    };
+    const hits: number[] = [];
+    for (let k = 0; k < samples; k++) {
+      const c = ringColors[k];
+      if (c && colorDistance(c, localBackground(k)) > 50) hits.push(k);
     }
     const runs: number[][] = [];
     for (const k of hits) {
@@ -365,7 +429,9 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
     const gaps = centres.slice(1).map((c, i) => c - centres[i]!);
     const meanGap = gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : 0;
     const regular = gaps.length >= 4 && gaps.filter((g) => Math.abs(g - meanGap) < meanGap * 0.35 || Math.abs(g - 2 * meanGap) < meanGap * 0.35 || g > 60).length >= gaps.length - 1;
-    if (short.length >= 5 && short.length <= 41 && short.length >= runs.length * 0.8 && regular) {
+    // marks go around the knob (at least half the way): a label below it gives short runs too, but all in one place
+    const span = centres.length ? centres[centres.length - 1]! - centres[0]! : 0;
+    if (short.length >= 5 && short.length <= 41 && short.length >= runs.length * 0.8 && regular && span >= samples * 0.5) {
       const angles = short.map((run) => {
         const a = ((run[0]! + run[run.length - 1]!) / 2 / samples) * TAU;
         return a > Math.PI ? a - TAU : a;
@@ -376,10 +442,15 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
       });
       // radial extent of the first tick
       const a0 = angles[0]!;
+      const tickBackground = localBackground(Math.round((short[0]![0]! + short[0]![short[0]!.length - 1]!) / 2));
+      const marked = (d: number) => {
+        const x = Math.round(cx + Math.sin(a0) * d), y = Math.round(cy - Math.cos(a0) * d);
+        return x >= 0 && y >= 0 && x < median.width && y < median.height && colorDistance(pixel(median, x, y), tickBackground) > 50;
+      };
       let outerR = r;
-      while (outerR < radius * 2 && colorDistance(pixel(median, Math.round(cx + Math.sin(a0) * outerR), Math.round(cy - Math.cos(a0) * outerR)), background) > 50) outerR += 0.5;
+      while (outerR < radius * 2 && marked(outerR)) outerR += 0.5;
       let innerR = r;
-      while (innerR > radius && colorDistance(pixel(median, Math.round(cx + Math.sin(a0) * innerR), Math.round(cy - Math.cos(a0) * innerR)), background) > 50) innerR -= 0.5;
+      while (innerR > radius && marked(innerR)) innerR -= 0.5;
       ticks = {
         angles,
         inner: innerR / radius,
@@ -397,7 +468,7 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
     pointerInner: Math.max(0, Math.min(1, inner)),
     pointerOuter: Math.max(0.2, Math.min(1.05, outer)),
     pointerWidth: Math.max(1.5, Math.min(radius * 0.14, middle.length / length / 1.3)),
-    pointerDot: inner > 0.45 && outer - inner < 0.35,
+    pointerDot: inner > 0.45 && outer - inner < 0.35 && !radialMark,
     ...(arc ? { arc } : {}),
     ...(ticks ? { ticks } : {}),
   };
@@ -538,6 +609,80 @@ function analyzeControl(fp: Footprint, noise: Uint8Array): Control | undefined {
     h: Math.round(extent * 2 + 2),
     rotary,
   };
+}
+
+/**
+ * Blobs that belong together: grown from the largest one, each joining when it is closer to the group than
+ * the group is wide. Gives up (undefined) when the result is no compact, roughly square area.
+ */
+function nearbyBlobs(parts: (Box & { cx: number; cy: number })[], width: number, height: number): { box: Box; count: number } | undefined {
+  if (parts.length < 2) return undefined;
+  const group = [parts[0]!];
+  const rest = parts.slice(1);
+  for (let grew = true; grew;) {
+    grew = false;
+    const box = union(group);
+    const reach = Math.max(box.w, box.h, 24) * 0.9 + 12;
+    for (let i = rest.length - 1; i >= 0; i--) {
+      const p = rest[i]!;
+      const dx = Math.max(box.x - (p.x + p.w), p.x - (box.x + box.w), 0), dy = Math.max(box.y - (p.y + p.h), p.y - (box.y + box.h), 0);
+      if (Math.hypot(dx, dy) < reach && Math.max(union([box, p]).w, union([box, p]).h) < Math.min(width, height) * 0.45) {
+        group.push(p);
+        rest.splice(i, 1);
+        grew = true;
+      }
+    }
+  }
+  const box = union(group);
+  if (group.length < 2 || box.w > box.h * 1.6 || box.h > box.w * 1.6) return undefined;
+  // marks of one pointer are alike in size (two neighbouring ones may merge into one twice as large); a knob of
+  // its own next to small marks of a display it moves is not
+  const sizes = group.map(area).sort((a, b) => a - b);
+  if (sizes[sizes.length - 1]! > sizes[sizes.length >> 1]! * 4.5) return undefined;
+  // one blob that already is most of the control: what lies well outside of it is something else it changes
+  const largest = parts[0]!;
+  if (area(largest) > area(box) * 0.3 && (box.w > largest.w * 1.3 || box.h > largest.h * 1.3)) return undefined;
+  return { box, count: group.length };
+}
+
+/**
+ * Circular edges around a centre in a still image: radii at which most directions show a colour step. Knobs are
+ * drawn as discs – their rims are there whatever the pointer looks like. The centre is nudged (up to `nudge`
+ * pixels) to where the circles are most complete. Radii are returned in rising order.
+ */
+function circleEdges(img: Image, cx0: number, cy0: number, rMin: number, rMax: number, nudge: number): { cx: number; cy: number; radii: number[] } | undefined {
+  const directions = 48;
+  const coverageAt = (cx: number, cy: number, r: number) => {
+    let hits = 0, valid = 0;
+    for (let k = 0; k < directions; k++) {
+      const a = (k / directions) * TAU, sx = Math.sin(a), sy = -Math.cos(a);
+      const x0 = cx + sx * (r - 1.2), y0 = cy + sy * (r - 1.2), x1 = cx + sx * (r + 1.2), y1 = cy + sy * (r + 1.2);
+      if (Math.min(x0, x1, y0, y1) < 1 || Math.max(x0, x1) >= img.width - 2 || Math.max(y0, y1) >= img.height - 2) continue;
+      valid++;
+      if (colorDistance(bilinear(img, x0, y0), bilinear(img, x1, y1)) > 16) hits++;
+    }
+    return valid >= directions * 0.75 ? hits / valid : 0;
+  };
+  let best: { cx: number; cy: number; radii: number[]; score: number } | undefined;
+  for (let dx = -nudge; dx <= nudge; dx++) for (let dy = -nudge; dy <= nudge; dy++) {
+    const cx = cx0 + dx, cy = cy0 + dy;
+    const radii: number[] = [];
+    let peak = 0, open: { r: number; c: number } | undefined;
+    for (let r = rMin; r <= rMax + 0.5; r += 0.5) {
+      const c = r <= rMax ? coverageAt(cx, cy, r) : 0;
+      peak = Math.max(peak, c);
+      if (c >= 0.7) {
+        if (!open || c > open.c) open = { r, c };
+      } else if (open) {
+        radii.push(open.r);
+        open = undefined;
+      }
+    }
+    if (!radii.length) continue;
+    const score = peak - Math.hypot(dx, dy) * 0.03;
+    if (!best || score > best.score) best = { cx, cy, radii, score };
+  }
+  return best;
 }
 
 /** Value texts next to each other often change one common area – divide it among them from left to right. */
@@ -1450,17 +1595,25 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     const nearby = parts.filter((p) => Math.hypot(p.cx - main0.cx, p.cy - main0.cy) < Math.max(main0.w, main0.h) * 2.5 + 40);
     const region = union(nearby);
     // knob and value box directly below/above it often merge into one changed area: split them at an empty row
-    const stacked = splitStack(changed, width, main0);
-    const main = stacked?.control ?? main0;
+    // (a changed area that is not taller than wide holds no knob with a text below it: the text is on the knob)
+    const stacked0 = main0.h > main0.w * 1.15 || param.discrete ? splitStack(changed, width, main0) : undefined;
+    // A small pointer near the rim of a knob leaves one blob per position: together they are the control.
+    // (Blobs that look like a value text below or above stay out, as do far-away ones.)
+    const blobLike = (p: Box) => !(p.h <= 24 && p.w >= p.h * 2.2 && p.w >= 28);
+    const cluster = !param.discrete ? nearbyBlobs(candidates.filter(blobLike), width, height) : undefined;
+    // (one blob of such a group split into "control and text" would be nonsense)
+    const stacked = cluster && area(cluster.box) > area(main0) * 2 ? undefined : stacked0;
+    const main = stacked?.control ?? (cluster ? cluster.box : main0);
     const textLike = nearby.slice(1).filter((p) => p.h >= 6 && p.h <= 32 && p.w >= p.h * 1.2 &&
       (p.y >= main0.y + main0.h - 2 || p.y + p.h <= main0.y + 2) && p.x < main0.x + main0.w && p.x + p.w > main0.x && frames.filter((f, i) => i > 0 && diffMask(f, frames[i - 1]!, 30, noise).some((v, q) => v === 1 && (q % width) >= p.x && (q % width) < p.x + p.w && Math.floor(q / width) >= p.y && Math.floor(q / width) < p.y + p.h)).length >= Math.min(3, frames.length - 1));
+    if (process.env.VCH_GUI_DEBUG) console.error(`footprint ${param.name}: discrete ${param.discrete} parts ${candidates.slice(0, 12).map((p) => `${p.x},${p.y} ${p.w}x${p.h}`).join(" | ")} cluster ${cluster ? `${cluster.box.x},${cluster.box.y} ${cluster.box.w}x${cluster.box.h} n${cluster.count}` : "-"} stacked ${stacked ? "yes" : "no"} main ${main.x},${main.y} ${main.w}x${main.h}`);
     const mcx = main.x + main.w / 2, mcy = main.y + main.h / 2;
     const near = stacked?.readout ?? textLike.sort((a, b) => Math.hypot(a.cx - mcx, a.cy - mcy) - Math.hypot(b.cx - mcx, b.cy - mcy))[0];
     const parameter = parameters.find((p) => p.index === param.index);
     const value = parameter ? parameter.value ?? parameter.default : 0.5;
     const valueText = parameter ? textAtValue(parameter, value) : undefined;
     footprints.push({
-      param, frames, region, value, ...(valueText ? { valueText } : {}),
+      param, frames, region: union([region, main]), value, ...(valueText ? { valueText } : {}),
       main: clampBox(grow({ x: main.x, y: main.y, w: main.w, h: main.h }, -3), base),
       ...(near ? { readout: clampBox(grow({ x: near.x, y: near.y, w: near.w, h: near.h }, -3), base) } : {}),
     });
@@ -1511,7 +1664,12 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     for (let y = c.y; y < c.y + c.h; y++) occupied.fill(1, y * width + c.x, y * width + c.x + c.w);
   };
   for (const c of controls) {
-    mark(c, 3);
+    if (c.rotary) {
+      // a knob covers a disc, not its bounding box: labels sit in the corners
+      const r = Math.max(c.w, c.h) / 2 + 2;
+      const b = clampBox(grow(c, 3), base);
+      for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) if (Math.hypot(x + 0.5 - (c.x + c.w / 2), y + 0.5 - (c.y + c.h / 2)) <= r) occupied[y * width + x] = 1;
+    } else mark(c, 3);
     if (c.readout) mark(c.readout, 2);
   }
   // meters only add a needle: their scale, texts and background belong to the static layout
@@ -1654,7 +1812,8 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     const title = pluginName.replace(/\s+clone$/i, "");
     const [read] = await recognizeBlocks(base, [{ box: clampBox(grow(box, 1), base), color: titleCandidate.color, background: titleCandidate.background }]);
     const estimate = title.length * box.h * (titleCandidate.uppercase ? 0.78 : 0.62);
-    const text = plausibleText(read, 60) ? read.text : Math.abs(Math.log(estimate / box.w)) < 0.6 ? (titleCandidate.uppercase ? title.toUpperCase() : title) : undefined;
+    // without text recognition the plugin name stands in where it fits; with it, an unreadable block is no title
+    const text = plausibleText(read, 60) ? read.text : !findTesseract() && Math.abs(Math.log(estimate / box.w)) < 0.6 ? (titleCandidate.uppercase ? title.toUpperCase() : title) : undefined;
     if (text) {
       const textBox = plausibleText(read, 60) && read.box ? read.box : box;
       texts.push({ ...textBox, text, color: hex(titleCandidate.color), size: fontSize(text, textBox.h), bold: titleCandidate.bold, align: "left", role: "title" });
@@ -1713,7 +1872,12 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   const lineBox = (l: Line): Box => ({ x: Math.min(l.x1, l.x2), y: Math.min(l.y1, l.y2), w: Math.abs(l.x2 - l.x1) + 1, h: Math.abs(l.y2 - l.y1) + 1 });
   const keptPanels = panels.filter((p) => !insideDisplay(p));
   const keptLines = lines.filter((l) => !insideDisplay(lineBox(l)));
-  const keptTexts = texts.filter((t) => !insideDisplay(t));
+  // a read text must fit its box: two digits "found" in a large picture are no text
+  const fits = (t: TextItem) => {
+    const natural = Math.max(1, t.text.length) * t.size * 0.55;
+    return t.w / natural > 0.4 && t.w / natural < 2.5;
+  };
+  const keptTexts = texts.filter((t) => !insideDisplay(t) && (t.text.length === 1 || fits(t)));
   texts.length = 0;
   texts.push(...keptTexts);
   panels.length = 0;
