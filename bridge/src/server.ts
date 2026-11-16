@@ -35,6 +35,7 @@ import {
   classifyPlugin,
   cloneProfile,
   detectDynamics,
+  bandGroups,
   detectEq,
   dynamicsPlanner,
   dynamicsVerdict,
@@ -334,9 +335,29 @@ async function summarizeProfile(path: string): Promise<ProfileSummary> {
   };
 }
 
-function captureMessage(event: CaptureProgress): string | undefined {
+/** Titles of the steps before the planned renders; the app shows them while nothing can be counted yet. */
+const CAPTURE_STEPS = {
+  repeat: "Wiederholbarkeit wird geprüft",
+  probe: "Arbeitspunkt wird gesucht",
+  survey: "Schalterstellungen werden gesucht",
+} as const;
+
+function captureMessage(event: CaptureProgress, names: Map<number, string>): string | undefined {
   switch (event.stage) {
     case "info": return `Plugin wird geladen: ${event.plugin}`;
+    case "begin": return `${CAPTURE_STEPS[event.step]} – ${event.renders} Vorab-Messungen`;
+    case "repeat":
+      return event.repeatable
+        ? "Das Plugin liefert bei gleicher Einstellung dasselbe Signal"
+        : "Nicht wiederholbar: das Plugin merkt sich einen Zustand zwischen den Messungen – jede Einstellung wird mit einer frischen Instanz gemessen (dauert länger)";
+    case "probe":
+      return `Arbeitspunkt gewählt (${event.chosen + 1} von ${event.candidates})` +
+        (event.workingPoint.length ? `: ${event.workingPoint.map((v) => `${names.get(v.index) ?? `#${v.index}`} = ${v.value.toFixed(2)}`).join(", ")}` : "");
+    case "survey":
+      return event.stepped.length
+        ? `Als Schalter erkannt: ${event.stepped.map((s) => `${names.get(s.index) ?? `#${s.index}`} (${s.positions} Stellungen)`).join(", ")}`
+        : "Keine versteckten Schalter gefunden";
+    case "retry": return `Messung wird wiederholt: ${event.reason}`;
     case "plan": return `${event.parameters} Parameter gefunden, ${event.selected} werden gemessen – ${event.renders} Einstellungen`;
     case "write": return `Profil wird gespeichert: ${event.path}`;
     default: return undefined;
@@ -386,11 +407,20 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
     const info = await pluginInfo(path);
     // one classification for app and batch: instruments, dynamic EQs, multiband compressors … get no class
     const effectClass = classifyPlugin(info).effectClass;
-    let eq: { bands: number; shapes: string[]; renders: number } | undefined;
+    let eq: { bands: number; shapes: string[]; renders: number; groups: number; fixedBands: number; sliders: number } | undefined;
     try {
       if (effectClass !== "eq") throw new Error("kein EQ");
       const mapping = detectEq(info.parameters);
-      eq = { bands: mapping.bands.length, shapes: mapping.shapes?.map((s) => s.label) ?? [], renders: planEq(info.parameters, { seed: 1 }).renders.length };
+      const groups = bandGroups(mapping);
+      eq = {
+        bands: mapping.bands.length,
+        shapes: [...new Set(groups.flatMap((g) => g.shapes?.map((s) => s.label) ?? []))],
+        renders: planEq(info.parameters, { seed: 1 }).renders.length,
+        groups: groups.length,
+        // bands without a shape control, and among them the sliders of a graphic EQ (no frequency control either)
+        fixedBands: mapping.bands.filter((b) => !groups[b.group ?? 0]?.shapes?.length).length,
+        sliders: mapping.bands.filter((b) => b.params.frequency === undefined).length,
+      };
     } catch {
       eq = undefined;
     }
@@ -470,6 +500,9 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
       const info = await pluginInfo(plugin, { signal: ctx.signal });
       const output = join(profilesDir(), `${slugify(info.plugin.name)}-${timestamp()}.vcprofile`);
       ctx.log("info", PLAN_NOTES[mode]);
+      const names = new Map(info.parameters.map((p) => [p.index, p.name]));
+      let isolated = false, retries = 0;
+      let stepped: { name: string; positions: number }[] = [];
 
       const started = Date.now();
       const profile = await capture({
@@ -485,13 +518,18 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
         signal: ctx.signal,
         onProgress: (event) => {
           if (event.stage === "render") ctx.progress(event.done, event.total, event.id);
-          const message = captureMessage(event);
-          if (message) ctx.log("info", message);
+          else if (event.stage === "begin") ctx.stage(event.step, CAPTURE_STEPS[event.step]);
+          else if (event.stage === "plan") ctx.stage("render", "Einstellungen messen");
+          else if (event.stage === "repeat") isolated = !event.repeatable;
+          else if (event.stage === "survey") stepped = event.stepped.map((s) => ({ name: names.get(s.index) ?? `#${s.index}`, positions: s.positions }));
+          else if (event.stage === "retry") retries++;
+          const message = captureMessage(event, names);
+          if (message) ctx.log(event.stage === "retry" || (event.stage === "repeat" && !event.repeatable) ? "warn" : "info", message);
         },
       });
       const bytes = await fileSize(output);
       ctx.log("success", `${profile.captures.renders.length} Einstellungen gemessen in ${((Date.now() - started) / 1000).toFixed(1)} s (${(bytes / 1024 / 1024).toFixed(1)} MiB)`);
-      return { profile: output, renders: profile.captures.renders.length, bytes, name: info.plugin.name };
+      return { profile: output, renders: profile.captures.renders.length, bytes, name: info.plugin.name, isolated, stepped, retries };
     });
   },
 
@@ -713,6 +751,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
           ? {
               overall: result.verify.overall,
               limited: result.verify.limited,
+              ...(result.verify.combined ? { combined: { ...result.verify.combined, verdict: verdict(result.verify.combined.rmsDb) } } : {}),
               shapes: result.verify.shapes.map((s) => ({ ...s, verdict: verdict(s.rmsDb) })),
               verdict: verdict(result.verify.overall.rmsDb),
             }

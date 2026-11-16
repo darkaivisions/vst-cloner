@@ -1,6 +1,6 @@
 # Plan: VST-Cloner (Effekt-Plugins unter Linux nutzbar machen)
 
-Stand: 15.11.2026 (überarbeitet: Abgleich des ursprünglichen Plans mit dem Erreichten)
+Stand: 16.11.2026 (überarbeitet: Abgleich des ursprünglichen Plans mit dem Erreichten)
 
 ## Ziel
 Gekaufte Windows-Effekt-Plugins unter Linux nutzen:
@@ -133,15 +133,15 @@ kleine Übersetzungseinheiten und einen Cache.
   werden ausgewiesen statt gut bewertet.
 - Tests zunächst mit freien/Open-Source-Plugins, bei denen das Ergebnis überprüfbar ist.
 
-Stand der Batch-Läufe (12.–15.11.):
+Stand der Batch-Läufe (16.11. mit neu gebautem Host; Delay 15.11.):
 
 | Klasse | Plugins | Ergebnis |
 |---|---|---|
-| Dynamik | 9 Kompressoren/Limiter + ZamGate | 0,27–2,32 dB; 2× ausgezeichnet, 4× sehr gut, 2× gut, 1× brauchbar, 1× „keine Kompression gemessen“; unbekannte Kombinationen 0,43–9,72 dB |
+| Dynamik | 12 (9 Kompressoren/Limiter, 2 Gates, 1 Expander) | 0,34–3,55 dB; 3× ausgezeichnet, 2× sehr gut, 4× gut, 2× brauchbar (GxCompressor 2,37 dB, GxExpander 3,55 dB), 1× „keine Kompression gemessen“; unbekannte Kombinationen 0,41–9,97 dB |
 | Delay | 12 | 3× sehr gut (ZamDelay 1,43 dB, Gxdigital_delay 1,95/1,94 dB), 2× gut (Tal-Dub-3 2,87 dB, GxEcho-Stereo 3,12 dB), 2× brauchbar, 4× ungenau, 1× „kein Echo gemessen“; unbekannte Kombinationen 0,78–10,5 dB bei sieben Plugins, sonst 15–26 dB |
-| Reverb | 18 (+1 Fehler beim Messen) | 5× sehr gut, 6× gut, 6× brauchbar, 1× ungenau; unbekannte Kombinationen 2–30 dB |
-| Verzerrer | 73 (+4 Fehler: 3× Absturz beim Messen, 1× Klon lädt nicht) | 0,06–18,4 dB; 12× ausgezeichnet, 20× sehr gut, 14× gut, 14× brauchbar, 13× ungenau; unbekannte Kombinationen meist nahe am Gesamtwert, Ausreißer bis 28 dB |
-| EQ | 5 (+1 Fehler: ZamEQ2 gibt im Mess-Host nur NaN aus) | MultiEQ 0,04 dB (ausgezeichnet), x42-eq 0,47 dB (sehr gut, jetzt mit Shelves und Hoch-/Tiefpass), ZamGEQ31 0,66 dB, GxBarkGraphicEQ 0,62 dB, GxGraphicEQ 0,83 dB (gut); mehrere Bänder zugleich 0,25–2,13 dB |
+| Reverb | 19 | 1,48–6,97 dB; 5× sehr gut, 7× gut, 7× brauchbar; unbekannte Kombinationen 2–16 dB; 11 Plugins nicht wiederholbar und isoliert gemessen (FdnReverb 13,0 → 4,08 dB, ZynReverb lässt sich jetzt messen) |
+| Verzerrer | 73 (+4 Fehler: 3× Absturz beim Messen, 1× Klon lädt nicht) | 0,06–18,4 dB und ein Ausreißer (GxFuzzFaceFuller 58,7, vorher 11,8 – Ursache offen); 12× ausgezeichnet, 20× sehr gut, 14× gut, 14× brauchbar, 13× ungenau; 17 Plugins nicht wiederholbar und isoliert gemessen (dRowAudio Distortion 3,30 → 1,96); unbekannte Kombinationen meist nahe am Gesamtwert, sonst bis 28 dB |
+| EQ | 5 (+1 Fehler: ZamEQ2 gibt im Mess-Host nur NaN aus) | MultiEQ 0,04 dB (ausgezeichnet), x42-eq 0,50 dB (sehr gut, jetzt mit Shelves und Hoch-/Tiefpass), ZamGEQ31 0,66 dB, GxBarkGraphicEQ 0,62 dB, GxGraphicEQ 0,83 dB (gut); mehrere Bänder zugleich 0,25–2,13 dB |
 
 ## Profilformat `.vcprofile`
 Details: [docs/profile-format.md](docs/profile-format.md). ZIP-Container, versioniertes JSON-Schema:
@@ -180,6 +180,10 @@ vst-cloner/
 3. **EQ/Filter** ✔ – Pro-Q 3: 0,10 dB über 149 Einstellungen
    - Offen: linearphasiger Modus
 4. **Desktop-Oberfläche** ✔ – Klonen, Bibliothek, KI-Modelle, Protokoll; Modi EQ, Dynamik, Verzerrer, Delay, Hall, Allgemein
+   - Anzeigen für die Messung ✔ – Vorstufen im Fortschritt (Wiederholbarkeit, Arbeitspunkt, Schaltersuche), Hinweise
+     „nicht wiederholbar“ und „als Schalter erkannt“, EQ-Plakette für grafische EQs/feste Formen/Bandgruppen,
+     Ergebniszeile „mehrere Bänder zugleich“; im Fenster geprüft mit ZamGEQ31 und Tal-Dub-3
+   - Offen: Zähler während der Schaltersuche; Hinweistext nennt die Zahl der Einstellungen vor der Schaltersuche
    - **4b Oberflächen-Nachbau** (läuft) – Wiggle-Test, OCR, Nadeln, Pegelbalken, Schalter-Erkennung;
      74–82 % Struktur-, 95–98 % Farbähnlichkeit an vier Plugins
      - Offen: XY-Punkte, farbige Vollringe um Regler, Regler mit Verlauf und kleinem Zeiger (DS1), Skalen der
@@ -193,7 +197,8 @@ vst-cloner/
    - **5b Verzerrer (Pedale)** ✔ – Wiener-Hammerstein; GxBoss DS1: Grundton 0,68 dB, Oberwellen 1,8 dB
      - Erkennung geschärft (97 → 77 Treffer: ein Gain-Regler allein reicht nicht mehr); Batch über 77 Plugins:
        73 geklont, 46 gut oder besser
-     - Offen: Fuzz-Pedale mit Grundton-Fehlern über 10 dB (GxAxisFace, GxFuzzFaceFuller, GxSunFace, Hip2B),
+     - Offen: GxFuzzFaceFuller seit der isolierten Messung 58,7 statt 11,8 (Teilwerte unverändert);
+       Fuzz-Pedale mit Grundton-Fehlern über 10 dB (GxAxisFace, GxFuzzFaceFuller, GxSunFace, Hip2B),
        Bitcrusher (Bitta, MaBitcrush – brauchen ein anderes Modell), Absturz beim Messen (GxAmplifier-X,
        GxCabinet), Zeitbereichs-Term im Fit
    - **5c Amps mit NAM** – lokales Training (CPU/GPU), Swanky Amp, TONE3000

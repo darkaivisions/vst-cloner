@@ -26,6 +26,7 @@ export class CloneView {
   private readonly captureHint = h("p.hint");
   private readonly captureButton = h("button.primary", {}, "Messen starten");
   private readonly captureProgress = new Progress();
+  private readonly captureNote = h("div.capture-note");
   private readonly profileLine = h("div.profile-line");
   private readonly installBox = h("input", { type: "checkbox", checked: true });
   private readonly guiBox = h("input", { type: "checkbox", checked: true });
@@ -49,7 +50,7 @@ export class CloneView {
     const step2 = h("section.card.step", {},
       h("header.step-header", {}, h("span.step-number", {}, "2"), h("h2", {}, "Messen")),
       this.modeBox, this.captureHint,
-      h("div.actions", {}, this.captureButton), this.captureProgress.element);
+      h("div.actions", {}, this.captureButton), this.captureProgress.element, this.captureNote);
 
     const step3 = h("section.card.step", {},
       h("header.step-header", {}, h("span.step-number", {}, "3"), h("h2", {}, "Klon bauen")),
@@ -116,6 +117,9 @@ export class CloneView {
     if (this.captureJob) return;
     this.selected = plugin;
     this.info = undefined;
+    // progress and findings belong to the plugin measured before
+    this.captureProgress.hide();
+    clear(this.captureNote);
     this.renderList();
     clear(this.details);
     this.details.appendChild(h("div.loading", {}, `${plugin.name} wird geladen …`));
@@ -144,7 +148,7 @@ export class CloneView {
         h("span", {}, `${info.inputs} → ${info.outputs} Kanäle`),
         info.latency > 0 && h("span", {}, `Latenz ${info.latency} Samples`),
         info.eq
-          ? h("span.badge.good", {}, `EQ erkannt: ${info.eq.bands} Bänder, ${info.eq.shapes.length} Formen`)
+          ? h("span.badge.good", {}, eqBadge(info.eq))
           : info.dynamics
             ? h("span.badge.good", {}, "Kompressor/Gate erkannt")
             : info.distortion
@@ -176,7 +180,7 @@ export class CloneView {
     this.captureHint.textContent = !info
       ? "Zuerst ein Plugin wählen."
       : this.mode === "eq" && info.eq
-        ? `${info.eq.renders} Einstellungen – jede Filterform bei mehreren Frequenzen, Gains und Güten. Dauert meist nur Sekunden.`
+        ? `${info.eq.renders} Einstellungen – ${info.eq.sliders === info.eq.bands ? "jeder Regler einzeln bei mehreren Gains" : "jede Filterform bei mehreren Frequenzen, Gains und Güten"}, dazu mehrere Bänder zugleich. Dauert meist nur Sekunden.`
         : this.mode === "dynamics" && info.dynamics
           ? `${info.dynamics.renders} Einstellungen à ~27 s Messsignal (Pegeltreppe, Bursts, lange Pausen für langsames Release) – jeder Regler einzeln und in Zufallskombinationen. Dauert meist unter einer Minute.`
           : this.mode === "distortion" && info.distortion
@@ -210,15 +214,24 @@ export class CloneView {
   private async capture() {
     if (!this.info) return;
     clear(this.result);
+    clear(this.captureNote);
     this.captureProgress.busy("Plugin wird geladen …");
+    let isolated = false;
     try {
       this.captureJob = await startJob<CaptureResult>("capture.start", { path: this.info.path, mode: this.mode }, (event) => {
-        if (event.kind === "progress") this.captureProgress.set(event.done, event.total, `${event.done} / ${event.total} Einstellungen`);
+        if (event.kind === "progress") this.captureProgress.set(event.done, event.total, `${event.done} / ${event.total} Einstellungen${isolated ? " · frische Instanz pro Messung" : ""}`);
+        // steps before the planned renders: nothing to count yet
+        else if (event.kind === "stage" && event.stage !== "capture") this.captureProgress.busy(`${event.title} …`);
+        else if (event.kind === "log" && event.level === "warn" && event.message.startsWith("Nicht wiederholbar")) {
+          isolated = true;
+          this.renderCaptureNote({ isolated, stepped: [], retries: 0 });
+        }
       });
       this.update();
       const result = await this.captureJob.result;
       this.profile = { path: result.profile, name: result.name, renders: result.renders };
       this.captureProgress.set(1, 1, `Fertig – ${result.renders} Einstellungen, ${formatBytes(result.bytes)}`);
+      this.renderCaptureNote(result);
       this.onLibraryChanged();
     } catch (error) {
       this.captureProgress.hide();
@@ -226,6 +239,24 @@ export class CloneView {
     } finally {
       this.captureJob = undefined;
       this.update();
+    }
+  }
+
+  /** What the capture found out about the plugin beyond its parameter list. */
+  private renderCaptureNote(found: Pick<CaptureResult, "isolated" | "stepped" | "retries">) {
+    clear(this.captureNote);
+    if (found.isolated) {
+      this.captureNote.appendChild(h("div.note.warn", {},
+        h("strong", {}, "Nicht wiederholbar"),
+        " – das Plugin merkt sich einen Zustand zwischen den Messungen. Jede Einstellung wird mit einer frischen Instanz gemessen; das dauert länger."));
+    }
+    if (found.stepped.length) {
+      this.captureNote.appendChild(h("div.note", {},
+        h("strong", {}, "Als Schalter erkannt"),
+        `: ${found.stepped.map((s) => `${s.name} (${s.positions} Stellungen)`).join(", ")} – vom Plugin als stufenlos gemeldet, jede Stellung wird einzeln gemessen.`));
+    }
+    if (found.retries > 0) {
+      this.captureNote.appendChild(h("div.note", {}, `${found.retries} ${found.retries === 1 ? "Messung ist" : "Messungen sind"} beim ersten Versuch fehlgeschlagen und wurden wiederholt.`));
     }
   }
 
@@ -317,6 +348,10 @@ export class CloneView {
       }
       table.appendChild(body);
       this.result.appendChild(table);
+      if (v.combined) {
+        body.appendChild(h("tr", {}, h("td", {}, `Mehrere Bänder zugleich (${v.combined.renders} Einstellungen)`), h("td.num", {}, formatDb(v.combined.rmsDb)),
+          h("td", {}, h("span.pill", { class: verdictClass(v.combined.verdict) }, v.combined.verdict))));
+      }
       if (v.limited) {
         this.result.appendChild(h("p.hint", {}, `Nicht exakt nachgebildet: ${v.limited.labels.join(", ")} (${v.limited.renders} Einstellungen, ${formatDb(v.limited.rmsDb)}).`));
       }
@@ -346,4 +381,14 @@ export class CloneView {
         h("div.actions", {}, h("button.ghost", { onclick: () => openPath(folder) }, "Ordner öffnen"))),
     );
   }
+}
+
+/** "EQ erkannt: 6 Bänder, 5 Formen" – graphic EQs and bands with a fixed shape have no shapes to count. */
+function eqBadge(eq: NonNullable<PluginInfo["eq"]>): string {
+  if (eq.sliders === eq.bands) return `Grafischer EQ erkannt: ${eq.bands} Bänder`;
+  const parts = [`${eq.bands} Bänder`];
+  if (eq.shapes.length) parts.push(`${eq.shapes.length} Formen`);
+  if (eq.fixedBands > 0) parts.push(eq.fixedBands === eq.bands ? "feste Formen" : `${eq.fixedBands} mit fester Form`);
+  if (eq.groups > 1) parts.push(`${eq.groups} Bandgruppen`);
+  return `EQ erkannt: ${parts.join(", ")}`;
 }

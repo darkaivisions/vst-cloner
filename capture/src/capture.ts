@@ -45,6 +45,8 @@ export interface CaptureOptions {
 export type CaptureProgress =
   | { stage: "info"; plugin: string }
   | { stage: "probe"; candidates: number; chosen: number; workingPoint: FixedValue[] }
+  /** a preliminary step starts: its renders are not part of the plan and not counted by "render" */
+  | { stage: "begin"; step: "repeat" | "probe" | "survey"; renders: number }
   | { stage: "repeat"; repeatable: boolean }
   | { stage: "retry"; reason: string }
   | { stage: "survey"; renders: number; stepped: { index: number; positions: number }[] }
@@ -178,6 +180,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
       const values = (p: Parameter) => (initial(p) < 0.5 ? [1, 0.02, 0.6] : [0, 0.98, 0.4]);
       const settings = [[...fixed], ...firstPlan.selected.slice(0, 64).flatMap((p) => values(p).flatMap((value) => [[...fixed, { index: p.index, value }], [...fixed]]))];
       const repeatJob: RenderJob = { ...jobBase, renders: settings.map((params, i) => ({ id: `q${i}`, params, output: `repeat/q${i}.wav` })) };
+      progress({ stage: "begin", step: "repeat", renders: settings.length });
       await mkdir(join(workDir, "repeat"), { recursive: true });
       await writeFile(join(workDir, "repeat.json"), JSON.stringify(repeatJob, null, 2));
       await runHost(["render", join(workDir, "repeat.json")], { hostPath, ...(options.signal ? { signal: options.signal } : {}) });
@@ -202,6 +205,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
         ...jobBase,
         renders: probe.candidates.map((values, i) => ({ id: `p${i}`, params: [...fixed, ...values], output: `probe/p${i}.wav` })),
       };
+      progress({ stage: "begin", step: "probe", renders: probe.candidates.length });
       await mkdir(join(workDir, "probe"), { recursive: true });
       await writeFile(join(workDir, "probe.json"), JSON.stringify(probeJob, null, 2));
       await render(["render", join(workDir, "probe.json")], { hostPath, ...(options.signal ? { signal: options.signal } : {}) });
@@ -224,6 +228,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
         ...jobBase,
         renders: survey.renders.map((values, i) => ({ id: `s${i}`, params: [...fixed, ...values], output: `survey/s${i}.wav` })),
       };
+      progress({ stage: "begin", step: "survey", renders: survey.renders.length });
       await mkdir(join(workDir, "survey"), { recursive: true });
       await writeFile(join(workDir, "survey.json"), JSON.stringify(surveyJob, null, 2));
       await render(["render", join(workDir, "survey.json")], { hostPath, ...(options.signal ? { signal: options.signal } : {}) });

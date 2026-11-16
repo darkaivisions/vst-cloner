@@ -22,18 +22,20 @@ Getestet unter Linux mit nativen VST3-/LV2-Plugins und Windows-Plugins über yab
 | DirectionalCompressor Clone | IEM Directional Compressor | 0,71 dB Pegelverlauf über 224 Einstellungen | 75 % Struktur, 96 % Farbe |
 | GxBoss DS1 Clone | GxBoss DS1 (Guitarix, LV2) | Grundton 0,68 dB, Oberwellen 1,8 dB, Kleinsignal 1,23 dB | noch grob |
 
-Batch-Läufe über alle installierten Plugins einer Klasse (ohne Oberfläche, Stand 12.–15.11.):
+Batch-Läufe über alle installierten Plugins einer Klasse (ohne Oberfläche, Stand 16.11.; Delays 15.11.):
 
 | Klasse | Plugins | Klon vs. Original |
 |---|---|---|
-| Kompressoren, Limiter, Gate | 10 | 0,27–2,32 dB (z. B. x42-dpl 0,27 · ZamComp 0,45 · OmniCompressor 0,70 · ZamGate 1,88) |
+| Kompressoren, Limiter, Gates, Expander | 12 | 0,34–3,55 dB: 9 gut oder besser, 2 brauchbar, 1 ohne messbare Kompression (z. B. OmniCompressor 0,34 · x42-dpl 0,40 · ZamComp 0,45 · Open Optical 0,52 · ZamGate 1,88) |
 | Delays | 12 | 1,43–15,7 dB: 3 sehr gut (ZamDelay 1,43 · Gxdigital_delay 1,95), 2 gut (Tal-Dub-3 2,87 · GxEcho-Stereo 3,12), 2 brauchbar, 4 ungenau, 1 ohne messbares Echo |
-| Reverbs | 18 | 1,48–13,0 dB: 11 gut oder besser, 6 brauchbar, 1 ungenau |
-| Verzerrer | 73 | 0,06–18,4 dB: 46 gut oder besser, 14 brauchbar, 13 ungenau (z. B. GxMicroAmp 0,06 · Wolf Shaper 0,44 · GxBoss DS1 1,15 · GxTubeScreamer 1,93) |
-| EQs | 5 | 0,04–0,83 dB: IEM MultiEQ 0,04 · x42-eq 0,47 · ZamGEQ31 0,66 · GxBarkGraphicEQ 0,62 · GxGraphicEQ 0,83 |
+| Reverbs | 19 | 1,48–6,97 dB: 12 gut oder besser, 7 brauchbar (z. B. ZamVerb 1,48 · Dragonfly Hall 1,67 · Tal-Reverb-III 1,68 · FdnReverb 4,08) |
+| Verzerrer | 73 | 0,06–18,4 dB und ein Ausreißer (GxFuzzFaceFuller 58,7): 46 gut oder besser, 14 brauchbar, 13 ungenau (z. B. GxMicroAmp 0,06 · Wolf Shaper 0,44 · GxBoss DS1 1,15 · GxTubeScreamer 1,93) |
+| EQs | 5 | 0,04–0,83 dB: IEM MultiEQ 0,04 · x42-eq 0,50 · ZamGEQ31 0,66 · GxBarkGraphicEQ 0,62 · GxGraphicEQ 0,83 |
 
 Bei Reverbs und den meisten Delays weichen Reglerkombinationen, die nicht einzeln gemessen wurden, noch deutlich stärker ab
-(Delays: 0,8–10 dB bei sieben Plugins, sonst 15–26 dB).
+(Delays: 0,8–10 dB bei sieben Plugins, sonst 15–26 dB; Reverbs: 2–16 dB).
+Plugins, die sich zwischen zwei Messungen einen Zustand merken (11 der 19 Reverbs, 17 der 73 Verzerrer), werden
+automatisch mit einer frischen Instanz pro Einstellung gemessen.
 
 ## Voraussetzungen
 
@@ -63,7 +65,10 @@ Ausgaben von Compiler und Host ein.
 
 Im Bereich Klonen wählt die App den Messmodus passend zum Plugin: **EQ-Messung**, **Kompressor-Messung**,
 **Verzerrer-Messung**, **Delay-Messung**, **Hall-Messung** oder **Allgemein**. Plugins, deren Kategorie eine andere Effektklasse nennt
-(Delay, Hall, Modulation …), werden dabei nicht als Kompressor oder Verzerrer eingestuft. Beim Klonen kann sie außerdem die **Oberfläche des Originals nachbauen** (das Original
+(Delay, Hall, Modulation …), werden dabei nicht als Kompressor oder Verzerrer eingestuft. Während der Messung nennt der
+Fortschrittsbalken auch die Vorstufen (Wiederholbarkeit, Arbeitspunkt, Schaltersuche); darunter steht, ob das Plugin
+mit frischer Instanz pro Einstellung gemessen wird und welche Regler als versteckte Schalter erkannt wurden. Bei EQs
+zeigt das Ergebnis zusätzlich die Abweichung mit mehreren Bändern zugleich. Beim Klonen kann sie außerdem die **Oberfläche des Originals nachbauen** (das Original
 wird dafür einmal unsichtbar geöffnet, siehe unten).
 
 Profile und Klone liegen unter `~/.local/share/vst-cloner/` (Windows: `%APPDATA%\vst-cloner`).

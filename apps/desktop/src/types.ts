@@ -29,7 +29,8 @@ export interface PluginInfo {
   outputs: number;
   latency: number;
   parameters: number;
-  eq?: { bands: number; shapes: string[]; renders: number };
+  /** groups: sets of bands with their own shapes; fixedBands: bands without a shape control; sliders: bands of a graphic EQ */
+  eq?: { bands: number; shapes: string[]; renders: number; groups: number; fixedBands: number; sliders: number };
   /** compressor/limiter recognised by its parameter names */
   dynamics?: { roles: string[]; renders: number };
   /** overdrive/distortion recognised by a drive control or its category */
@@ -46,6 +47,12 @@ export interface CaptureResult {
   renders: number;
   bytes: number;
   name: string;
+  /** the plugin keeps state between renders: every setting was measured with a fresh instance */
+  isolated: boolean;
+  /** controls found to move in steps although the plugin reports them as continuous */
+  stepped: { name: string; positions: number }[];
+  /** renders that failed once and were repeated */
+  retries: number;
 }
 
 export interface ProfileSummary {
@@ -103,6 +110,8 @@ export interface CloneResult {
   verify?: {
     overall: { renders: number; rmsDb: number; maxDb: number };
     limited?: { renders: number; rmsDb: number; maxDb: number; labels: string[] };
+    /** several bands at once */
+    combined?: { renders: number; rmsDb: number; maxDb: number; verdict: string };
     shapes: { label: string; renders: number; rmsDb: number; maxDb: number; verdict: string }[];
     verdict: string;
   };

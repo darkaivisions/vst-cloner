@@ -278,3 +278,10 @@ input:focus, select:focus { border-color: var(--accent); }
 .preview { margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .preview img { width: 100%; height: auto; max-height: 420px; object-fit: contain; border-radius: 8px; border: 1px solid var(--line); background: #000; cursor: zoom-in; }
 .preview figcaption { font-size: 12px; color: var(--muted); }
+
+/* what the capture found out about the plugin (stateful, hidden switches) */
+.capture-note { display: flex; flex-direction: column; gap: 6px; }
+.capture-note:empty { display: none; }
+.note { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; padding: 7px 10px; color: var(--muted); line-height: 1.45; }
+.note strong { color: var(--text); }
+.note.warn { border-left-color: var(--warn); }
