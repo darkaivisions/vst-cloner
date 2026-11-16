@@ -138,7 +138,7 @@ Stand der Batch-Läufe (12.–15.11.):
 | Klasse | Plugins | Ergebnis |
 |---|---|---|
 | Dynamik | 9 Kompressoren/Limiter + ZamGate | 0,27–2,32 dB; 2× ausgezeichnet, 4× sehr gut, 2× gut, 1× brauchbar, 1× „keine Kompression gemessen“; unbekannte Kombinationen 0,43–9,72 dB |
-| Delay | 12 | 3× sehr gut (ZamDelay 1,41 dB, Gxdigital_delay 1,95/1,94 dB), 2× brauchbar, 6× ungenau, 1× „kein Echo gemessen“; unbekannte Kombinationen 0,78–6,1 dB bei vier Plugins, sonst 13–26 dB |
+| Delay | 12 | 3× sehr gut (ZamDelay 1,43 dB, Gxdigital_delay 1,95/1,94 dB), 2× gut (Tal-Dub-3 2,87 dB, GxEcho-Stereo 3,12 dB), 2× brauchbar, 4× ungenau, 1× „kein Echo gemessen“; unbekannte Kombinationen 0,78–10,5 dB bei sieben Plugins, sonst 15–26 dB |
 | Reverb | 18 (+1 Fehler beim Messen) | 5× sehr gut, 6× gut, 6× brauchbar, 1× ungenau; unbekannte Kombinationen 2–30 dB |
 | Verzerrer | 73 (+4 Fehler: 3× Absturz beim Messen, 1× Klon lädt nicht) | 0,06–18,4 dB; 12× ausgezeichnet, 20× sehr gut, 14× gut, 14× brauchbar, 13× ungenau; unbekannte Kombinationen meist nahe am Gesamtwert, Ausreißer bis 28 dB |
 | EQ | 5 (+1 Fehler: ZamEQ2 gibt im Mess-Host nur NaN aus) | MultiEQ 0,04 dB (ausgezeichnet), x42-eq 0,47 dB (sehr gut, jetzt mit Shelves und Hoch-/Tiefpass), ZamGEQ31 0,66 dB, GxBarkGraphicEQ 0,62 dB, GxGraphicEQ 0,83 dB (gut); mehrere Bänder zugleich 0,25–2,13 dB |
@@ -204,8 +204,13 @@ vst-cloner/
        Summenregel für mehrere Zeitregler; ZamDelay 2,71 → 0,78 dB, GxDelay-Stereo 10,9 → 6,1 dB
      - Regler mit vielen Stufen (0 … 127, Zyn-Plugins) werden interpoliert statt wie Schalter auf den nächsten
        Messpunkt gesetzt – alle Klassen; ZynEcho 24,5 → 20,3 dB
-     - Offen bei Delays: Sync- und Modus-Schalter, die andere Regler umdeuten (Tal-Dub-3, Gxdigital_delay,
-       GxEcho), Rückgang von GxEcho-Stereo und GxDelay-Stereo seit dem 12.11.; außerhalb des Modells: zwei
+     - Versteckte Schalter ✔ – Vorab-Abtastung (`survey`) findet Wahlschalter und Taster, die das Plugin als
+       stufenlose Regler meldet; die erste Stufe eines Wählers („aus“) bekommt ein eigenes Modell; Tal-Dub-3
+       24,4 → 8,1 dB bei unbekannten Kombinationen
+     - Wiederholbarkeit ✔ – die Aufnahme prüft pro Regler, ob das Plugin Zustand behält, der kein Parameterwert
+       ist (Taster), und lädt dann für jede Messung eine frische Instanz (`isolate` im Host, alle Klassen)
+     - Offen bei Delays: Modulation (LFO bei GxEcho/GxDelay), Filterflanken steiler als ein Pol
+       (Gxdigital_delay), Selbstoszillation und Resonanzfilter (Tal-Dub-3); außerhalb des Modells: zwei
        Leitungen mit Übersprechen (ZynEcho, „L/R Delay“), Bandecho mit mehreren Köpfen (GxEchoCat),
        Röhrensättigung (GxTubeDelay), Ducking (Gxduck_delay), DualDelay
      - Offen: Oberfläche für Delay und Reverb

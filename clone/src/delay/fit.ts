@@ -2,7 +2,8 @@ import { decodeWav, type Profile } from "@vst-cloner/profile";
 import { fft, nextPowerOfTwo } from "../dsp/fft.ts";
 import { nelderMead } from "../dsp/optimize.ts";
 import { pchip, tableAt, type Errors, type ParamTable } from "../dynamics/fit.ts";
-import { renderCondition, steppedParameter, SWITCH_STATES } from "../dynamics/plan.ts";
+import { parameterPositions, positionOf, renderCondition, steppedParameter, SWITCH_STATES } from "../dynamics/plan.ts";
+import type { MeasuredSteps } from "@vst-cloner/capture";
 import { HP_OFF, hpActive, LP_OFF, lpActive, MAX_FEEDBACK_DB, OFF_DB, onePole, packDelay, processDelay, unpackDelay, type DelayParams, type DelayStructure } from "./model.ts";
 
 export interface DelayInput {
@@ -255,7 +256,14 @@ export function analyseResponse(h: ArrayLike<number>, sampleRate: number, fallba
   const dryDb = dry.abs > audible ? Math.max(OFF_DB, 20 * Math.log10(dry.abs)) : OFF_DB;
   const structure: DelayStructure = { drySign: dry.value < 0 ? -1 : 1, wetSign: 1, feedbackSign: 1 };
   const onset = repeatOnset(h, guard, sampleRate, audible);
-  const first = onset < 0 ? { at: guard, value: 0, abs: 0 } : peakIn(h, onset, h.length);
+  let first = onset < 0 ? { at: guard, value: 0, abs: 0 } : peakIn(h, onset, h.length);
+  if (onset >= 0) {
+    // Feedback at or above unity makes later repeats louder than the first. The loudest peak is one of those
+    // if it lies at a multiple of the time of the peak at the onset – then that one is the first repeat.
+    const early = peakIn(h, onset, onset + Math.round(0.02 * sampleRate));
+    const multiple = first.at / Math.max(early.at, 1);
+    if (early.abs >= audible && Math.round(multiple) >= 2 && Math.abs(multiple - Math.round(multiple)) < 0.03 * Math.round(multiple)) first = early;
+  }
   if (first.abs < audible) return { params: { ...off, dryDb, wetDb: OFF_DB }, structure, echoes: 0 };
 
   // the first repeat is the loudest one; an earlier, quieter one would be a pre-echo of a multi-tap delay
@@ -487,6 +495,12 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
   const parameters = profile.parameters.parameters;
   const working = new Map(((profile.manifest.capture.plan?.workingPoint as { index: number; value: number }[] | undefined) ?? []).map((w) => [w.index, w.value]));
   const baseValues = new Map(parameters.map((p) => [p.index, working.get(p.index) ?? p.value ?? p.default]));
+  // controls that move in steps: declared, measured by the survey, or told by their value texts (as in the plan)
+  const measuredSteps = (profile.manifest.capture.plan?.steps as MeasuredSteps[] | undefined) ?? [];
+  const stepped = new Map(parameters.flatMap((p) => {
+    const found = parameterPositions(p, measuredSteps);
+    return found ? [[p.index, found] as const] : [];
+  }));
   const base = observations.find((o) => o.kind === "default") ?? observations.find((o) => o.params.length === 0) ?? observations[0]!;
   const swept = (o: DelayObservation) =>
     o.sweepParameter !== undefined ? o.params.find((p) => p.index === o.sweepParameter) : o.params.length === 1 ? o.params[0] : undefined;
@@ -506,7 +520,7 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
       const info = parameters.find((x) => x.index === p.index)!;
       const fit = analyseResponse(o.response, input.sampleRate, baseFit.params);
       const table = tables.get(p.index)
-        ?? { index: p.index, name: info.name, discrete: steppedParameter(info), points: [{ value: baseValues.get(p.index)!, packed: packDelay(baseFit.params) }] };
+        ?? { index: p.index, name: info.name, discrete: stepped.has(p.index), points: [{ value: baseValues.get(p.index)!, packed: packDelay(baseFit.params) }] };
       table.points.push({ value: p.value, packed: packDelay(fit.params) });
       tables.set(p.index, table);
       const shown = visible.get(p.index) ?? new Set(baseFit.echoes > 0 ? [baseValues.get(p.index)!] : []);
@@ -520,6 +534,15 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
       const moves = table.points.some((pt) => pt.packed.some((v, k) => Math.abs(v - table.points[0]!.packed[k]!) > 1e-6));
       if (table.points.length < 2 || !moves) tables.delete(index);
       else {
+        // a position holds over its whole range: a point at either end, so that the nearest point is the right one
+        // (declared steps are measured at their exact values and need none)
+        const steps = steppedParameter(parameters.find((x) => x.index === index)!) ? undefined : stepped.get(index);
+        if (steps) {
+          table.points = table.points.flatMap((pt) => {
+            const [from, to] = steps.bounds[positionOf(steps, pt.value)]!;
+            return from === to ? [{ ...pt, value: from }] : [{ ...pt, value: from }, { value: to, packed: [...pt.packed] }];
+          }).filter((pt, i, all) => all.findIndex((other) => Math.abs(other.value - pt.value) < 1e-9) === i);
+        }
         table.points.sort((a, b) => a.value - b.value);
         refineTimeTable(table, (value) => visible.get(index)!.has(value));
       }
@@ -547,7 +570,7 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
     return Math.max(...times) - Math.min(...times) > Math.log(TIME_CONTROL_RATIO);
   });
   if (timeTables.length >= 2) {
-    const switchLike = new Set(parameters.filter((p) => p.discrete && p.numSteps >= 2 && p.numSteps <= SWITCH_STATES).map((p) => p.index));
+    const switchLike = new Set([...stepped].filter(([, steps]) => steps.values.length <= SWITCH_STATES).map(([index]) => index));
     const mixes = observations.filter((o) => o.purpose === "train" && o.kind === "random"
       && o.params.every((p) => !switchLike.has(p.index) || Math.abs(p.value - (baseValues.get(p.index) ?? p.value)) < 1e-4));
     const errors = { product: [] as number[], sum: [] as number[] };
@@ -585,10 +608,15 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
     const errors = (tables: DelayTables) => checks.map((o) => errorOf(tables, o).rmsDb);
     if (!variantGain(errors(main), errors(own))) continue;
     const info = parameters.find((x) => x.index === position.index)!;
-    const step = 1 / Math.max(info.numSteps - 1, 1);
+    // the position applies from half way to its neighbours; the outer ones to the ends of the control
+    const steps = stepped.get(position.index);
+    const at = steps ? positionOf(steps, position.value) : -1;
+    const range: [number, number] = steps
+      ? [at === 0 ? -1 : (steps.bounds[at - 1]![1] + steps.bounds[at]![0]) / 2, at === steps.values.length - 1 ? 2 : (steps.bounds[at]![1] + steps.bounds[at + 1]![0]) / 2]
+      : [position.value - 0.5 / Math.max(info.numSteps - 1, 1), position.value + 0.5 / Math.max(info.numSteps - 1, 1)];
     variants.push({
       ...own, index: position.index, value: position.value, name: `${info.name} = ${start.label.split(" = ").pop()}`,
-      range: [position.value - step / 2, position.value + step / 2],
+      range,
     });
   }
 

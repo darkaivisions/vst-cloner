@@ -59,6 +59,8 @@ export interface RenderJob {
   prerollSeconds: number;
   tailSeconds: number;
   input: string;
+  /** a fresh instance of the plugin for every render (see `capture`: plugins with state that is no parameter) */
+  isolate?: boolean;
   renders: { id: string; params: { index: number; value: number }[]; output: string }[];
 }
 

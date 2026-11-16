@@ -313,22 +313,27 @@ int runRender (const juce::StringArray& args)
     if (! juce::approximatelyEqual (input.sampleRate, sampleRate))
         throw std::runtime_error ("input sample rate does not match job sample rate");
 
+    // "isolate": a fresh instance of the plugin for every render. State that is no parameter value (a button
+    // that toggles on every press) otherwise leaks from one render into the next, and neither reset() nor
+    // restoring the saved state undoes it reliably.
+    const bool isolate = (bool) job.getProperty ("isolate", false);
     PluginLoader loader;
-    auto loaded = loader.load (job["plugin"].toString(), job["identifier"].toString(), sampleRate, blockSize);
-    auto& plugin = *loaded.instance;
-
-    configureBuses (plugin, channels);
-    plugin.setNonRealtime (true);
-    plugin.prepareToPlay (sampleRate, blockSize);
-    applyState (plugin, job["state"].toString());
-
-    auto parameters = plugin.getParameters();
+    const auto load = [&]
+    {
+        auto fresh = loader.load (job["plugin"].toString(), job["identifier"].toString(), sampleRate, blockSize);
+        configureBuses (*fresh.instance, channels);
+        fresh.instance->setNonRealtime (true);
+        fresh.instance->prepareToPlay (sampleRate, blockSize);
+        applyState (*fresh.instance, job["state"].toString());
+        return fresh;
+    };
+    auto loaded = load();
     std::vector<float> baseValues;
 
-    for (auto* p : parameters)
+    for (auto* p : loaded.instance->getParameters())
         baseValues.push_back (p->getValue());
 
-    Renderer renderer (plugin, blockSize);
+    auto renderer = std::make_unique<Renderer> (*loaded.instance, blockSize);
     auto* renders = job["renders"].getArray();
 
     if (renders == nullptr)
@@ -338,8 +343,8 @@ int runRender (const juce::StringArray& args)
         { "type", "start" },
         { "plugin", describe (loaded.description) },
         { "renders", renders->size() },
-        { "outputChannels", renderer.getOutputChannels() },
-        { "buses", describeBuses (plugin) },
+        { "outputChannels", renderer->getOutputChannels() },
+        { "buses", describeBuses (*loaded.instance) },
     }));
 
     int index = 0;
@@ -347,6 +352,17 @@ int runRender (const juce::StringArray& args)
     for (auto& render : *renders)
     {
         auto started = juce::Time::getMillisecondCounterHiRes();
+
+        if (isolate && index > 0)
+        {
+            renderer.reset();
+            loaded.instance->releaseResources();
+            loaded.instance.reset();
+            loaded = load();
+            renderer = std::make_unique<Renderer> (*loaded.instance, blockSize);
+        }
+        auto& plugin = *loaded.instance;
+        auto parameters = plugin.getParameters();
 
         for (int i = 0; i < parameters.size(); ++i)
             parameters[i]->setValueNotifyingHost (baseValues[(size_t) i]);
@@ -369,13 +385,13 @@ int runRender (const juce::StringArray& args)
         }
 
         // Deliver parameter changes, clear internal state, then let smoothing settle.
-        renderer.process (nullptr, 0, blockSize, nullptr, 0);
+        renderer->process (nullptr, 0, blockSize, nullptr, 0);
         plugin.reset();
-        renderer.process (nullptr, 0, prerollSamples, nullptr, 0);
+        renderer->process (nullptr, 0, prerollSamples, nullptr, 0);
 
         auto latency = plugin.getLatencySamples();
         auto keep = input.buffer.getNumSamples() + tailSamples;
-        juce::AudioBuffer<float> output (juce::jmax (1, renderer.getOutputChannels()), latency + keep);
+        juce::AudioBuffer<float> output (juce::jmax (1, renderer->getOutputChannels()), latency + keep);
         output.clear();
         // optional automation: { "at": sample (from the start of the input), "index", "value" },
         // applied at the start of the block that contains "at" (use a small blockSize for precise timing)
@@ -401,7 +417,7 @@ int runRender (const juce::StringArray& args)
             }
         };
 
-        renderer.process (&input.buffer, 0, latency + keep, &output, 0, changes.empty() ? std::function<void (int)> {} : automate);
+        renderer->process (&input.buffer, 0, latency + keep, &output, 0, changes.empty() ? std::function<void (int)> {} : automate);
 
         juce::AudioBuffer<float> trimmed (output.getNumChannels(), keep);
 
@@ -428,7 +444,7 @@ int runRender (const juce::StringArray& args)
         }));
     }
 
-    plugin.releaseResources();
+    loaded.instance->releaseResources();
     emit (makeObject ({ { "type", "done" }, { "renders", index } }));
     return 0;
 }

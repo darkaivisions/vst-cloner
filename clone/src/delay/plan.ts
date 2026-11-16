@@ -1,6 +1,8 @@
-import { DEFAULT_PLAN, type CapturePlan, type CapturePlanner, type CaptureProbe, type FixedValue, type HostInfo, type PlanOptions } from "@vst-cloner/capture";
+import { DEFAULT_PLAN, selectParameters, type CapturePlan, type CapturePlanner, type CaptureProbe, type CaptureSurvey, type FixedValue, type HostInfo, type MeasuredSteps, type PlanOptions } from "@vst-cloner/capture";
 import type { Parameter } from "@vst-cloner/profile";
-import { IGNORED, planSweeps } from "../dynamics/plan.ts";
+import { IGNORED, parameterPositions, planSweeps } from "../dynamics/plan.ts";
+import { analyseResponse } from "./fit.ts";
+import { packDelay } from "./model.ts";
 
 /** Roles of delay parameters, recognised by name. */
 export type DelayRole = "time" | "feedback" | "mix" | "filter";
@@ -50,7 +52,7 @@ export const DELAY_COMBINATIONS = 12;
 /** Single-parameter sweeps and a few combinations (training) plus random combinations (validation). */
 export function planDelay(parameters: Parameter[], options: PlanOptions, category = "", name = ""): CapturePlan & { mapping: DelayMapping } {
   const mapping = detectDelay(parameters, category, name);
-  return { ...planSweeps(parameters, options, IGNORED, { switches: true, combinations: DELAY_COMBINATIONS }), mapping };
+  return { ...planSweeps(parameters, options, IGNORED, { switches: true, combinations: DELAY_COMBINATIONS, plateaus: true }), mapping };
 }
 
 /** Energy of everything after the first 2 ms of the impulse's answer, relative to the impulse (dB). */
@@ -96,9 +98,91 @@ export function delayProbe(parameters: Parameter[], category = "", name = ""): C
   };
 }
 
+/** points at which the survey sets every continuous control */
+export const SURVEY_POINTS = 61;
+/** more positions than this is no selector any more */
+const MAX_POSITIONS = 24;
+/**
+ * Model values (packed, see packDelay) that differ by less are the same position: 0.1 % in time, 0.05 dB, 0.5 % in
+ * frequency. Tight, because a position repeats its effect exactly while a slow control only nearly does.
+ */
+const SAME = [0.001, 0.05, 0.05, 0.05, 0.005, 0.005, 0.005, 0.005];
+
+/**
+ * Positions of a control from what it does at evenly spaced values: runs of values with the same effect. A
+ * selector or switch gives a few runs with jumps between them; a continuous control changes from point to
+ * point (possibly with a flat stretch where it is off or at its limit). Returns undefined for the latter.
+ */
+export function measuredPositions(xs: number[], effects: number[][]): { values: number[]; bounds: [number, number][] } | undefined {
+  const same = (a: number[], b: number[]) => a.every((v, i) => Math.abs(v - b[i]!) < (SAME[i] ?? 0.2));
+  const runs: [number, number][] = [];
+  for (let i = 0; i < xs.length; i++) {
+    const last = runs[runs.length - 1];
+    // the same as the first value of the run, not merely as the one before: a control that drifts slowly is no step
+    if (last && same(effects[last[0]]!, effects[i]!)) last[1] = i;
+    else runs.push([i, i]);
+  }
+  if (runs.length < 2 || runs.length > MAX_POSITIONS) return undefined;
+  const single = runs.filter(([from, to]) => from === to).length;
+  const equalPairs = xs.length - runs.length;
+  if (single > runs.length / 2 || equalPairs < 0.4 * (xs.length - 1)) return undefined;
+  // A step is a jump: far larger than anything that moves within a position. A control that creeps (a filter on
+  // the other channel that slowly changes the feedback) only falls into runs because the comparison has a tolerance.
+  const distance = (a: number[], b: number[]) => Math.max(...a.map((v, i) => Math.abs(v - b[i]!) / (SAME[i] ?? 0.2)));
+  let within = 0, jump = Infinity;
+  runs.forEach(([from, to], k) => {
+    for (let i = from + 1; i <= to; i++) within = Math.max(within, distance(effects[from]!, effects[i]!));
+    if (k > 0) jump = Math.min(jump, distance(effects[runs[k - 1]![1]]!, effects[from]!));
+  });
+  if (jump < 5 * within) return undefined;
+  const bounds = runs.map(([from, to]): [number, number] => [xs[from]!, xs[to]!]);
+  return { values: bounds.map(([from, to]) => (from + to) / 2), bounds };
+}
+
+/**
+ * Survey: every control the plugin reports as continuous and without telling value texts is set to evenly spaced
+ * values. Selectors and switches among them (note values, "x2", sync on/off) show as steps in what they do.
+ */
+export function delaySurvey(parameters: Parameter[], options: PlanOptions, category = "", name = ""): CaptureSurvey | undefined {
+  try {
+    detectDelay(parameters, category, name);
+  } catch {
+    return undefined;
+  }
+  const exclude = options.exclude ? new RegExp(`${options.exclude.source}|${IGNORED.source}`, "i") : IGNORED;
+  const fixed = new Set((options.fixed ?? []).map((f) => f.index));
+  const candidates = selectParameters(parameters, { ...(options.include ? { include: options.include } : {}), exclude })
+    .filter((p) => !p.discrete && !fixed.has(p.index) && parameterPositions(p) === undefined);
+  if (candidates.length === 0) return undefined;
+  const working = options.workingPoint ?? [];
+  const xs = Array.from({ length: SURVEY_POINTS }, (_, i) => i / (SURVEY_POINTS - 1));
+  const renders: FixedValue[][] = [[...working]];
+  for (const p of candidates) for (const value of xs) renders.push([...working.filter((w) => w.index !== p.index), { index: p.index, value }]);
+  return {
+    renders,
+    evaluate(outputs, input, sampleRate) {
+      // the impulse and the silence after it (see echoDb)
+      let start = 0;
+      while (start < input.length && input[start] === 0) start++;
+      let end = start + 1;
+      while (end < input.length && input[end] === 0) end++;
+      const response = (output: Float32Array) => Float32Array.from({ length: end - start }, (_, i) => (output[start + i] ?? 0) / input[start]!);
+      const base = analyseResponse(response(outputs[0]!), sampleRate);
+      const steps: MeasuredSteps[] = [];
+      candidates.forEach((p, k) => {
+        const effects = xs.map((_, i) => packDelay(analyseResponse(response(outputs[1 + k * SURVEY_POINTS + i]!), sampleRate, base.params).params));
+        const found = measuredPositions(xs, effects);
+        if (found) steps.push({ index: p.index, ...found });
+      });
+      return steps;
+    },
+  };
+}
+
 export const delayPlanner: CapturePlanner = {
   name: "delay",
   signalPreset: "delay",
   plan: (info: HostInfo, options: PlanOptions) => planDelay(info.parameters, { ...DEFAULT_PLAN, ...options }, info.plugin.category, info.plugin.name),
   probe: (info: HostInfo) => delayProbe(info.parameters, info.plugin.category, info.plugin.name),
+  survey: (info: HostInfo, options: PlanOptions) => delaySurvey(info.parameters, { ...DEFAULT_PLAN, ...options }, info.plugin.category, info.plugin.name),
 };

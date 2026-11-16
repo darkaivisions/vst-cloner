@@ -10,10 +10,11 @@ import {
   sha256Hex,
   writeProfile,
   type CaptureRender,
+  type Parameter,
   type Profile,
 } from "@vst-cloner/profile";
 import { findHost, hostVersion, pluginInfo, runHost, type HostInfo, type HostRenderMessage, type RenderJob } from "./host.ts";
-import { planCaptures, PlanTooLargeError, resolveFixedValues, type CapturePlan, type FixedValue, type PlanOptions } from "./plan.ts";
+import { planCaptures, PlanTooLargeError, resolveFixedValues, type CapturePlan, type FixedValue, type MeasuredSteps, type PlanOptions } from "./plan.ts";
 import { generateTestSignal, type SignalPreset } from "./signals.ts";
 
 export const GENERATOR = { name: "vst-cloner", version: "0.1.0" };
@@ -44,6 +45,9 @@ export interface CaptureOptions {
 export type CaptureProgress =
   | { stage: "info"; plugin: string }
   | { stage: "probe"; candidates: number; chosen: number; workingPoint: FixedValue[] }
+  | { stage: "repeat"; repeatable: boolean }
+  | { stage: "retry"; reason: string }
+  | { stage: "survey"; renders: number; stepped: { index: number; positions: number }[] }
   | { stage: "plan"; parameters: number; selected: number; renders: number }
   | { stage: "workdir"; path: string }
   | { stage: "render"; done: number; total: number; id: string; milliseconds: number }
@@ -60,6 +64,18 @@ export interface CapturePlanner {
    * The first candidate is the initial state of the plugin (no values).
    */
   probe?(info: HostInfo, options: PlanOptions): CaptureProbe | undefined;
+  /**
+   * Optional survey after the probe: settings rendered with the test signal from which the planner learns
+   * what it cannot read off the parameter list – controls that move in steps (returned as `steps` of the plan
+   * options).
+   */
+  survey?(info: HostInfo, options: PlanOptions): CaptureSurvey | undefined;
+}
+
+export interface CaptureSurvey {
+  renders: FixedValue[][];
+  /** `outputs[i]` is the first channel of render i */
+  evaluate(outputs: Float32Array[], input: Float32Array, sampleRate: number): MeasuredSteps[];
 }
 
 export interface CaptureProbe {
@@ -128,7 +144,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
 
   try {
     await writeFile(join(workDir, "input.wav"), encodeWav(signal.audio));
-    const jobBase = {
+    const jobBase: Omit<RenderJob, "renders"> = {
       plugin: pluginPath,
       identifier: info.plugin.identifier,
       sampleRate: options.sampleRate,
@@ -138,6 +154,44 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
       tailSeconds: options.tailSeconds,
       input: "input.wav",
     };
+
+    // With a fresh instance per render a job loads and unloads the plugin hundreds of times, and some plugins
+    // crash at that once in a while: such a job gets a second attempt.
+    const render: typeof runHost = async (args, hostOptions) => {
+      try {
+        return await runHost(args, hostOptions);
+      } catch (error) {
+        if (!jobBase.isolate || options.signal?.aborted) throw error;
+        progress({ stage: "retry", reason: (error as Error).message.slice(0, 200) });
+        return await runHost(args, hostOptions);
+      }
+    };
+
+    // Repeatability: the initial state again and again, with one measured control after the other moved to
+    // other values in between. If the renders of the initial state differ, the plugin keeps state that is no parameter value
+    // (a button that toggles on every press): its renders depend on their order, and every one gets a fresh
+    // instance instead.
+    if (firstPlan.selected.length > 0) {
+      const fixed = planOptions.fixed ?? [];
+      const initial = (p: Parameter) => p.value ?? p.default;
+      // every control on its own (a toggle shows when it alone is pressed), at a few values each
+      const values = (p: Parameter) => (initial(p) < 0.5 ? [1, 0.02, 0.6] : [0, 0.98, 0.4]);
+      const settings = [[...fixed], ...firstPlan.selected.slice(0, 64).flatMap((p) => values(p).flatMap((value) => [[...fixed, { index: p.index, value }], [...fixed]]))];
+      const repeatJob: RenderJob = { ...jobBase, renders: settings.map((params, i) => ({ id: `q${i}`, params, output: `repeat/q${i}.wav` })) };
+      await mkdir(join(workDir, "repeat"), { recursive: true });
+      await writeFile(join(workDir, "repeat.json"), JSON.stringify(repeatJob, null, 2));
+      await runHost(["render", join(workDir, "repeat.json")], { hostPath, ...(options.signal ? { signal: options.signal } : {}) });
+      const before = decodeWav(await readFile(join(workDir, "repeat", "q0.wav"))).channels[0]!;
+      let peak = 0, difference = 0;
+      for (const v of before) peak = Math.max(peak, Math.abs(v));
+      for (let k = 2; k < settings.length; k += 2) {
+        const again = decodeWav(await readFile(join(workDir, "repeat", `q${k}.wav`))).channels[0]!;
+        for (let i = 0; i < before.length; i++) difference = Math.max(difference, Math.abs(before[i]! - (again[i] ?? 0)));
+      }
+      const repeatable = !(difference > 1e-3 * Math.max(peak, 1e-6));
+      progress({ stage: "repeat", repeatable });
+      if (!repeatable) jobBase.isolate = true;
+    }
 
     // probe: the planner looks at a few candidate settings and picks the one to measure around
     let plan = firstPlan;
@@ -150,7 +204,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
       };
       await mkdir(join(workDir, "probe"), { recursive: true });
       await writeFile(join(workDir, "probe.json"), JSON.stringify(probeJob, null, 2));
-      await runHost(["render", join(workDir, "probe.json")], { hostPath, ...(options.signal ? { signal: options.signal } : {}) });
+      await render(["render", join(workDir, "probe.json")], { hostPath, ...(options.signal ? { signal: options.signal } : {}) });
       const outputs: Float32Array[] = [];
       for (let i = 0; i < probe.candidates.length; i++) outputs.push(decodeWav(await readFile(join(workDir, "probe", `p${i}.wav`))).channels[0]!);
       const chosen = probe.choose(outputs, signal.audio.channels[0]!, options.sampleRate);
@@ -158,6 +212,27 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
       progress({ stage: "probe", candidates: probe.candidates.length, chosen, workingPoint });
       if (workingPoint.length) {
         planOptions.workingPoint = workingPoint;
+        plan = options.planner!.plan(info, planOptions);
+        if (plan.renders.length > planOptions.maxRenders) throw new PlanTooLargeError(plan.renders.length, planOptions.maxRenders);
+      }
+    }
+    // survey: controls that move in steps although the plugin reports them as continuous
+    const survey = options.planner?.survey?.(info, planOptions);
+    if (survey && survey.renders.length > 0) {
+      const fixed = planOptions.fixed ?? [];
+      const surveyJob: RenderJob = {
+        ...jobBase,
+        renders: survey.renders.map((values, i) => ({ id: `s${i}`, params: [...fixed, ...values], output: `survey/s${i}.wav` })),
+      };
+      await mkdir(join(workDir, "survey"), { recursive: true });
+      await writeFile(join(workDir, "survey.json"), JSON.stringify(surveyJob, null, 2));
+      await render(["render", join(workDir, "survey.json")], { hostPath, ...(options.signal ? { signal: options.signal } : {}) });
+      const outputs: Float32Array[] = [];
+      for (let i = 0; i < survey.renders.length; i++) outputs.push(decodeWav(await readFile(join(workDir, "survey", `s${i}.wav`))).channels[0]!);
+      const steps = survey.evaluate(outputs, signal.audio.channels[0]!, options.sampleRate);
+      progress({ stage: "survey", renders: survey.renders.length, stepped: steps.map((s) => ({ index: s.index, positions: s.values.length })) });
+      if (steps.length) {
+        planOptions.steps = steps;
         plan = options.planner!.plan(info, planOptions);
         if (plan.renders.length > planOptions.maxRenders) throw new PlanTooLargeError(plan.renders.length, planOptions.maxRenders);
       }
@@ -171,7 +246,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
     await writeFile(join(workDir, "job.json"), JSON.stringify(job, null, 2));
 
     const results = new Map<string, HostRenderMessage>();
-    await runHost(["render", join(workDir, "job.json")], {
+    await render(["render", join(workDir, "job.json")], {
       hostPath,
       ...(options.signal ? { signal: options.signal } : {}),
       onMessage: (message) => {
@@ -245,6 +320,8 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
             ...(options.plan.exclude ? { exclude: options.plan.exclude.source } : {}),
             fixed: planOptions.fixed,
             ...(planOptions.workingPoint?.length ? { workingPoint: planOptions.workingPoint } : {}),
+            ...(planOptions.steps?.length ? { steps: planOptions.steps } : {}),
+            ...(jobBase.isolate ? { isolated: true } : {}),
             selectedParameters: plan.selected.map((p) => p.index),
           },
         },

@@ -19,6 +19,19 @@ export interface PlanOptions {
    * probe, e.g. a compressor whose initial state does not compress). Unlike `fixed` they are still swept.
    */
   workingPoint?: FixedValue[];
+  /**
+   * Positions of controls that the plugin reports as continuous but that move in steps (a selector of note
+   * values, an on/off switch) – found by a planner's survey.
+   */
+  steps?: MeasuredSteps[];
+}
+
+export interface MeasuredSteps {
+  index: number;
+  /** normalised value in the middle of each position */
+  values: number[];
+  /** normalised range [from, to] in which each position was seen */
+  bounds: [number, number][];
 }
 
 export interface FixedValue {

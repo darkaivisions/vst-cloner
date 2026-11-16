@@ -132,3 +132,22 @@ test("controls with many steps are interpolated, switches take the nearest measu
   assert.equal(steppedParameter({ discrete: true, numSteps: 4 }), true);
   assert.equal(steppedParameter({ discrete: false, numSteps: 2147483647 }), false);
 });
+
+test("survey: selectors and switches show as runs of equal effect, continuous controls do not", async () => {
+  const { measuredPositions } = await import("../src/delay/plan.ts");
+  const xs = Array.from({ length: 61 }, (_, i) => i / 60);
+  const effect = (time: number, wet = -6) => [Math.log(time), 0, wet, -80, 9.9, 3, 9.9, 3];
+  // a selector of five note values
+  const selector = measuredPositions(xs, xs.map((x) => effect([0.125, 0.25, 0.5, 0.75, 1][Math.min(4, Math.floor(x * 5))]!)))!;
+  assert.equal(selector.values.length, 5);
+  assert.ok(Math.abs(selector.bounds[1]![0] - 0.2) < 0.02 && Math.abs(selector.bounds[1]![1] - 0.4) < 0.02);
+  // a button: off at zero, on everywhere else
+  assert.deepEqual(measuredPositions(xs, xs.map((x) => effect(x > 0 ? 0.25 : 0.5)))!.bounds, [[0, 0], [xs[1], 1]]);
+  // continuous controls: a time, a level that is off over its lower third, one that drifts slowly, one without effect
+  assert.equal(measuredPositions(xs, xs.map((x) => effect(0.01 + x))), undefined);
+  assert.equal(measuredPositions(xs, xs.map((x) => effect(0.5, x < 0.33 ? -80 : -60 + 60 * x))), undefined);
+  assert.equal(measuredPositions(xs, xs.map((x) => effect(0.5, -6 + 3 * x))), undefined);
+  assert.equal(measuredPositions(xs, xs.map(() => effect(0.5))), undefined);
+  // flat at both ends and creeping in between: the runs come from the tolerance, not from steps
+  assert.equal(measuredPositions(xs, xs.map((x) => effect(0.5, x < 0.3 ? -6 : x > 0.9 ? -6.24 : -6 - 0.4 * (x - 0.3)))), undefined);
+});

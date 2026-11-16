@@ -8,10 +8,12 @@ import {
   type CaptureProbe,
   type FixedValue,
   type HostInfo,
+  type MeasuredSteps,
   type PlannedRender,
   type PlanOptions,
 } from "@vst-cloner/capture";
 import type { Parameter } from "@vst-cloner/profile";
+import { parameterSteps } from "../eq/mapping.ts";
 
 /** Roles of dynamics parameters, recognised by name. */
 export type DynamicsRole =
@@ -152,26 +154,68 @@ export const steppedParameter = (p: Pick<Parameter, "discrete" | "numSteps">) =>
  * Single-parameter sweeps (training) plus random combinations (validation) of all selected parameters.
  * Shared by the dynamics and distortion planners.
  */
-export function planSweeps(parameters: Parameter[], options: PlanOptions, ignored: RegExp, extra: { switches?: boolean; combinations?: number } = {}): CapturePlan {
+/** Positions of a parameter that moves in steps: the value in the middle of each and the range it covers. */
+export interface Positions {
+  values: number[];
+  bounds: [number, number][];
+}
+
+/**
+ * Positions of a stepped parameter: declared steps, or – for controls the plugin reports as continuous – the
+ * steps a survey measured, or the plateaus of its value texts (see parameterSteps).
+ */
+export function parameterPositions(p: Parameter, measured: MeasuredSteps[] = []): Positions | undefined {
+  if (steppedParameter(p)) {
+    const values = Array.from({ length: p.numSteps }, (_, i) => i / (p.numSteps - 1));
+    const half = 0.5 / (p.numSteps - 1);
+    return { values, bounds: values.map((v) => [Math.max(0, v - half), Math.min(1, v + half)]) };
+  }
+  if (p.discrete) return undefined;
+  const found = measured.find((m) => m.index === p.index);
+  if (found) return { values: found.values, bounds: found.bounds };
+  const steps = parameterSteps(p);
+  return steps ? { values: steps.values, bounds: steps.bounds } : undefined;
+}
+
+/** Position a normalised value falls into: the one whose range contains it, else the nearest. */
+export function positionOf(positions: Positions, value: number): number {
+  let best = 0, distance = Infinity;
+  positions.bounds.forEach(([from, to], i) => {
+    const d = value < from ? from - value : value > to ? value - to : 0;
+    if (d < distance) { best = i; distance = d; }
+  });
+  return best;
+}
+
+export function planSweeps(parameters: Parameter[], options: PlanOptions, ignored: RegExp, extra: { switches?: boolean; combinations?: number; plateaus?: boolean } = {}): CapturePlan {
   const exclude = options.exclude ? new RegExp(`${options.exclude.source}|${ignored.source}`, "i") : ignored;
   const selected = selectParameters(parameters, { ...(options.include ? { include: options.include } : {}), exclude });
-  const stepped = steppedParameter;
   // the working point (if a probe found one) takes the place of the plugin's initial state
   const working = options.workingPoint ?? [];
   const workingValue = new Map(working.map((w) => [w.index, w.value]));
   const base = (p: Parameter) => workingValue.get(p.index) ?? p.value ?? p.default;
+  // with `plateaus`, controls that move in steps without saying so count as stepped too
+  const positions = (p: Parameter): Positions | undefined => (extra.plateaus ? parameterPositions(p, options.steps) : steppedParameter(p) ? parameterPositions(p) : undefined);
+  const stepped = (p: Parameter) => positions(p) !== undefined;
+  const numPositions = (p: Parameter) => positions(p)?.values.length ?? 0;
+  const randomPosition = (p: Parameter, random: () => number) => positions(p)!.values[Math.floor(random() * numPositions(p))]!;
+  /** a value in the base position of a stepped parameter (the base value itself is not one of its position values) */
+  const atBase = (p: Parameter, value: number) => {
+    const all = positions(p);
+    return all ? positionOf(all, value) === positionOf(all, base(p)) : Math.abs(value - base(p)) < 1e-4;
+  };
   const fixed = [...(options.fixed ?? []), ...working];
 
   const renders: Omit<PlannedRender, "id">[] = [{ kind: "default", purpose: "train", label: working.length ? "Arbeitspunkt" : "Grundeinstellung", params: [...fixed] }];
   for (const p of selected) {
-    const values = stepped(p) ? Array.from({ length: p.numSteps }, (_, i) => i / (p.numSteps - 1)) : [...DYNAMICS_SWEEP];
+    const values = positions(p)?.values.slice() ?? [...DYNAMICS_SWEEP];
     // a parameter moved to the working point: its initial value must be measured as well
     const initial = p.value ?? p.default;
-    if (workingValue.has(p.index) && !values.some((v) => Math.abs(v - initial) < 1e-4)) values.push(initial);
+    if (workingValue.has(p.index) && !stepped(p) && !values.some((v) => Math.abs(v - initial) < 1e-4)) values.push(initial);
     values.sort((x, y) => x - y);
     const others = fixed.filter((f) => f.index !== p.index);
     for (const value of values) {
-      if (Math.abs(value - base(p)) < 1e-4) continue;
+      if (atBase(p, value)) continue;
       renders.push({ kind: "sweep", sweepParameter: p.index, purpose: "train", label: `${p.name} = ${percent(p, value)}`, params: [...others, { index: p.index, value }] });
     }
   }
@@ -179,18 +223,20 @@ export function planSweeps(parameters: Parameter[], options: PlanOptions, ignore
   // One switch after the other, as long as the plan stays within its limit.
   if (extra.switches) {
     // switches with few positions first: they cost the least and are the commonest (on/off)
-    for (const s of selected.filter((p) => stepped(p) && p.numSteps <= SWITCH_STATES).sort((a, b) => a.numSteps - b.numSteps)) {
+    // A selector with more positions gets this treatment for its first one only, where it is not the base
+    // position: there it is usually "off" and hands over to another control (free time instead of note values).
+    const switchPositions = (s: Parameter) => (numPositions(s) <= SWITCH_STATES ? positions(s)!.values : extra.plateaus ? positions(s)!.values.slice(0, 1) : []);
+    for (const s of selected.filter((p) => stepped(p) && switchPositions(p).length > 0).sort((a, b) => numPositions(a) - numPositions(b))) {
       const block: Omit<PlannedRender, "id">[] = [];
-      for (let state = 0; state < s.numSteps; state++) {
-        const position = state / (s.numSteps - 1);
-        if (Math.abs(position - base(s)) < 1e-4) continue;
+      for (const position of switchPositions(s)) {
+        if (atBase(s, position)) continue;
         for (const p of selected) {
           if (p === s) continue;
           // the same points as in the base position: a model for this position must be as exact as the main one
-          const values = stepped(p) ? Array.from({ length: p.numSteps }, (_, i) => i / (p.numSteps - 1)) : DYNAMICS_SWEEP;
+          const values = positions(p)?.values ?? DYNAMICS_SWEEP;
           const others = fixed.filter((f) => f.index !== p.index && f.index !== s.index);
           for (const value of values) {
-            if (Math.abs(value - base(p)) < 1e-4) continue;
+            if (atBase(p, value)) continue;
             block.push({
               kind: "sweep", sweepParameter: p.index, purpose: "train",
               label: `${s.name} = ${percent(s, position)}: ${p.name} = ${percent(p, value)}`,
@@ -202,16 +248,15 @@ export function planSweeps(parameters: Parameter[], options: PlanOptions, ignore
       // random combinations within each position: the fit decides on them whether the position needs a model of
       // its own (they are not used for the tables, and not for the validation either)
       const checks = createRandom(options.seed + 1000 + s.index);
-      for (let state = 0; state < s.numSteps; state++) {
-        const position = state / (s.numSteps - 1);
-        if (Math.abs(position - base(s)) < 1e-4) continue;
+      for (const position of switchPositions(s)) {
+        if (atBase(s, position)) continue;
         for (let i = 0; i < SWITCH_CHECKS; i++) {
           block.push({
             kind: "random", purpose: "train",
             label: `${s.name} = ${percent(s, position)}: Kombination ${i + 1}`,
             params: [
               ...fixed.filter((f) => !selected.some((p) => p.index === f.index)),
-              ...selected.map((p) => ({ index: p.index, value: p === s ? position : stepped(p) ? Math.floor(checks() * p.numSteps) / (p.numSteps - 1) : checks() })),
+              ...selected.map((p) => ({ index: p.index, value: p === s ? position : stepped(p) ? randomPosition(p, checks) : checks() })),
             ],
           });
         }
@@ -223,13 +268,13 @@ export function planSweeps(parameters: Parameter[], options: PlanOptions, ignore
   // stay in their base position – what they change is the business of the models per position.
   if (extra.combinations && renders.length + extra.combinations + options.random <= options.maxRenders) {
     const mixes = createRandom(options.seed + 500);
-    const isSwitch = (p: Parameter) => stepped(p) && p.numSteps <= SWITCH_STATES;
+    const isSwitch = (p: Parameter) => stepped(p) && numPositions(p) <= SWITCH_STATES;
     for (let i = 0; i < extra.combinations; i++) {
       renders.push({
         kind: "random", purpose: "train", label: `Kombination ${i + 1}`,
         params: [
           ...fixed.filter((f) => !selected.some((p) => p.index === f.index)),
-          ...selected.map((p) => ({ index: p.index, value: isSwitch(p) ? base(p) : stepped(p) ? Math.floor(mixes() * p.numSteps) / (p.numSteps - 1) : mixes() })),
+          ...selected.map((p) => ({ index: p.index, value: isSwitch(p) ? base(p) : stepped(p) ? randomPosition(p, mixes) : mixes() })),
         ],
       });
     }
@@ -240,7 +285,7 @@ export function planSweeps(parameters: Parameter[], options: PlanOptions, ignore
       kind: "random",
       purpose: "validate",
       label: `Zufallskombination ${i + 1}`,
-      params: [...fixed.filter((f) => !selected.some((p) => p.index === f.index)), ...selected.map((p) => ({ index: p.index, value: stepped(p) ? Math.floor(random() * p.numSteps) / (p.numSteps - 1) : random() }))],
+      params: [...fixed.filter((f) => !selected.some((p) => p.index === f.index)), ...selected.map((p) => ({ index: p.index, value: stepped(p) ? randomPosition(p, random) : random() }))],
     });
   }
   if (renders.length > options.maxRenders) throw new PlanTooLargeError(renders.length, options.maxRenders);
