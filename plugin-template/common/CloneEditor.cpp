@@ -939,7 +939,7 @@ CloneEditor::CloneEditor (CloneProcessor& p) : AudioProcessorEditor (p), process
     setResizable (true, true);
     setResizeLimits (clonegui::width / 2, clonegui::height / 2, clonegui::width * 3, clonegui::height * 3);
     if (auto* constrainer = getConstrainer())
-        constrainer->setFixedAspectRatio ((double) clonegui::width / clonegui::height);
+        constrainer->setFixedAspectRatio ((double) clonegui::width / juce::jmax (1, clonegui::height)); // 0 × 0 without a rebuilt editor
     setSize (clonegui::width, clonegui::height);
 
     lastValues.resize ((size_t) clonemodel::numParams, -1.0f);

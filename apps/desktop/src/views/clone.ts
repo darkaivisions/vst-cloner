@@ -186,7 +186,10 @@ export class CloneView {
           : this.mode === "distortion" && info.distortion
             ? `${info.distortion.renders} Einstellungen à ~${info.distortion.signalSeconds} s Messsignal (Sinus-Pegeltreppen bei mehreren Frequenzen, Rauschen, leiser Sweep) – jeder Regler einzeln und in Zufallskombinationen. Das Analysieren beim Klonen dauert danach etwa 2 Minuten.`
             : this.mode === "delay" && info.delay
-              ? `${info.delay.renders} Einstellungen à ~${info.delay.signalSeconds} s Messsignal (Impuls, lange Stille, Rauschburst) – jeder Regler einzeln und in Zufallskombinationen. Dauert meist unter einer Minute.`
+              ? `${info.delay.survey > 0 ? "Mindestens " : ""}${info.delay.renders} Einstellungen à ~${info.delay.signalSeconds} s Messsignal (Impuls, lange Stille, Rauschburst) – jeder Regler einzeln und in Zufallskombinationen.` +
+                (info.delay.survey > 0
+                  ? ` Vorab suchen ${info.delay.survey} kurze Messungen nach versteckten Schaltern; jeder gefundene Schalter bringt weitere Einstellungen. Dauert eine bis einige Minuten.`
+                  : " Dauert meist unter einer Minute.")
               : this.mode === "reverb" && info.reverb
                 ? `${info.reverb.renders} Einstellungen à ~${info.reverb.signalSeconds} s Messsignal (ein Impuls und sein Ausklang) – jeder Regler einzeln und in Zufallskombinationen. Dauert meist unter einer Minute.`
                 : `${info.genericRenders} Einstellungen – jeder Parameter einzeln und in Zufallskombinationen. Klone sind bisher nur für EQs, Kompressoren, Gates/Expander, Verzerrer, Delays und Hall möglich.`;
@@ -217,11 +220,18 @@ export class CloneView {
     clear(this.captureNote);
     this.captureProgress.busy("Plugin wird geladen …");
     let isolated = false;
+    // title of the running preliminary step; its renders are counted on their own
+    let step: string | undefined;
     try {
       this.captureJob = await startJob<CaptureResult>("capture.start", { path: this.info.path, mode: this.mode }, (event) => {
-        if (event.kind === "progress") this.captureProgress.set(event.done, event.total, `${event.done} / ${event.total} Einstellungen${isolated ? " · frische Instanz pro Messung" : ""}`);
-        // steps before the planned renders: nothing to count yet
-        else if (event.kind === "stage" && event.stage !== "capture") this.captureProgress.busy(`${event.title} …`);
+        if (event.kind === "progress") {
+          this.captureProgress.set(event.done, event.total, step
+            ? `${step} – ${event.done} / ${event.total} Vorab-Messungen`
+            : `${event.done} / ${event.total} Einstellungen${isolated ? " · frische Instanz pro Messung" : ""}`);
+        } else if (event.kind === "stage" && event.stage !== "capture") {
+          step = event.stage === "render" ? undefined : event.title;
+          this.captureProgress.busy(`${event.title} …`);
+        }
         else if (event.kind === "log" && event.level === "warn" && event.message.startsWith("Nicht wiederholbar")) {
           isolated = true;
           this.renderCaptureNote({ isolated, stepped: [], retries: 0 });

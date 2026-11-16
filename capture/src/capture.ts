@@ -13,7 +13,7 @@ import {
   type Parameter,
   type Profile,
 } from "@vst-cloner/profile";
-import { findHost, hostVersion, pluginInfo, runHost, type HostInfo, type HostRenderMessage, type RenderJob } from "./host.ts";
+import { findHost, hostVersion, pluginInfo, runHost, type HostInfo, type HostMessage, type HostRenderMessage, type RenderJob } from "./host.ts";
 import { planCaptures, PlanTooLargeError, resolveFixedValues, type CapturePlan, type FixedValue, type MeasuredSteps, type PlanOptions } from "./plan.ts";
 import { generateTestSignal, type SignalPreset } from "./signals.ts";
 
@@ -47,6 +47,7 @@ export type CaptureProgress =
   | { stage: "probe"; candidates: number; chosen: number; workingPoint: FixedValue[] }
   /** a preliminary step starts: its renders are not part of the plan and not counted by "render" */
   | { stage: "begin"; step: "repeat" | "probe" | "survey"; renders: number }
+  | { stage: "step"; step: "repeat" | "probe" | "survey"; done: number; total: number }
   | { stage: "repeat"; repeatable: boolean }
   | { stage: "retry"; reason: string }
   | { stage: "survey"; renders: number; stepped: { index: number; positions: number }[] }
@@ -169,6 +170,14 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
       }
     };
 
+    // renders of a preliminary step, counted as they arrive
+    const counted = (step: "repeat" | "probe" | "survey", total: number) => {
+      let done = 0;
+      return (message: HostMessage) => {
+        if (message.type === "render") progress({ stage: "step", step, done: ++done, total });
+      };
+    };
+
     // Repeatability: the initial state again and again, with one measured control after the other moved to
     // other values in between. If the renders of the initial state differ, the plugin keeps state that is no parameter value
     // (a button that toggles on every press): its renders depend on their order, and every one gets a fresh
@@ -183,7 +192,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
       progress({ stage: "begin", step: "repeat", renders: settings.length });
       await mkdir(join(workDir, "repeat"), { recursive: true });
       await writeFile(join(workDir, "repeat.json"), JSON.stringify(repeatJob, null, 2));
-      await runHost(["render", join(workDir, "repeat.json")], { hostPath, ...(options.signal ? { signal: options.signal } : {}) });
+      await runHost(["render", join(workDir, "repeat.json")], { hostPath, ...(options.signal ? { signal: options.signal } : {}), onMessage: counted("repeat", settings.length) });
       const before = decodeWav(await readFile(join(workDir, "repeat", "q0.wav"))).channels[0]!;
       let peak = 0, difference = 0;
       for (const v of before) peak = Math.max(peak, Math.abs(v));
@@ -208,7 +217,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
       progress({ stage: "begin", step: "probe", renders: probe.candidates.length });
       await mkdir(join(workDir, "probe"), { recursive: true });
       await writeFile(join(workDir, "probe.json"), JSON.stringify(probeJob, null, 2));
-      await render(["render", join(workDir, "probe.json")], { hostPath, ...(options.signal ? { signal: options.signal } : {}) });
+      await render(["render", join(workDir, "probe.json")], { hostPath, ...(options.signal ? { signal: options.signal } : {}), onMessage: counted("probe", probe.candidates.length) });
       const outputs: Float32Array[] = [];
       for (let i = 0; i < probe.candidates.length; i++) outputs.push(decodeWav(await readFile(join(workDir, "probe", `p${i}.wav`))).channels[0]!);
       const chosen = probe.choose(outputs, signal.audio.channels[0]!, options.sampleRate);
@@ -231,7 +240,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
       progress({ stage: "begin", step: "survey", renders: survey.renders.length });
       await mkdir(join(workDir, "survey"), { recursive: true });
       await writeFile(join(workDir, "survey.json"), JSON.stringify(surveyJob, null, 2));
-      await render(["render", join(workDir, "survey.json")], { hostPath, ...(options.signal ? { signal: options.signal } : {}) });
+      await render(["render", join(workDir, "survey.json")], { hostPath, ...(options.signal ? { signal: options.signal } : {}), onMessage: counted("survey", survey.renders.length) });
       const outputs: Float32Array[] = [];
       for (let i = 0; i < survey.renders.length; i++) outputs.push(decodeWav(await readFile(join(workDir, "survey", `s${i}.wav`))).channels[0]!);
       const steps = survey.evaluate(outputs, signal.audio.channels[0]!, options.sampleRate);

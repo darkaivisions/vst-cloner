@@ -36,7 +36,8 @@ export interface PluginInfo {
   /** overdrive/distortion recognised by a drive control or its category */
   distortion?: { roles: string[]; renders: number; signalSeconds: number };
   /** delay/echo recognised by its category, name or controls */
-  delay?: { roles: string[]; renders: number; signalSeconds: number };
+  /** survey: renders of the search for hidden switches before the plan (0 = no search) */
+  delay?: { roles: string[]; renders: number; signalSeconds: number; survey: number };
   /** reverb recognised by its category or name */
   reverb?: { renders: number; signalSeconds: number };
   genericRenders: number;

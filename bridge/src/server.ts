@@ -20,6 +20,7 @@ import {
   cloneDynamicsProfile,
   cloneReverbProfile,
   delayPlanner,
+  delaySurvey,
   delayVerdict,
   detectDelay,
   detectReverb,
@@ -447,11 +448,13 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
       }
     }
     const signalSeconds = (preset: "delay" | "reverb") => Math.round(generateTestSignal({ sampleRate: 1000, channels: 1, preset }).set.length / 1000);
-    let delay: { roles: string[]; renders: number; signalSeconds: number } | undefined;
+    let delay: { roles: string[]; renders: number; signalSeconds: number; survey: number } | undefined;
     if (effectClass === "delay") {
       try {
         const plan = planDelay(info.parameters, { ...DEFAULT_PLAN }, info.plugin.category, info.plugin.name);
-        delay = { roles: Object.keys(plan.mapping.roles), renders: plan.renders.length, signalSeconds: signalSeconds("delay") };
+        // renders of the search for hidden switches; every switch found adds renders to the plan
+        const survey = delaySurvey(info.parameters, { ...DEFAULT_PLAN }, info.plugin.category, info.plugin.name)?.renders.length ?? 0;
+        delay = { roles: Object.keys(plan.mapping.roles), renders: plan.renders.length, signalSeconds: signalSeconds("delay"), survey };
       } catch {
         delay = undefined;
       }
@@ -518,6 +521,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
         signal: ctx.signal,
         onProgress: (event) => {
           if (event.stage === "render") ctx.progress(event.done, event.total, event.id);
+          else if (event.stage === "step") ctx.progress(Math.min(event.done, event.total), event.total, CAPTURE_STEPS[event.step]);
           else if (event.stage === "begin") ctx.stage(event.step, CAPTURE_STEPS[event.step]);
           else if (event.stage === "plan") ctx.stage("render", "Einstellungen messen");
           else if (event.stage === "repeat") isolated = !event.repeatable;

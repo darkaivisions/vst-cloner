@@ -183,7 +183,7 @@ vst-cloner/
    - Anzeigen für die Messung ✔ – Vorstufen im Fortschritt (Wiederholbarkeit, Arbeitspunkt, Schaltersuche), Hinweise
      „nicht wiederholbar“ und „als Schalter erkannt“, EQ-Plakette für grafische EQs/feste Formen/Bandgruppen,
      Ergebniszeile „mehrere Bänder zugleich“; im Fenster geprüft mit ZamGEQ31 und Tal-Dub-3
-   - Offen: Zähler während der Schaltersuche; Hinweistext nennt die Zahl der Einstellungen vor der Schaltersuche
+   - Vorab-Messungen werden mitgezählt; der Delay-Hinweis nennt die Schaltersuche und „mindestens n Einstellungen“ ✔
    - **4b Oberflächen-Nachbau** (läuft) – Wiggle-Test, OCR, Nadeln, Pegelbalken, Schalter-Erkennung;
      74–82 % Struktur-, 95–98 % Farbähnlichkeit an vier Plugins
      - Offen: XY-Punkte, farbige Vollringe um Regler, Regler mit Verlauf und kleinem Zeiger (DS1), Skalen der
