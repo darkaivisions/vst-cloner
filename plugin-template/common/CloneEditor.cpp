@@ -56,8 +56,10 @@ namespace
             setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
             setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
             const auto& r = control.rotary;
-            const float offset = r.start < 0 ? juce::MathConstants<float>::twoPi : 0.0f;
-            setRotaryParameters (r.start + offset, std::max (r.end + offset, r.start + offset + 0.1f), true);
+            // (only for JUCE's bookkeeping: the knob is painted below, also when it turns anticlockwise)
+            const float lo = std::min (r.start, r.end), hi = std::max (r.start, r.end);
+            const float offset = lo < 0 ? juce::MathConstants<float>::twoPi : 0.0f;
+            setRotaryParameters (lo + offset, std::max (hi + offset, lo + offset + 0.1f), true);
             setVelocityBasedMode (false);
             setMouseDragSensitivity (220);
         }
@@ -82,14 +84,15 @@ namespace
                 auto arc = [&] (float from, float to, juce::Colour c)
                 {
                     juce::Path p;
-                    p.addCentredArc (cx, cy, r.arcRadius, r.arcRadius, 0.0f, from, to, true);
+                    p.addCentredArc (cx, cy, r.arcRadius, r.arcRadius, 0.0f, std::min (from, to), std::max (from, to), true);
                     g.setColour (c);
                     g.strokePath (p, juce::PathStrokeType (r.arcWidth, juce::PathStrokeType::curved, juce::PathStrokeType::butt));
                 };
                 if (r.hasTrack)
                     arc (r.start, r.end, colour (r.track));
-                if (value > 0.001f)
-                    arc (r.start, angle, colour (r.arcColor));
+                const float from = r.start + r.arcOrigin * (r.end - r.start);
+                if (std::abs (angle - from) > 0.01f)
+                    arc (from, angle, colour (r.arcColor));
             }
 
             const auto body = juce::Rectangle<float> (cx - r.radius, cy - r.radius, r.radius * 2, r.radius * 2);

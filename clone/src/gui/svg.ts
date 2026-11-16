@@ -74,6 +74,9 @@ function polar(cx: number, cy: number, r: number, a: number): [number, number] {
 }
 
 function arcPath(cx: number, cy: number, r: number, a0: number, a1: number): string {
+  // either direction; a full circle as two halves (one SVG arc cannot end where it starts)
+  if (a1 < a0) [a0, a1] = [a1, a0];
+  if (a1 - a0 >= Math.PI * 1.99) return `${arcPath(cx, cy, r, a0, a0 + Math.PI)} ${arcPath(cx, cy, r, a0 + Math.PI, a1)}`;
   const [x0, y0] = polar(cx, cy, r, a0);
   const [x1, y1] = polar(cx, cy, r, a1);
   return `M${x0} ${y0} A${r} ${r} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${x1} ${y1}`;
@@ -100,7 +103,8 @@ function renderControl(c: Control, value: number, fill: (f: Fill) => string): st
     }
     if (s.arc) {
       if (s.arc.track) parts.push(`<path d="${arcPath(s.cx, s.cy, s.arc.radius, s.startAngle, s.endAngle)}" stroke="${s.arc.track}" stroke-width="${s.arc.width}" fill="none"/>`);
-      if (value > 0.001) parts.push(`<path d="${arcPath(s.cx, s.cy, s.arc.radius, s.startAngle, angle)}" stroke="${s.arc.color}" stroke-width="${s.arc.width}" fill="none"/>`);
+      const from = s.startAngle + (s.arc.origin ?? 0) * (s.endAngle - s.startAngle);
+      if (Math.abs(angle - from) > 0.01) parts.push(`<path d="${arcPath(s.cx, s.cy, s.arc.radius, from, angle)}" stroke="${s.arc.color}" stroke-width="${s.arc.width}" fill="none"/>`);
     }
     parts.push(`<circle cx="${s.cx}" cy="${s.cy}" r="${s.radius}" fill="${fill(s.body)}"${s.outline ? ` stroke="${s.outline}" stroke-width="1.5"` : ""}/>`);
     if (s.pointerDot) {

@@ -312,36 +312,107 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
     return Math.hypot(sx, sy) > radius * 0.1 ? angleOf(sx, sy) : undefined;
   };
 
-  let startAngle = pointerAngle(first) ?? (-135 * Math.PI) / 180;
-  let endAngle = pointerAngle(last) ?? (135 * Math.PI) / 180;
-  if (endAngle <= startAngle) endAngle += TAU;
-  if (endAngle - startAngle > TAU * 0.95 || endAngle - startAngle < 0.5) {
-    startAngle = (-135 * Math.PI) / 180;
-    endAngle = (135 * Math.PI) / 180;
+  // Travel: the pointer followed through all positions, so that knobs turning anticlockwise or all the way round
+  // (start and end in the same place) are told apart from a pointer that did not move.
+  let startAngle = (-135 * Math.PI) / 180;
+  let endAngle = (135 * Math.PI) / 180;
+  const angles = indicator.map(pointerAngle);
+  const steps: number[] = [];
+  for (let i = 1, prev = angles[0]; i < angles.length; i++) {
+    const a = angles[i];
+    if (a === undefined || prev === undefined) {
+      prev = a ?? prev;
+      continue;
+    }
+    steps.push(Math.atan2(Math.sin(a - prev), Math.cos(a - prev)));
+    prev = a;
   }
+  const travel = steps.reduce((x, y) => x + y, 0);
+  const oneWay = steps.filter((d) => Math.abs(d) > 0.05).every((d) => Math.sign(d) === Math.sign(travel));
+  const firstAngle = angles.find((a) => a !== undefined);
+  if (firstAngle !== undefined && angles[0] !== undefined && angles[angles.length - 1] !== undefined && oneWay && Math.abs(travel) >= 0.5) {
+    startAngle = firstAngle;
+    endAngle = startAngle + Math.sign(travel) * Math.min(TAU, Math.abs(travel));
+  } else {
+    // the end positions alone (old behaviour: clockwise, less than a full turn)
+    const s0 = pointerAngle(first), e0 = pointerAngle(last);
+    if (s0 !== undefined && e0 !== undefined) {
+      const e = e0 <= s0 ? e0 + TAU : e0;
+      if (e - s0 <= TAU * 0.95 && e - s0 >= 0.5) {
+        startAngle = s0;
+        endAngle = e;
+      }
+    }
+  }
+  const span = endAngle - startAngle;
+  /** position of an angle along the travel, 0 at the start, 1 at the end */
+  const along = (a: number) => {
+    let t = (a - startAngle) * Math.sign(span);
+    t = ((t % TAU) + TAU) % TAU;
+    return t / Math.abs(span);
+  };
+  const atAlong = (u: number) => startAngle + u * span;
 
-  // value arc: compare the highest value with value 0 (the arc is empty there)
+  // value arc: compare the highest value with value 0 (between them every part of the arc changes, whether it
+  // grows from the start or from a centre position)
   let arc: RotaryStyle["arc"];
   const arcSearch = clampBox(grow(main, Math.round(radius * 0.6)), median);
   const arcPoints = maskPoints(diffMask(frames[frames.length - 1]!, frames[0]!, 30, noise), width, arcSearch)
     .filter((p) => dist(p) > radius * 0.85 && dist(p) < radius * 1.7);
-  const arcAngles = arcPoints.map((p) => angleOf(p[0] - cx, p[1] - cy));
-  const bins = new Set(arcAngles.map((a) => {
-    let t = a;
-    while (t < startAngle) t += TAU;
-    return Math.floor(((t - startAngle) / Math.max(0.1, endAngle - startAngle)) * 24);
-  }).filter((b) => b >= 0 && b < 24));
+  const bins = new Set(arcPoints.map((p) => Math.floor(along(angleOf(p[0] - cx, p[1] - cy)) * 24)).filter((b) => b >= 0 && b < 24));
   if (arcPoints.length > 20 && bins.size >= 16) {
     const d = arcPoints.map(dist);
     const arcRadius = percentile(d, 0.5);
-    const midAngle = (startAngle + endAngle) / 2;
-    const trackPoint: [number, number] = [Math.round(cx + Math.sin(midAngle) * arcRadius), Math.round(cy - Math.cos(midAngle) * arcRadius)];
-    const trackColor = pixel(frames[0]!, Math.min(width - 1, Math.max(0, trackPoint[0])), Math.min(median.height - 1, Math.max(0, trackPoint[1])));
+    // in each changed pixel one of the two frames shows the arc, the other the track: the arc is the one that
+    // stands out more from the surroundings
+    const far = ringMedian(median, cx, cy, radius * 1.8);
+    const lit: Rgb[] = [], unlit: Rgb[] = [];
+    for (const [x, y] of arcPoints) {
+      const c0 = pixel(frames[0]!, x, y), c1 = pixel(frames[frames.length - 1]!, x, y);
+      const [on, off] = colorDistance(c0, far) > colorDistance(c1, far) ? [c0, c1] : [c1, c0];
+      lit.push(on);
+      unlit.push(off);
+    }
+    const mid = (cs: Rgb[]): Rgb => [0, 1, 2].map((i) => percentile(cs.map((c) => c[i]!), 0.5)) as Rgb;
+    const arcColor = mid(lit), trackColor = mid(unlit);
+
+    // Where the arc starts: in every position it reaches from there to the pointer. Its length and middle in
+    // each frame give that point; a value 0 that lights nothing means the start of the travel.
+    const samples = 96;
+    const full = Math.abs(span) > TAU * 0.9;
+    const origins: number[] = [];
+    frames.forEach((f, i) => {
+      const t = fp.param.frames[i]?.value;
+      if (t === undefined) return;
+      const covered: number[] = [];
+      for (let k = 0; k < samples; k++) {
+        const u = (k + 0.5) / samples;
+        // (all the way round, the start and the end are the same place: leave out the seam)
+        if (full && (u < 0.03 || u > 0.97)) continue;
+        const a = atAlong(u);
+        const x = Math.round(cx + Math.sin(a) * arcRadius), y = Math.round(cy - Math.cos(a) * arcRadius);
+        if (x < 0 || y < 0 || x >= width || y >= median.height) continue;
+        const c = pixel(f, x, y);
+        if (colorDistance(c, arcColor) < colorDistance(c, trackColor) && colorDistance(c, arcColor) < 60) covered.push(u);
+      }
+      const len = covered.length / samples;
+      if (len < 0.05) return;
+      const m = covered.reduce((x, y) => x + y, 0) / covered.length;
+      const candidates = [t - len, t + len].filter((o) => o > -0.08 && o < 1.08);
+      if (!candidates.length) return;
+      origins.push(candidates.sort((p, q) => Math.abs((p + t) / 2 - m) - Math.abs((q + t) / 2 - m))[0]!);
+    });
+    let origin = origins.length >= 2 ? Math.max(0, Math.min(1, percentile(origins, 0.5))) : 0;
+    // the zero of a ± range is mostly the middle or the plugin's default
+    for (const snap of [0.5, fp.value]) if (Math.abs(origin - snap) < 0.025) origin = snap;
+    if (process.env.VCH_GUI_DEBUG) console.error(`arc ${fp.param.name}: start ${startAngle.toFixed(2)} end ${endAngle.toFixed(2)} origins ${origins.map((o) => o.toFixed(2)).join(" ")} → ${origin.toFixed(2)}`);
+
     arc = {
-      color: hex(dominantAt(frames[frames.length - 1]!, arcPoints)),
+      color: hex(arcColor),
       radius: arcRadius,
       width: Math.max(1.5, percentile(d, 0.9) - percentile(d, 0.1) + 1),
-      ...(colorDistance(trackColor, ringMedian(median, cx, cy, radius * 1.8)) > 25 ? { track: hex(trackColor) } : {}),
+      ...(colorDistance(trackColor, far) > 25 ? { track: hex(trackColor) } : {}),
+      ...(origin > 0.04 ? { origin: Math.round(origin * 1000) / 1000 } : {}),
     };
   }
 
@@ -349,7 +420,14 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
   const middleDistances = middle.map(dist);
   const inner = middleDistances.length ? percentile(middleDistances, 0.05) / radius : 0.3;
   const outer = middleDistances.length ? percentile(middleDistances, 0.95) / radius : 0.9;
-  const pointerColor = middle.length ? dominantAt(frames[indicator.length >> 1]!, middle) : luminance(centre) > 128 ? [30, 30, 30] as Rgb : [235, 235, 235] as Rgb;
+  // pointer colour: of the pointer pixels in all positions, those that stand out most from the body (a thin line
+  // between two pixel rows leaves only blends in the most common colour)
+  const pointerPixels = indicator.flatMap((pts, i) => pointerOf(pts).map(([x, y]) => pixel(frames[i]!, x, y)))
+    .sort((a, b) => colorDistance(b, centre) - colorDistance(a, centre));
+  const strongest = pointerPixels.slice(0, Math.max(1, Math.round(pointerPixels.length * 0.25)));
+  const pointerColor: Rgb = strongest.length && pointerPixels.length >= 3
+    ? [0, 1, 2].map((i) => percentile(strongest.map((c) => c[i]!), 0.5)) as Rgb
+    : luminance(centre) > 128 ? [30, 30, 30] : [235, 235, 235];
   const length = Math.max(1, (outer - inner) * radius);
   // a short line pointing outwards is longer along the radius than across it; a dot is as wide as long
   const middleAngles = middle.map((p) => angleOf(p[0] - cx, p[1] - cy));

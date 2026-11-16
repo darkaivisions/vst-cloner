@@ -23,6 +23,7 @@ struct Rotary
     bool hasOutline; uint32_t outline;
     uint32_t pointer; float pointerInner, pointerOuter, pointerWidth; bool dot;
     bool hasArc; uint32_t arcColor; float arcRadius, arcWidth; bool hasTrack; uint32_t track;
+    float arcOrigin;   // where the value arc starts, 0…1 of the travel (0.5: centre position)
     Ticks ticks;
     bool hasCap; float capRadius; uint32_t cap;   // small disc on the axis
 };

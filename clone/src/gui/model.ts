@@ -55,7 +55,7 @@ export interface RotaryStyle {
   cy: number;
   /** radius of the knob body */
   radius: number;
-  /** angles in radians, clockwise from 12 o'clock */
+  /** angles in radians, clockwise from 12 o'clock; endAngle < startAngle for a knob turning anticlockwise */
   startAngle: number;
   endAngle: number;
   body: Fill;
@@ -66,7 +66,8 @@ export interface RotaryStyle {
   pointerOuter: number;
   pointerWidth: number;
   pointerDot: boolean;
-  arc?: { color: string; radius: number; width: number; track?: string };
+  /** value arc; `origin` (0…1 of the travel) where it starts when that is not the start, e.g. 0.5 for ±values */
+  arc?: { color: string; radius: number; width: number; track?: string; origin?: number };
   ticks?: { angles: number[]; inner: number; outer: number; color: string; width: number };
   /** a small disc of its own colour on the axis (radius in pixels) */
   cap?: { radius: number; color: string };
