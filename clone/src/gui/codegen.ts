@@ -80,8 +80,9 @@ export function generateGuiHeader(gui: GuiModel | undefined, params: CloneParam[
       ? `{ ${f(r.cx)}, ${f(r.cy)}, ${f(r.radius)}, ${f(r.startAngle)}, ${f(r.endAngle)}, ${fill(r.body)}, ${r.outline ? "true" : "false"}, ${argb(r.outline)}, ` +
         `${argb(r.pointer)}, ${f(r.pointerInner)}, ${f(r.pointerOuter)}, ${f(r.pointerWidth)}, ${r.pointerDot}, ` +
         `${r.arc ? "true" : "false"}, ${argb(r.arc?.color)}, ${f(r.arc?.radius ?? 0)}, ${f(r.arc?.width ?? 0)}, ${r.arc?.track ? "true" : "false"}, ${argb(r.arc?.track)}, ` +
-        `{ ${r.ticks ? r.ticks.angles.length : 0}, ${r.ticks ? `ticks${i}` : "nullptr"}, ${f(r.ticks?.inner ?? 0)}, ${f(r.ticks?.outer ?? 0)}, ${f(r.ticks?.width ?? 1)}, ${argb(r.ticks?.color)} } }`
-      : `{ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, { 0u, 0u, false }, false, 0u, 0u, 0.0f, 0.0f, 0.0f, false, false, 0u, 0.0f, 0.0f, false, 0u, { 0, nullptr, 0.0f, 0.0f, 0.0f, 0u } }`;
+        `{ ${r.ticks ? r.ticks.angles.length : 0}, ${r.ticks ? `ticks${i}` : "nullptr"}, ${f(r.ticks?.inner ?? 0)}, ${f(r.ticks?.outer ?? 0)}, ${f(r.ticks?.width ?? 1)}, ${argb(r.ticks?.color)} }, ` +
+        `${r.cap ? "true" : "false"}, ${f(r.cap?.radius ?? 0)}, ${argb(r.cap?.color)} }`
+      : `{ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, { 0u, 0u, false }, false, 0u, 0u, 0.0f, 0.0f, 0.0f, false, false, 0u, 0.0f, 0.0f, false, 0u, { 0, nullptr, 0.0f, 0.0f, 0.0f, 0u }, false, 0.0f, 0u }`;
     const [c1, c2, f1] = c.slider
       ? [c.slider.track, c.slider.thumb, c.slider.thumbSize]
       : c.toggle

@@ -461,9 +461,24 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
     }
   }
 
+  // A cap on the axis: a small disc that stands out from the body and does not turn (it is there in the still
+  // image). A pointer that starts at the axis would look the same, so the pointer has to begin outside of it.
+  let cap: RotaryStyle["cap"];
+  const capColor = ringMedian(median, cx, cy, 0.5);
+  if (colorDistance(capColor, centre) > 60) {
+    let capRadius = 0;
+    for (let r = 1; r <= radius * 0.35; r += 0.5) {
+      if (colorDistance(ringMedian(median, cx, cy, r), capColor) > 40) break;
+      capRadius = r;
+    }
+    capRadius += 0.5;
+    if (capRadius >= 1.5 && capRadius <= radius * 0.3 && inner * radius > capRadius + 1) cap = { radius: capRadius, color: hex(capColor) };
+  }
+
   return {
     cx, cy, radius, startAngle, endAngle, body,
     ...(outline ? { outline } : {}),
+    ...(cap ? { cap } : {}),
     pointer: hex(pointerColor),
     pointerInner: Math.max(0, Math.min(1, inner)),
     pointerOuter: Math.max(0.2, Math.min(1.05, outer)),

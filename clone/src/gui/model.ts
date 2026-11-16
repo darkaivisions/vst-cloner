@@ -68,6 +68,8 @@ export interface RotaryStyle {
   pointerDot: boolean;
   arc?: { color: string; radius: number; width: number; track?: string };
   ticks?: { angles: number[]; inner: number; outer: number; color: string; width: number };
+  /** a small disc of its own colour on the axis (radius in pixels) */
+  cap?: { radius: number; color: string };
 }
 
 export interface SliderStyle {

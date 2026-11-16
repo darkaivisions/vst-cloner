@@ -24,6 +24,7 @@ struct Rotary
     uint32_t pointer; float pointerInner, pointerOuter, pointerWidth; bool dot;
     bool hasArc; uint32_t arcColor; float arcRadius, arcWidth; bool hasTrack; uint32_t track;
     Ticks ticks;
+    bool hasCap; float capRadius; uint32_t cap;   // small disc on the axis
 };
 
 struct Readout

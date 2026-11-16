@@ -111,6 +111,7 @@ function renderControl(c: Control, value: number, fill: (f: Fill) => string): st
       const [x1, y1] = polar(s.cx, s.cy, s.radius * s.pointerOuter, angle);
       parts.push(`<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="${s.pointer}" stroke-width="${s.pointerWidth}" stroke-linecap="round"/>`);
     }
+    if (s.cap) parts.push(`<circle cx="${s.cx}" cy="${s.cy}" r="${s.cap.radius}" fill="${s.cap.color}"/>`);
   } else if ((c.kind === "slider-h" || c.kind === "slider-v") && c.slider) {
     const s = c.slider;
     parts.push(`<rect x="${c.x}" y="${c.y}" width="${c.w}" height="${c.h}" fill="${s.track}" rx="${Math.min(c.w, c.h) / 2}"/>`);

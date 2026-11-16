@@ -115,6 +115,12 @@ namespace
                 p.lineTo (polar (cx, cy, r.radius * r.pointerOuter, angle));
                 g.strokePath (p, juce::PathStrokeType (r.pointerWidth, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             }
+
+            if (r.hasCap)
+            {
+                g.setColour (colour (r.cap));
+                g.fillEllipse (cx - r.capRadius, cy - r.capRadius, r.capRadius * 2, r.capRadius * 2);
+            }
         }
 
         bool hitTest (int x, int y) override
