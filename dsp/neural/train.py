@@ -168,6 +168,38 @@ def batches(renders, channels, window, warmup, batch, rng):
     return (np.stack(xs)[:, :, None], np.stack(ys)[:, :, None], np.stack(cs), np.array(ps, dtype=np.float32))
 
 
+class Streams:
+    """
+    Truncated backpropagation through time: every lane plays one render (one channel) from its start to its end in
+    consecutive chunks, and the network's state is carried from chunk to chunk (gradients stop at the chunk
+    border). The network so learns what happens over whole renders – a compressor's release, a filter ringing out –
+    not only within a short window. A lane that reaches the end of its render starts the next one from silence,
+    with a cleared state, exactly as the plugin starts after a reset.
+    """
+
+    def __init__(self, renders, channels, lanes, window, rng):
+        self.renders, self.channels, self.window, self.rng = renders, channels, window, rng
+        self.lanes = [self._new() for _ in range(lanes)]
+
+    def _new(self):
+        return {"render": self.renders[self.rng.randrange(len(self.renders))], "channel": self.rng.randrange(self.channels), "pos": 0}
+
+    def next(self):
+        """(x, y, cond, power, fresh) for the next chunk of every lane; fresh marks lanes whose state starts empty"""
+        xs, ys, cs, ps, fresh = [], [], [], [], []
+        for i, lane in enumerate(self.lanes):
+            if lane["pos"] + self.window > lane["render"]["x"].shape[0]:
+                lane = self.lanes[i] = self._new()
+            r, start = lane["render"], lane["pos"]
+            fresh.append(start == 0)
+            xs.append(r["x"][start:start + self.window])
+            ys.append(r["y"][start:start + self.window, lane["channel"]])
+            cs.append(r["cond"])
+            ps.append(r["power"])
+            lane["pos"] += self.window
+        return (np.stack(xs)[:, :, None], np.stack(ys)[:, :, None], np.stack(cs), np.array(ps, dtype=np.float32), np.array(fresh))
+
+
 @torch.no_grad()
 def evaluate(model, renders, device, channels):
     """ESR over whole renders (all channels), processed in chunks with the state carried on."""
@@ -235,6 +267,7 @@ def main():
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--lr", type=float, default=2e-3)
     parser.add_argument("--stft", type=float, default=0.0, help="weight of the multi-resolution STFT loss")
+    parser.add_argument("--mode", default="windows", help="stream: whole renders in consecutive chunks (state carried); windows: random short windows")
     parser.add_argument("--film", type=int, default=1, help="0: knobs only as extra inputs (no FiLM)")
     parser.add_argument("--loss", default="render", help="render: ESR per render power; batch: ESR over the batch")
     args = parser.parse_args()
@@ -259,6 +292,8 @@ def main():
     # last state with a finite loss, and a factor on the learning rate that halves after every divergence
     good_state, lr_scale, resets = {k: v.detach().clone() for k, v in model.state_dict().items()}, 1.0, 0
     total = args.steps or None
+    streams = Streams(train, channels, args.batch, args.window // 2, rng) if args.mode == "stream" else None
+    state = None
     while True:
         elapsed = time.time() - started
         if (total and step >= total) or (not total and elapsed >= budget):
@@ -267,10 +302,20 @@ def main():
         progress = step / total if total else elapsed / budget
         for group in optimiser.param_groups:
             group["lr"] = lr_scale * args.lr * (0.05 + 0.95 * 0.5 * (1 + math.cos(math.pi * min(1.0, progress))))
-        x, y, c, power = batches(train, channels, args.window, args.warmup, args.batch, rng)
-        x, y, c, power = (torch.from_numpy(a).to(device) for a in (x, y, c, power))
-        pred, _ = model(x, c)
-        p, t = pred[:, args.warmup:], y[:, args.warmup:]
+        if streams is not None:
+            x, y, c, power, fresh = streams.next()
+            x, y, c, power = (torch.from_numpy(a).to(device) for a in (x, y, c, power))
+            if state is not None:
+                # lanes that start a new render begin with an empty state; the rest continue (without gradients)
+                keep = torch.from_numpy(~fresh).to(device).float()[None, :, None]
+                state = tuple((s * keep).detach() for s in state)
+            pred, state = model(x, c, state)
+            p, t = pred, y
+        else:
+            x, y, c, power = batches(train, channels, args.window, args.warmup, args.batch, rng)
+            x, y, c, power = (torch.from_numpy(a).to(device) for a in (x, y, c, power))
+            pred, _ = model(x, c)
+            p, t = pred[:, args.warmup:], y[:, args.warmup:]
         base = esr(p, t, power) if args.loss == "render" else ((emphasis(p) - emphasis(t)) ** 2).sum() / ((emphasis(t) ** 2).sum() + 1e-8)
         loss = base + (args.stft * stft_loss(p[..., 0], t[..., 0]) if args.stft > 0 else 0.0)
         if not torch.isfinite(loss):
@@ -280,6 +325,7 @@ def main():
                 raise RuntimeError("training keeps diverging")
             model.load_state_dict(good_state)
             optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
+            state = None
             lr_scale *= 0.5
             emit("info", message=f"step {step}: training diverged, continuing from the last good state with a lower learning rate")
             continue

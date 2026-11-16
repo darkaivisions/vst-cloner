@@ -59,10 +59,13 @@ Windows PC (plugin licensed)           Linux PC
   deterministic fit in TypeScript (worker threads) and a C++/JUCE engine that computes sample-exactly like the
   TypeScript reference and receives the model as a data file. Fast (seconds to a few minutes),
   without an LLM, reproducible. Covers EQ, dynamics, distortion, delay and reverb.
-- **Path B – builder agent (planned, milestone 7):** an agent writes Faust code from `spec.md` and the
-  measurements and improves it in a loop. For everything no fixed engine covers – plugins without a
-  class, multiband compressors, dynamic EQs, multi-effects – and as a follow-up when path A only
-  delivers "inaccurate".
+- **Path B – universal clone (built, milestone 7):** for every plugin, whatever it is: a recurrent network
+  conditioned on all controls (LSTM + FiLM) is trained with PyTorch on the GPU from measurements in which all
+  controls are set at random, and runs in a C++ template that matches the PyTorch model exactly. Covers what no
+  fixed engine covers – plugins without a class, multiband compressors, dynamic EQs, filters, bitcrushers,
+  multi-effects – and is the fallback when path A only delivers "inaccurate".
+- **Path C – builder agent (later):** an agent writes Faust code from `spec.md` and the measurements and
+  improves it in a loop – readable, editable DSP where a network is not wanted.
 
 ### Components
 - **UI:** Tauri v2 (`apps/desktop`): clone, library, AI models, live log.
@@ -104,7 +107,7 @@ nothing, the LLM will decide later (milestone 7).
 | Delay / echo | impulse with long silence, noise burst | delay line with feedback, low-/high-pass in the loop and in the wet path | first version |
 | Reverb | impulse and decay | FDN behind a pre-delay; level and decay time in three bands | first version |
 | Modulation (chorus, flanger, phaser, tremolo) | long sweeps, LFO detection | – | open (6b) |
-| everything else | general measurement plan | path B (Faust) | open (7) |
+| everything else | universal plan: all controls at random, noise/sweeps/level steps/burst/impulse | path B: conditioned LSTM (FiLM), trained on the GPU | ✔ first version – GxBoss DS1 3.8 % error on unseen combinations, MaBitcrush 10 % |
 
 - **Parameter grid:** single-parameter sweeps + random combinations as a cross-check; per control a table
   onto the model values (PCHIP), interactions (e.g. automatic make-up) as terms of their own.
@@ -235,8 +238,19 @@ vst-cloner/
        MultiEQ (0.3 dB), ZamEQ2 (NaN in the capture host), EQs with controls without a dB display (Luftikus, EQinox) and
        crossover EQs (3 Band EQ) get no class
    - **6b Modulation** – chorus, flanger, phaser, tremolo
-7. **Builder agent (path B)** – Faust loop, analyst agent with REA and `spec.md`, clean-room separation,
-   classification by the LLM for plugins without a class
+7. **Universal clone (path B)** ← in progress – first version in CLI and app ✔
+   - Capture plan `neural`, training (`dsp/neural/train.py`, PyTorch, CUDA), C++ template with the same network
+     (~5 % of a core per channel), sample-rate adapter (other host rates, anti-alias filters, latency reported),
+     verification by error-to-signal ratio, training environment set up from the app or `vch neural-setup`
+   - Training recipe found by ablation on GxBoss DS1: 64 units, FiLM conditioning (validation error 0.16 instead of 0.30
+     without), ESR normalised per render, no log-spectral loss term (it made training diverge), dry path
+     initialised to pass the input; a plan with all controls at random cut the error on unseen combinations
+     from 16 % to 3.8 %
+   - Open: long memory (reverb tails, long delays) and LFO modulation; stereo effects that treat the channels
+     differently (one network for both channels now); plugins with more than 24 controls; hard staircase
+     non-linearities (bitcrusher at few bits); AVX for a lower CPU load; editor reconstruction is shared with
+     the class clones
+   - Later: builder agent (Faust loop, analyst agent with REA and `spec.md`, clean-room separation)
 8. **yabridge check** – the app first checks whether the original runs via yabridge
 9. **Distribution** – installer, updates, profile library, CLAP, check the Windows build
 
@@ -249,6 +263,8 @@ vst-cloner/
 - **Reverb as an FDN in C++** instead of convolution or Faust.
 - **Class-specific metrics in dB** instead of ESR/MR-STFT; those remain for path B.
 - **Batch run** and **editor reconstruction** were not planned and were added.
+- **Universal clone as a neural network** instead of an LLM writing Faust code: it works for any plugin without
+  knowing what it is, and its quality is measured the same way for all.
 - Delay and reverb were started before amps/NAM.
 
 ## Risks / expectations
@@ -256,7 +272,8 @@ vst-cloner/
 - Inaccurate with the current distortion model: fuzz with strong level dependence, bitcrushers, amps with several stages.
 - Usable, but not yet faithful across all control combinations: delays, reverbs.
 - Only approximated: strongly time-variant/random effects, complex multi-effects.
-- Only with path B: multiband compressors, dynamic EQs, plugins without a class.
+- Only with path B (universal clone): multiband compressors, dynamic EQs, plugins without a class – as exact as
+  the network can learn them; long memory and modulation remain hard.
 - Misclassification leads to clones with the wrong model; the rating catches this only partly.
 - The GUI is rebuilt as a layout (shapes, colours, controls), not pixel-exact; graphics of the original are not taken over.
 - NAM training without a GPU is slow (minutes to hours per model).

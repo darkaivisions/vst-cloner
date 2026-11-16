@@ -17,6 +17,14 @@
 #include <array>
 #include <cmath>
 
+// The per-sample step is compiled twice on Linux (GCC/Clang): with AVX2 and for any x86-64 CPU; the loader picks
+// the AVX2 version where the CPU has it (2.2 % instead of 4.6 % of a core per channel at 64 units).
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__) && defined(__linux__)
+ #define VCH_MULTIVERSION __attribute__ ((target_clones ("avx2", "default")))
+#else
+ #define VCH_MULTIVERSION
+#endif
+
 namespace vch
 {
     constexpr int H = clonemodel::hidden;
@@ -98,17 +106,20 @@ namespace vch
             c.fill (0.0f);
         }
 
-        float process (float x, const NeuralConditions& k)
+        float process (float x, const NeuralConditions& k) { return step (h.data(), c.data(), gates.data(), x, k); }
+
+    private:
+        // (the three arrays never overlap – __restrict lets the loops vectorise without overlap checks)
+        static VCH_MULTIVERSION float step (float* __restrict h, float* __restrict c, float* __restrict g, float x, const NeuralConditions& k)
         {
             using namespace clonemodel;
-            float* g = gates.data();
             for (int j = 0; j < 4 * H; ++j)
                 g[j] = k.gateBias[(size_t) j] + lstmWx[j] * x;
             // gates += U·h as a sum of columns: every inner loop runs over contiguous gate rows and vectorises
             // (a dot product per gate would not – the compiler may not reorder its additions)
             for (int i = 0; i < H; ++i)
             {
-                const float hi = h[(size_t) i];
+                const float hi = h[i];
                 const float* u = lstmU + i * 4 * H;
                 for (int j = 0; j < 4 * H; ++j)
                     g[j] += u[j] * hi;
@@ -120,9 +131,9 @@ namespace vch
                 const float forget = fastSigmoid (g[H + i]);
                 const float cell = fastTanh (g[2 * H + i]);
                 const float out = fastSigmoid (g[3 * H + i]);
-                c[(size_t) i] = forget * c[(size_t) i] + in * cell;
-                h[(size_t) i] = out * fastTanh (c[(size_t) i]);
-                y += k.outWeight[(size_t) i] * h[(size_t) i];
+                c[i] = forget * c[i] + in * cell;
+                h[i] = out * fastTanh (c[i]);
+                y += k.outWeight[(size_t) i] * h[i];
             }
             return y;
         }

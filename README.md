@@ -12,7 +12,8 @@ Overall plan and milestones: [PLAN.md](PLAN.md) · Profile format: [docs/profile
 Clones (VST3/LV2) exist for **parametric EQs**, **compressors/limiters**, **gates/expanders** and
 **distortions** (overdrive/distortion), each with a rebuilt editor of the original.
 **Delays** and **reverbs** can be cloned in a first version (no rebuilt editor yet).
-Amp simulations with NAM, modulation effects and the builder agent (Faust) for all other plugins will follow.
+**Any other plugin** becomes a **universal clone**: a neural network, conditioned on all of its controls, is trained
+on the GPU from the measurements (see below). Modulation effects, long reverb tails and long delays are its weak spots.
 Tested on Linux with native VST3/LV2 plugins and Windows plugins via yabridge.
 
 | Clone | Original | Deviation | Editor |
@@ -169,6 +170,33 @@ it changes (for the DS1: LEVEL only the output, TONE the post-filter, DRIVE the 
 runs in parallel worker threads (~2 min). The latency of the original is measured and reproduced. The
 plugin (`plugin-template/distortion`) computes sample-exactly like the TypeScript model.
 
+### Cloning any plugin (universal clone)
+
+```bash
+npm run vch -- neural-setup                      # once: Python environment with PyTorch (~3 GB)
+npm run vch -- capture ~/.vst3/Anything.vst3 --class neural --tail 0.5 -o anything.vcprofile
+npm run vch -- clone anything.vcprofile -o ./anything-clone --minutes 10
+```
+
+The universal clone does not need to know what the plugin is. The measurement sets **all controls at random**
+in every setting (64–160 settings depending on the number of controls, plus 16 of their own as a cross-check)
+and plays a ~7 s test signal through each: noise at four levels, a quiet and a loud sweep, level steps, a tone
+burst and an impulse. From that, a recurrent network (LSTM with 64 units) learns how the plugin turns its input
+into its output at every setting: the controls enter as inputs and, through a small second network (FiLM), scale
+and shift what the LSTM computes – a level or drive control acts multiplicatively, which a plain extra input learns
+badly. Training runs with PyTorch on the graphics card (CUDA) or, slower, on the CPU; `--minutes` sets the time.
+
+The plugin (`plugin-template/neural`) computes the same network in plain C++ (about 5 % of a CPU core per
+channel) and matches the PyTorch model exactly. At other host sample rates it converts to the trained rate and
+back (with anti-alias filters above it) and reports the latency. The comparison with the original is the
+error-to-signal ratio over all settings: the energy of the difference against the energy of the original.
+
+In the app, **Universal** is the measurement mode for every plugin without a known effect class; the training
+environment can be set up from there. Known limits: effects with a long memory (reverb tails, delays above a few
+hundred milliseconds) and time-variant effects (LFO modulation) are beyond a network of this size; stereo effects
+that treat the channels differently are cloned as mono (one network for both channels); at most 24 controls are
+followed, the rest stay at their default.
+
 ### Gates and expanders
 
 Gates, expanders and duckers use the same measurement and the same command as compressors; the fit
@@ -285,6 +313,7 @@ agent/     LLM providers (Vercel AI SDK), models.dev catalogue, keychain, capabi
 clone/     analysis, measurement plans, fits and code generators: eq/ (filter fit), dynamics/ (compressor model),
            distortion/ (Wiener-Hammerstein model, parallel fit), delay/ (delay line with feedback),
            reverb/ (feedback delay network), batch.ts (classification, batch run),
+           neural/ (universal clone: plan, training runner, code generation, verification),
            gui/ (editor analysis, text recognition), dsp/ (biquads, elliptic filters, optimisers);
            plugin build and comparison with the original
 plugin-template/
@@ -293,8 +322,10 @@ plugin-template/
            distortion/ C++/JUCE distortion engine (identical to clone/src/distortion/model.ts)
            delay/     C++/JUCE delay engine (identical to clone/src/delay/model.ts)
            reverb/    C++/JUCE reverb engine (identical to clone/src/reverb/model.ts)
+           neural/    the trained network in C++ (identical to dsp/neural/train.py), sample-rate adapter
            common/    parameters and rebuilt editor, shared by all templates
 host/      also vch-gui: opens plugin editors invisibly and takes screenshots
+dsp/neural/ train.py: trains the universal clone's network (PyTorch)
 bridge/    JSON-lines interface between the app and the packages (jobs, progress, log)
 apps/desktop/
            Tauri app: web UI (TypeScript) + Rust shell that starts the bridge

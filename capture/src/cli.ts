@@ -188,18 +188,20 @@ async function commandInfo(positionals: string[], values: Values): Promise<void>
 async function commandPlan(positionals: string[], values: Values): Promise<void> {
   const info = await pluginInfo(resolve(requirePositional(positionals, 0, "plugin path")), values.id ? { identifier: values.id } : {});
   const options = { ...planOptions(values), fixed: resolveFixedValues(info.parameters, values.set ?? []) };
-  const plan = planCaptures(info.parameters, { ...options, maxRenders: Number.MAX_SAFE_INTEGER });
+  // the plan of the chosen class (a planner's probe and survey, which need renders, are left out here)
+  const planner = await loadPlanner(values.class);
+  const plan = planner ? planner.plan(info, { ...options, maxRenders: Number.MAX_SAFE_INTEGER }) : planCaptures(info.parameters, { ...options, maxRenders: Number.MAX_SAFE_INTEGER });
   for (const f of options.fixed) {
     const p = info.parameters.find((x) => x.index === f.index)!;
     console.log(`Fixed: [${p.index}] ${p.name} = ${f.value}`);
   }
-  const signalSeconds = generateTestSignal({ sampleRate: 1000, channels: 1 }).set.length / 1000;
+  const signalSeconds = generateTestSignal({ sampleRate: 1000, channels: 1, ...(planner ? { preset: planner.signalPreset } : {}) }).set.length / 1000;
   const perRender = signalSeconds + number(values, "tail", 2) + number(values, "preroll", 0.5);
 
   console.log(`Measured parameters (${plan.selected.length} of ${info.parameters.length}):`);
   for (const p of plan.selected) {
     const sweeps = plan.renders.filter((r) => r.sweepParameter === p.index).length;
-    console.log(`  [${p.index}] ${p.name}: ${sweeps} sweep renders`);
+    console.log(`  [${p.index}] ${p.name}${sweeps ? `: ${sweeps} sweep renders` : ""}`);
   }
   console.log(`Renders: ${plan.renders.length} (limit ${options.maxRenders}), audio per render ≈ ${perRender.toFixed(1)} s`);
   if (plan.renders.length > options.maxRenders) console.log(new PlanTooLargeError(plan.renders.length, options.maxRenders).message);
