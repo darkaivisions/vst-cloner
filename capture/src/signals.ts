@@ -12,9 +12,9 @@ interface SegmentSpec {
   params?: Record<string, number>;
 }
 
-export type SignalPreset = "full" | "eq" | "dynamics" | "distortion" | "delay" | "reverb";
+export type SignalPreset = "full" | "eq" | "dynamics" | "distortion" | "delay" | "reverb" | "neural";
 
-export const SIGNAL_PRESETS: SignalPreset[] = ["full", "eq", "dynamics", "distortion", "delay", "reverb"];
+export const SIGNAL_PRESETS: SignalPreset[] = ["full", "eq", "dynamics", "distortion", "delay", "reverb", "neural"];
 
 /** Short sequence for linear, time-invariant effects (EQs, filters): impulse response + sweep as cross-check. */
 export function eqSegmentSpecs(sampleRate: number): SegmentSpec[] {
@@ -120,7 +120,31 @@ export function reverbSegmentSpecs(): SegmentSpec[] {
   ];
 }
 
+/**
+ * Training material for the universal (neural) clone: the network learns from whatever it hears, so this short
+ * sequence (~7 s) excites as much as possible – broadband noise at four levels, a quiet and a loud sweep, level
+ * staircases at a low and a high frequency (how the plugin reacts to level), a tone burst (attack and release of
+ * level-dependent effects) and an impulse with its decay (filters, short reverbs, gates closing).
+ */
+export function neuralSegmentSpecs(sampleRate: number, seed = 1): SegmentSpec[] {
+  const nyquistSafe = Math.min(20000, 0.45 * sampleRate);
+  const steps = (frequency: number) => ({ frequency, fromDb: -48, toDb: 0, stepDb: 6, stepSeconds: 0.08 });
+  const burst = { frequency: 500, lowDb: -40, highDb: -8, lowSeconds: 0.2, highSeconds: 0.3, releaseSeconds: 0.7 };
+  return [
+    { id: "lead", kind: "silence", seconds: 0.1 },
+    ...[-36, -24, -12, -4].map((rmsDb, i) => ({ id: `noise-${i + 1}`, kind: "noise" as const, seconds: 0.5, params: { seed: seed + i, rmsDb } })),
+    { id: "sweep-quiet", kind: "logSweep", seconds: 0.75, params: { f1: 20, f2: nyquistSafe, amplitude: 0.03, fadeSeconds: 0.01 } },
+    { id: "sweep-loud", kind: "logSweep", seconds: 0.75, params: { f1: 20, f2: nyquistSafe, amplitude: 0.6, fadeSeconds: 0.01 } },
+    { id: "steps-low", kind: "levelSteps", seconds: 9 * 0.08, params: steps(150) },
+    { id: "steps-high", kind: "levelSteps", seconds: 9 * 0.08, params: steps(2500) },
+    { id: "burst", kind: "toneBurst", seconds: burst.lowSeconds + burst.highSeconds + burst.releaseSeconds, params: burst },
+    { id: "impulse", kind: "impulse", seconds: 0.6, params: { amplitude: 0.5 } },
+    { id: "gap", kind: "silence", seconds: 0.2 },
+  ];
+}
+
 export function segmentSpecs(preset: SignalPreset, sampleRate: number, seed = 1): SegmentSpec[] {
+  if (preset === "neural") return neuralSegmentSpecs(sampleRate, seed);
   if (preset === "eq") return eqSegmentSpecs(sampleRate);
   if (preset === "reverb") return reverbSegmentSpecs();
   if (preset === "delay") return delaySegmentSpecs(seed);

@@ -5,7 +5,7 @@ import { Progress } from "../progress.ts";
 import type { CaptureResult, CloneResult, PluginEntry, PluginInfo, ProfileSummary } from "../types.ts";
 
 /** Main workflow: 1 choose plugin → 2 capture → 3 build the clone. */
-type Mode = "eq" | "dynamics" | "distortion" | "delay" | "reverb" | "generic";
+type Mode = "eq" | "dynamics" | "distortion" | "delay" | "reverb" | "neural";
 
 export class CloneView {
   readonly element: HTMLElement;
@@ -13,7 +13,10 @@ export class CloneView {
   private plugins: PluginEntry[] = [];
   private selected?: PluginEntry;
   private info?: PluginInfo;
-  private profile?: { path: string; name: string; renders: number };
+  private profile?: { path: string; name: string; renders: number; planner: string };
+  /** Python with PyTorch is set up (the universal clone trains with it) */
+  private neuralReady = false;
+  private setupJob?: JobHandle<{ python: string }>;
   private mode: Mode = "eq";
   private captureJob?: JobHandle<CaptureResult>;
   private cloneJob?: JobHandle<CloneResult>;
@@ -31,6 +34,9 @@ export class CloneView {
   private readonly guiBox = h("input", { type: "checkbox", checked: true });
   private readonly refitGuiBox = h("input", { type: "checkbox" });
   private readonly refitBox = h("input", { type: "checkbox" });
+  private readonly minutesSelect = h("select", { title: "Longer training is usually more exact; the graphics card does the work" },
+    h("option", { value: "5" }, "5 minutes"), h("option", { value: "10", selected: true }, "10 minutes"), h("option", { value: "20" }, "20 minutes"), h("option", { value: "40" }, "40 minutes"));
+  private readonly neuralBox = h("div.neural-options");
   private readonly cloneButton = h("button.primary", {}, "Build clone");
   private readonly cloneProgress = new Progress();
   private readonly result = h("div.result");
@@ -64,6 +70,7 @@ export class CloneView {
         this.refitGuiBox, "Capture the editor again (instead of the one stored in the profile)"),
       h("label.check", { title: "Otherwise a model stored in the profile is reused. Fitting it again takes seconds to a few minutes depending on the effect type." },
         this.refitBox, "Fit the model again (instead of the one stored in the profile)"),
+      this.neuralBox,
       h("div.actions", {}, this.cloneButton), this.cloneProgress.element, this.result);
 
     this.steps = [step1, step2, step3];
@@ -85,10 +92,48 @@ export class CloneView {
 
   /** Opens a profile from the library in step 3. */
   useProfile(profile: ProfileSummary): void {
-    this.profile = { path: profile.path, name: profile.name, renders: profile.renders };
+    this.profile = { path: profile.path, name: profile.name, renders: profile.renders, planner: profile.planner };
     clear(this.result);
     this.update();
     this.steps[2]!.scrollIntoView({ behavior: "smooth" });
+  }
+
+  /** Called with app.info: whether the training environment (PyTorch) exists. */
+  setNeuralReady(ready: boolean): void {
+    this.neuralReady = ready;
+    this.update();
+  }
+
+  /** Step 3 for a universal profile: training time, or setting up the training environment first. */
+  private renderNeuralOptions(busy: boolean) {
+    clear(this.neuralBox);
+    if (this.profile?.planner !== "neural") return;
+    if (!this.neuralReady) {
+      this.neuralBox.append(h("div.note.warn", {},
+        h("strong", {}, "Training environment missing"),
+        " – the universal clone trains a network with PyTorch. Setting it up downloads about 3 GB once (with an NVIDIA card the CUDA version, otherwise training runs on the CPU and takes much longer). ",
+        h("button.ghost.small", { disabled: busy || Boolean(this.setupJob), onclick: () => this.setupTraining() }, this.setupJob ? "Setting up …" : "Set up training")));
+      return;
+    }
+    this.minutesSelect.disabled = busy;
+    this.neuralBox.append(h("label.check", {}, "Training time", this.minutesSelect));
+  }
+
+  private async setupTraining() {
+    this.cloneProgress.busy("Setting up the training environment (PyTorch) – this takes a few minutes …");
+    try {
+      this.setupJob = await startJob<{ python: string }>("neural.setup", {});
+      this.update();
+      await this.setupJob.result;
+      this.neuralReady = true;
+      toast("Training environment ready");
+    } catch (error) {
+      if (!(error as { cancelled?: boolean }).cancelled) toast((error as Error).message, "error");
+    } finally {
+      this.setupJob = undefined;
+      this.cloneProgress.hide();
+      this.update();
+    }
   }
 
   private renderList() {
@@ -132,7 +177,8 @@ export class CloneView {
     this.update();
     try {
       this.info = await call<PluginInfo>("plugins.info", { path: plugin.path });
-      this.mode = this.info.eq ? "eq" : this.info.dynamics ? "dynamics" : this.info.distortion ? "distortion" : this.info.delay ? "delay" : this.info.reverb ? "reverb" : "generic";
+      // a known effect class has its own exact model; everything else gets the universal clone
+      this.mode = this.info.eq ? "eq" : this.info.dynamics ? "dynamics" : this.info.distortion ? "distortion" : this.info.delay ? "delay" : this.info.reverb ? "reverb" : "neural";
     } catch (error) {
       clear(this.details);
       this.details.appendChild(h("div.error-box", {}, `Plugin could not be loaded: ${(error as Error).message}`));
@@ -163,7 +209,7 @@ export class CloneView {
                 ? h("span.badge.good", {}, "Delay detected")
                 : info.reverb
                   ? h("span.badge.good", {}, "Reverb detected")
-                  : h("span.badge.muted", {}, "no cloneable effect class detected")),
+                  : h("span.badge.accent", { title: "A network learns the plugin from the measurements – works for any plugin" }, "no known effect class – universal clone")),
     );
   }
 
@@ -181,7 +227,7 @@ export class CloneView {
       option("distortion", "Distortion", Boolean(info?.distortion)),
       option("delay", "Delay", Boolean(info?.delay)),
       option("reverb", "Reverb", Boolean(info?.reverb)),
-      option("generic", "General", Boolean(info)),
+      option("neural", "Universal", Boolean(info)),
     );
     this.captureHint.textContent = !info
       ? "Choose a plugin first."
@@ -198,7 +244,10 @@ export class CloneView {
                   : " Usually takes less than a minute.")
               : this.mode === "reverb" && info.reverb
                 ? `${info.reverb.renders} settings of ~${info.reverb.signalSeconds} s test signal each (an impulse and its decay) – every control on its own and in random combinations. Usually takes less than a minute.`
-                : `${info.genericRenders} settings – every parameter on its own and in random combinations. Clones are so far only possible for EQs, compressors, gates/expanders, distortions, delays and reverbs.`;
+                : `${info.neural.renders} settings of ~${info.neural.signalSeconds} s test signal each (noise, sweeps, level steps, a tone burst, an impulse) with all controls at random – ` +
+                  "a network then learns how the plugin sounds at every setting (when building the clone, about 10 minutes on the graphics card). Works for any plugin; " +
+                  "long reverb tails, long delays and modulation (LFO) are its weak spots." +
+                  (info.neural.skipped > 0 ? ` ${info.neural.skipped} controls beyond the first ${info.neural.controls} stay at their default.` : "");
     this.captureButton.disabled = !info || Boolean(this.cloneJob);
     this.captureButton.textContent = this.captureJob ? "Cancel" : "Start measuring";
     this.captureButton.classList.toggle("danger", Boolean(this.captureJob));
@@ -212,7 +261,8 @@ export class CloneView {
     } else {
       this.profileLine.append(h("span.muted", {}, "After measuring, continue here – or choose a profile from the library."));
     }
-    this.cloneButton.disabled = !this.profile || Boolean(this.captureJob);
+    this.renderNeuralOptions(busy);
+    this.cloneButton.disabled = !this.profile || Boolean(this.captureJob) || Boolean(this.setupJob) || (this.profile.planner === "neural" && !this.neuralReady);
     this.cloneButton.textContent = this.cloneJob ? "Cancel" : "Build clone";
     this.cloneButton.classList.toggle("danger", Boolean(this.cloneJob));
     this.installBox.disabled = busy;
@@ -247,7 +297,7 @@ export class CloneView {
       });
       this.update();
       const result = await this.captureJob.result;
-      this.profile = { path: result.profile, name: result.name, renders: result.renders };
+      this.profile = { path: result.profile, name: result.name, renders: result.renders, planner: this.mode };
       this.captureProgress.set(1, 1, `Done – ${result.renders} settings, ${formatBytes(result.bytes)}`);
       this.renderCaptureNote(result);
       this.onLibraryChanged();
@@ -283,7 +333,7 @@ export class CloneView {
     clear(this.result);
     this.cloneProgress.busy("Analysis …");
     const titles: Record<string, string> = {
-      analyse: "Analysis …", gui: "Capturing the original's editor …", build: "Compiling the plugin …",
+      analyse: this.profile.planner === "neural" ? "Training the network …" : "Analysis …", gui: "Capturing the original's editor …", build: "Compiling the plugin …",
       verify: "Comparing with the original …", "gui-verify": "Comparing the editor …", save: "Saving …",
     };
     // the original plugin is known when the profile was measured in this session
@@ -292,6 +342,7 @@ export class CloneView {
       this.cloneJob = await startJob<CloneResult>("clone.start",
         {
           profile: this.profile.path, install: this.installBox.checked, gui: this.guiBox.checked,
+          ...(this.profile.planner === "neural" ? { minutes: Number(this.minutesSelect.value) } : {}),
           ...(this.guiBox.checked && this.refitGuiBox.checked ? { refitGui: true } : {}),
           ...(this.refitBox.checked ? { refit: true } : {}),
           ...(plugin ? { plugin } : {}),
@@ -332,6 +383,24 @@ export class CloneView {
         const table = h("table.shape-table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Largest deviations"), h("th", {}, "Mean"), h("th", {}, "Peak"))));
         const body = h("tbody");
         for (const w of d.worst) body.appendChild(h("tr", {}, h("td", {}, w.label), h("td.num", {}, formatDb(w.rmsDb)), h("td.num", {}, formatDb(w.maxDb))));
+        table.appendChild(body);
+        this.result.appendChild(table);
+      }
+    }
+    const nn = result.neural;
+    if (result.kind === "neural" && nn) {
+      const pct = (e: number) => `${(e * 100).toFixed(e < 0.1 ? 2 : 1)} %`;
+      this.result.append(
+        h("div.verdict", { class: verdictClass(nn.verdict) },
+          h("div.verdict-main", {}, nn.verdict),
+          h("div.verdict-sub", {}, `The clone's output differs from the original by ${pct(nn.esr)} of the signal energy · ${nn.renders} settings checked` +
+            (nn.validate !== undefined ? ` · unseen combinations ${pct(nn.validate)}` : ""))),
+        h("ul.model-summary", {}, ...(result.summary ?? []).map((line) => h("li", {}, line))),
+      );
+      if (nn.worst.length) {
+        const table = h("table.shape-table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Largest deviations"), h("th", {}, "Error"))));
+        const body = h("tbody");
+        for (const w of nn.worst) body.appendChild(h("tr", {}, h("td", {}, w.label), h("td.num", {}, pct(w.esr))));
         table.appendChild(body);
         this.result.appendChild(table);
       }

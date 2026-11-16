@@ -70,6 +70,7 @@ async function main() {
 
     const info = await call<AppInfo>("app.info");
     library.setProfilesDir(info.profilesDir);
+    cloneView.setNeuralReady(Boolean(info.neural?.python));
     const missing: string[] = [];
     if (!info.host.found) missing.push("vch-host (npm run host:configure && npm run host:build)");
     if (!info.tools.cmake) missing.push("CMake");

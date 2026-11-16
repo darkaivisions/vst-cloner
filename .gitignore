@@ -6,3 +6,4 @@ host/build/
 # written into the working directory by Cardinal when a batch run loads it
 /mini.json
 /patch.json
+__pycache__/

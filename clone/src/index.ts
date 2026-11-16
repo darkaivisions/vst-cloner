@@ -43,3 +43,8 @@ export * from "./reverb/codegen.ts";
 export * from "./reverb/verify.ts";
 export * from "./reverb/workflow.ts";
 export * from "./batch.ts";
+export * from "./neural/plan.ts";
+export * from "./neural/codegen.ts";
+export * from "./neural/verify.ts";
+export * from "./neural/train.ts";
+export * from "./neural/workflow.ts";

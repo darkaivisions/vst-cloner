@@ -295,3 +295,8 @@ input:focus, select:focus { border-color: var(--accent); }
 .lightbox-image { margin: auto; width: 100%; height: 100%; object-fit: contain; cursor: zoom-in; }
 .lightbox.actual-size .lightbox-image { width: auto; height: auto; cursor: zoom-out; }
 .check.sub { margin-left: 26px; }
+/* universal clone: training time or setting up the training environment */
+.neural-options { display: flex; flex-direction: column; gap: 8px; }
+.neural-options:empty { display: none; }
+.neural-options select { margin-left: 8px; width: auto; }
+.neural-options .note button { margin-left: 6px; }

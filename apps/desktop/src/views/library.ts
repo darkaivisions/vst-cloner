@@ -5,7 +5,7 @@ import type { ProfileSummary } from "../types.ts";
 import { ProfileDetailsDialog } from "./details.ts";
 
 /** measurement types a clone can be built from */
-const CLONEABLE = new Set(["eq", "dynamics", "distortion", "delay", "reverb"]);
+const CLONEABLE = new Set(["eq", "dynamics", "distortion", "delay", "reverb", "neural"]);
 
 /** Saved profiles: rebuild clones without the original, export, import, delete. */
 export class LibraryView {
@@ -49,16 +49,16 @@ export class LibraryView {
             h("div.profile-meta", {},
               h("span", {}, formatDate(p.createdAt)),
               h("span", {}, `${p.renders} measurements`),
-              h("span", {}, { eq: "EQ measurement", dynamics: "Dynamics measurement", distortion: "Distortion measurement", delay: "Delay measurement", reverb: "Reverb measurement" }[p.planner] ?? "general"),
+              h("span", {}, { eq: "EQ measurement", dynamics: "Dynamics measurement", distortion: "Distortion measurement", delay: "Delay measurement", reverb: "Reverb measurement", neural: "Universal measurement" }[p.planner] ?? "general"),
               h("span", {}, formatBytes(p.bytes)))),
           p.verdict
-            ? h("span.pill", { class: verdictClass(p.verdict), title: `Deviation ${formatDb(p.rmsDb ?? 0)}` }, `Clone: ${p.verdict}`)
+            ? h("span.pill", { class: verdictClass(p.verdict), title: `Deviation ${p.deviation ?? formatDb(p.rmsDb ?? 0)}` }, `Clone: ${p.verdict}`)
             : h("span.pill.neutral", {}, "no clone yet"),
           h("div.profile-actions", {},
             h("button.ghost.small", { onclick: () => this.details.show(p.path) }, "Details"),
             h("button.primary.small", {
               disabled: !CLONEABLE.has(p.planner),
-              title: CLONEABLE.has(p.planner) ? "" : "Clones are so far only possible from EQ, dynamics, distortion, delay and reverb measurements",
+              title: CLONEABLE.has(p.planner) ? "" : "This profile was measured with the general plan, which no clone can be built from – measure the plugin again with the universal or a class measurement",
               onclick: () => this.onBuild(p),
             }, "Build clone"),
             h("button.ghost.small", { onclick: () => this.exportProfile(p) }, "Export …"),

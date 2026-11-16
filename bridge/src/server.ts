@@ -15,6 +15,15 @@ import {
   type CaptureProgress,
 } from "@vst-cloner/capture";
 import {
+  cloneNeuralProfile,
+  esrToDb,
+  formatNeuralModel,
+  neuralControls,
+  neuralPlanner,
+  neuralPython,
+  neuralRenderCounts,
+  neuralVerdict,
+  setupNeuralEnvironment,
   cloneDelayProfile,
   cloneDistortionProfile,
   cloneDynamicsProfile,
@@ -162,6 +171,8 @@ interface ProfileSummary {
   hasModel: boolean;
   verdict?: string;
   rmsDb?: number;
+  /** rmsDb as text in the unit of the measurement */
+  deviation?: string;
   pluginName?: string;
 }
 
@@ -186,21 +197,24 @@ async function guiResult(gui: { controls: number; comparison?: { similarity: num
 }
 
 const PLANNER_NAMES: Record<string, string> = {
-  eq: "EQ measurement", dynamics: "Dynamics measurement", distortion: "Distortion measurement", delay: "Delay measurement", reverb: "Reverb measurement", generic: "General measurement",
+  eq: "EQ measurement", dynamics: "Dynamics measurement", distortion: "Distortion measurement", delay: "Delay measurement", reverb: "Reverb measurement", neural: "Universal measurement", generic: "General measurement",
 };
 /** Rating of the main number in a report, by the measurement the profile was captured with. */
-const VERDICTS: Record<string, (value: number) => string> = { dynamics: dynamicsVerdict, distortion: distortionVerdict, delay: delayVerdict, reverb: reverbVerdict };
+const VERDICTS: Record<string, (value: number) => string> = { dynamics: dynamicsVerdict, distortion: distortionVerdict, delay: delayVerdict, reverb: reverbVerdict, neural: neuralVerdict };
+/** The main number of a report as text: dB for the class models, the error share for the universal clone. */
+const deviationText = (planner: unknown, value: number) => (planner === "neural" ? `${(value * 100).toFixed(value < 0.1 ? 2 : 1)} % error (${esrToDb(value).toFixed(1)} dB)` : `${value.toFixed(2)} dB`);
 const verdictFor = (planner: unknown) => VERDICTS[planner as string] ?? verdict;
-const MODEL_FILES = ["model/eq.json", "model/dynamics.json", "model/distortion.json", "model/delay.json", "model/reverb.json"];
-const MODES = ["eq", "dynamics", "distortion", "delay", "reverb", "generic"] as const;
+const MODEL_FILES = ["model/eq.json", "model/dynamics.json", "model/distortion.json", "model/delay.json", "model/reverb.json", "model/neural.json"];
+const MODES = ["eq", "dynamics", "distortion", "delay", "reverb", "neural", "generic"] as const;
 type Mode = (typeof MODES)[number];
-const PLANNERS = { eq: eqPlanner, dynamics: dynamicsPlanner, distortion: distortionPlanner, delay: delayPlanner, reverb: reverbPlanner };
+const PLANNERS = { eq: eqPlanner, dynamics: dynamicsPlanner, distortion: distortionPlanner, delay: delayPlanner, reverb: reverbPlanner, neural: neuralPlanner };
 const PLAN_NOTES: Record<Mode, string> = {
   eq: "EQ plan: every filter shape at several frequencies, gains and Q values",
   dynamics: "Compressor plan: every control on its own (dense near the ends) + random combinations as a cross-check, test signal with level staircase, bursts and long pauses",
   distortion: "Distortion plan: every control on its own + random combinations as a cross-check, test signal with sine level staircases at several frequencies, noise and a quiet sweep",
   delay: "Delay plan: every control on its own + random combinations as a cross-check, test signal with an impulse, long silence and a noise burst",
   reverb: "Reverb plan: every control on its own + random combinations as a cross-check, test signal with an impulse and its decay",
+  neural: "Universal plan: all controls at random in every setting (the network learns how they act together), test signal with noise, sweeps, level steps, a tone burst and an impulse",
   generic: "General plan: every parameter on its own + random combinations",
 };
 
@@ -237,8 +251,9 @@ async function profileDetails(path: string) {
   let model: { kind: string; summary: string[] } | undefined;
   try {
     const eq = json("model/eq.json"), dyn = json("model/dynamics.json"), dist = json("model/distortion.json");
-    const delay = json("model/delay.json"), reverb = json("model/reverb.json");
-    if (reverb) model = { kind: "reverb", summary: formatReverbModel(reverb) };
+    const delay = json("model/delay.json"), reverb = json("model/reverb.json"), neural = json("model/neural.json");
+    if (neural) model = { kind: "neural", summary: formatNeuralModel(neural) };
+    else if (reverb) model = { kind: "reverb", summary: formatReverbModel(reverb) };
     else if (delay) model = { kind: "delay", summary: formatDelayModel(delay) };
     else if (dist) model = { kind: "distortion", summary: formatDistortionModel(dist) };
     else if (dyn) model = { kind: "dynamics", summary: formatDynamicsModel(dyn) };
@@ -248,7 +263,7 @@ async function profileDetails(path: string) {
   }
   const gui = json("model/gui.json");
   const cache = manifest?.id ? join(guiCacheRoot(), manifest.id) : undefined;
-  const rms = report?.verify?.overall?.rmsDb ?? report?.verify?.overall?.total;
+  const rms = report?.verify?.overall?.rmsDb ?? report?.verify?.overall?.total ?? report?.verify?.esr;
 
   return {
     path,
@@ -296,7 +311,7 @@ async function profileDetails(path: string) {
       discrete: p.discrete,
     })),
     model,
-    verdict: rms !== undefined ? { value: rms, text: verdictFor(planner)(rms), pluginName: report?.pluginName } : undefined,
+    verdict: rms !== undefined ? { value: rms, text: verdictFor(planner)(rms), deviation: deviationText(planner, rms), pluginName: report?.pluginName } : undefined,
     gui: gui
       ? {
           layout: svgDataUrl(renderSvg(gui)),
@@ -317,7 +332,7 @@ async function summarizeProfile(path: string): Promise<ProfileSummary> {
   const captures = json("captures.json");
   const report = json("report.json");
   // EQ/compressor: rms deviation (dB); distortion: combined error of its characteristics
-  const rms = (report?.verify?.overall?.rmsDb ?? report?.verify?.overall?.total) as number | undefined;
+  const rms = (report?.verify?.overall?.rmsDb ?? report?.verify?.overall?.total ?? report?.verify?.esr) as number | undefined;
   return {
     path,
     file: basename(path),
@@ -330,7 +345,7 @@ async function summarizeProfile(path: string): Promise<ProfileSummary> {
     planner: manifest?.capture?.plan?.planner ?? "generic",
     hasModel: MODEL_FILES.some((file) => entries[file]),
     ...(rms !== undefined
-      ? { rmsDb: rms, verdict: verdictFor(manifest?.capture?.plan?.planner)(rms) }
+      ? { rmsDb: rms, verdict: verdictFor(manifest?.capture?.plan?.planner)(rms), deviation: deviationText(manifest?.capture?.plan?.planner, rms) }
       : {}),
     ...(report?.pluginName ? { pluginName: report.pluginName } : {}),
   };
@@ -399,6 +414,8 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
       llmConfig: configPath(),
       host,
       tools: { cmake: onPath("cmake"), compiler },
+      // Python with PyTorch for the universal clone
+      neural: { python: neuralPython() ?? null },
     };
   },
 
@@ -469,6 +486,15 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
         reverb = undefined;
       }
     }
+    // the universal clone works for every plugin: how many settings its plan measures
+    const controls = neuralControls(info.parameters);
+    const counts = neuralRenderCounts(controls.length);
+    const neural = {
+      controls: controls.length,
+      skipped: Math.max(0, info.parameters.filter((p) => p.automatable && !p.meta).length - controls.length),
+      renders: 1 + counts.train + counts.validate,
+      signalSeconds: Math.round(generateTestSignal({ sampleRate: 1000, channels: 1, preset: "neural" }).set.length / 1000),
+    };
     let genericRenders: number;
     try {
       genericRenders = planCaptures(info.parameters, { ...DEFAULT_PLAN, maxRenders: Number.MAX_SAFE_INTEGER }).renders.length;
@@ -491,6 +517,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
       distortion,
       delay,
       reverb,
+      neural,
       genericRenders,
     };
   },
@@ -499,7 +526,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
     const plugin = str(params, "path");
     const mode: Mode = MODES.find((m) => m === params.mode) ?? "eq";
     return startJob("capture", async (ctx) => {
-      ctx.stage("capture", "Messen");
+      ctx.stage("capture", "Measure");
       await mkdir(profilesDir(), { recursive: true });
       const info = await pluginInfo(plugin, { signal: ctx.signal });
       const output = join(profilesDir(), `${slugify(info.plugin.name)}-${timestamp()}.vcprofile`);
@@ -516,7 +543,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
         blockSize: 512,
         channels: 2,
         prerollSeconds: 0.5,
-        tailSeconds: mode === "eq" ? 0.25 : 2,
+        tailSeconds: mode === "eq" ? 0.25 : mode === "neural" ? 0.5 : 2,
         plan: { ...DEFAULT_PLAN },
         ...(mode === "generic" ? {} : { planner: PLANNERS[mode] }),
         signal: ctx.signal,
@@ -591,6 +618,44 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
     return startJob("clone", async (ctx) => {
       const summary = await summarizeProfile(profilePath);
       const pluginName = `${summary.name} Clone`;
+      if (summary.planner === "neural") {
+        const result = await cloneNeuralProfile({
+          profilePath,
+          outputDir: join(clonesDir(), slugify(pluginName)),
+          pluginName,
+          ...(install ? { install: true } : {}),
+          ...(refit ? { refit: true } : {}),
+          gui,
+          ...(refitGui ? { refitGui: true } : {}),
+          ...(pluginPath ? { pluginPath } : {}),
+          ...(typeof params.minutes === "number" ? { minutes: params.minutes } : {}),
+          signal: ctx.signal,
+          onStage: (stage) => ctx.stage(stage, STAGE_TITLES[stage]),
+          onProgress: (done, total, label) => ctx.progress(done, total, label),
+          log: (level, message) => ctx.log(level, message),
+        });
+        const v = result.verify;
+        if (v) ctx.log("success", `Clone ready – ${deviationText("neural", v.esr)} (${neuralVerdict(v.esr)})`);
+        return {
+          kind: "neural",
+          pluginName,
+          vst3: result.build.vst3,
+          lv2: result.build.lv2,
+          installed: result.build.installed,
+          shapes: [],
+          summary: formatNeuralModel(result.model),
+          neural: v
+            ? {
+                esr: v.esr,
+                ...(v.validate !== undefined ? { validate: v.validate } : {}),
+                worst: v.worst,
+                verdict: neuralVerdict(v.esr),
+                renders: v.renders,
+              }
+            : undefined,
+          gui: await guiResult(result.gui),
+        };
+      }
       if (summary.planner === "distortion") {
         const result = await cloneDistortionProfile({
           profilePath,
@@ -847,6 +912,16 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
     }
     await saveConfig(config);
     return {};
+  },
+
+  /** Creates the Python environment with PyTorch that the universal clone trains with (several GB). */
+  "neural.setup"() {
+    return startJob("neural-setup", async (ctx) => {
+      ctx.stage("setup", "Setting up training");
+      const python = await setupNeuralEnvironment((level, message) => ctx.log(level, message), ctx.signal);
+      ctx.log("success", `Training environment ready: ${python}`);
+      return { python };
+    });
   },
 
   "llm.test"(params) {

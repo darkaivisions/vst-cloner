@@ -40,6 +40,7 @@ Capture options:
                             --points/--random/--include/--exclude are then ignored) or 'dynamics'
                             (compressors/limiters: dynamics test signal, sweeps + random validation)
                             or 'distortion' (overdrive/distortion/amps: quiet sweep, level steps, noise)
+                            or 'neural' (any plugin: all controls at random, for the universal clone)
   --notes <text>            Free text stored in the manifest
   --keep-work               Keep the temporary working directory
 
@@ -211,7 +212,8 @@ async function loadPlanner(name: string | undefined): Promise<CapturePlanner | u
   if (name === "distortion") return (await import("@vst-cloner/clone")).distortionPlanner;
   if (name === "delay") return (await import("@vst-cloner/clone")).delayPlanner;
   if (name === "reverb") return (await import("@vst-cloner/clone")).reverbPlanner;
-  throw new UsageError(`unknown --class '${name}' (available: eq, dynamics, distortion, delay, reverb)`);
+  if (name === "neural") return (await import("@vst-cloner/clone")).neuralPlanner;
+  throw new UsageError(`unknown --class '${name}' (available: eq, dynamics, distortion, delay, reverb, neural)`);
 }
 
 async function commandCapture(positionals: string[], values: Values): Promise<void> {
@@ -327,7 +329,7 @@ export async function main(argv: string[]): Promise<number> {
     const llm = await import("@vst-cloner/agent/cli");
     return llm.main(argv.slice(1));
   }
-  if (argv[0] === "clone" || argv[0] === "analyze" || argv[0] === "verify" || argv[0] === "batch") {
+  if (argv[0] === "clone" || argv[0] === "analyze" || argv[0] === "verify" || argv[0] === "batch" || argv[0] === "neural-setup") {
     const cloning = await import("@vst-cloner/clone/cli");
     return cloning.main(argv[0], argv.slice(1));
   }

@@ -1,0 +1,67 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import type { Parameter } from "@vst-cloner/profile";
+import { DEFAULT_PLAN } from "@vst-cloner/capture";
+import { MAX_NEURAL_CONTROLS, neuralControls, neuralRenderCounts, planNeural } from "../src/neural/plan.ts";
+import { generateNeuralHeader, type NeuralModel } from "../src/neural/codegen.ts";
+import { neuralVerdict } from "../src/neural/workflow.ts";
+
+const parameter = (index: number, name: string, extra: Partial<Parameter> = {}): Parameter => ({
+  index, id: String(index), name, default: 0.5, numSteps: 0x7fffffff, discrete: false, boolean: false, automatable: true, ...extra,
+});
+
+test("universal plan: every setting moves all controls, the cross-check uses settings of its own", () => {
+  const parameters = [parameter(0, "Drive"), parameter(1, "Mode", { discrete: true, numSteps: 3 }), parameter(2, "Bypass"), parameter(3, "Meter", { meta: true })];
+  const plan = planNeural(parameters, { ...DEFAULT_PLAN });
+  assert.deepEqual(plan.selected.map((p) => p.index), [0, 1]);
+  const counts = neuralRenderCounts(2);
+  assert.equal(plan.renders.length, 1 + counts.train + counts.validate);
+  assert.equal(plan.renders[0]!.kind, "default");
+  const random = plan.renders.filter((r) => r.kind === "random");
+  for (const r of random) assert.deepEqual(r.params.map((p) => p.index), [0, 1]);
+  // discrete controls take one of their steps
+  for (const r of random) assert.ok([0, 0.5, 1].includes(r.params[1]!.value));
+  const key = (r: (typeof random)[number]) => r.params.map((p) => p.value.toFixed(6)).join(",");
+  const train = new Set(random.filter((r) => r.purpose === "train").map(key));
+  assert.ok(random.filter((r) => r.purpose === "validate").every((r) => !train.has(key(r))));
+  // same seed, same plan
+  assert.deepEqual(planNeural(parameters, { ...DEFAULT_PLAN }).renders, plan.renders);
+});
+
+test("universal plan: the number of controls is capped, more controls get more settings", () => {
+  const many = Array.from({ length: 40 }, (_, i) => parameter(i, `P${i}`));
+  assert.equal(neuralControls(many).length, MAX_NEURAL_CONTROLS);
+  assert.ok(neuralRenderCounts(8).train > neuralRenderCounts(1).train);
+  assert.ok(neuralRenderCounts(100).train <= 160);
+});
+
+test("universal clone header: weights in the engine's layout, conditioning inputs mapped to clone parameters", () => {
+  const H = 2;
+  const model: NeuralModel = {
+    sampleRate: 48000, parameters: [3], names: ["Drive"], hidden: H, inputs: 2, outputs: 1,
+    lstm: {
+      W: [[1, 2, 3, 4, 5, 6, 7, 8], [10, 20, 30, 40, 50, 60, 70, 80]],
+      U: [[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8], [1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8]],
+      b: [0, 0, 0, 0, 0, 0, 0, 0],
+    },
+    dense: { W: [[0.5, -0.5]], b: [0.25] },
+    film: { W1: [[1], [2]], b1: [0, 0], W2: [[1, 0], [0, 1], [1, 1], [0, 0], [0.5, 0.5]], b2: [1, 1, 0, 0, 1] },
+  };
+  const { header, params } = generateNeuralHeader(model, [parameter(3, "Drive")], "Test");
+  assert.equal(params.length, 1);
+  assert.match(header, /hidden = 2;/);
+  assert.match(header, /numConditions = 1;/);
+  assert.match(header, /conditionParams\[1\] = \{ 0 \}/);
+  assert.match(header, /lstmWx\[8\] = \{ 1\.0, 2\.0, 3\.0/);
+  assert.match(header, /lstmWc\[8\] = \{ 10\.0, 20\.0/);
+  // U stays hidden-major: the weights of h0 to all gates, then those of h1
+  assert.match(header, /lstmU\[16\] = \{ 0\.10000000149011\d*, 0\.20000000298023\d*/);
+  assert.match(header, /filmW2\[10\]/);
+  assert.throws(() => generateNeuralHeader({ ...model, parameters: [3, 4] }, [parameter(3, "Drive"), parameter(4, "Tone")], "Test"), /LSTM input weights/);
+});
+
+test("universal clone rating: thresholds on the error share", () => {
+  assert.equal(neuralVerdict(0.005), "excellent");
+  assert.equal(neuralVerdict(0.04), "good");
+  assert.equal(neuralVerdict(0.5), "inaccurate");
+});

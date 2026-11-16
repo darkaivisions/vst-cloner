@@ -8,6 +8,8 @@ export interface AppInfo {
   llmConfig: string;
   host: { found: boolean; path?: string; version?: string };
   tools: { cmake: boolean; compiler: boolean };
+  /** Python with PyTorch for the universal clone (null: not set up yet) */
+  neural: { python: string | null };
 }
 
 export interface PluginEntry {
@@ -40,6 +42,8 @@ export interface PluginInfo {
   delay?: { roles: string[]; renders: number; signalSeconds: number; survey: number };
   /** reverb recognised by its category or name */
   reverb?: { renders: number; signalSeconds: number };
+  /** universal clone (any plugin): controls the network follows, controls left out (too many), settings measured */
+  neural: { controls: number; skipped: number; renders: number; signalSeconds: number };
   genericRenders: number;
 }
 
@@ -69,11 +73,13 @@ export interface ProfileSummary {
   hasModel: boolean;
   verdict?: string;
   rmsDb?: number;
+  /** rmsDb as text in the unit of the measurement */
+  deviation?: string;
   pluginName?: string;
 }
 
 export interface CloneResult {
-  kind: "eq" | "dynamics" | "distortion" | "delay" | "reverb";
+  kind: "eq" | "dynamics" | "distortion" | "delay" | "reverb" | "neural";
   pluginName: string;
   vst3: string;
   lv2: string;
@@ -103,6 +109,14 @@ export interface CloneResult {
     /** time-domain error-to-signal ratio on loud noise (dB) */
     esrDb: number;
     worst: { label: string; total: number; esrDb: number }[];
+    verdict: string;
+    renders: number;
+  };
+  /** universal clone: error-to-signal ratio clone vs. original (0 = identical) */
+  neural?: {
+    esr: number;
+    validate?: number;
+    worst: { label: string; esr: number }[];
     verdict: string;
     renders: number;
   };
@@ -142,7 +156,7 @@ export interface ProfileDetails {
   signal?: { seconds: number; segments: { id: string; kind: string; seconds: number }[] };
   parameters: { name: string; from: string; to: string; initial: string; discrete: boolean }[];
   model?: { kind: string; summary: string[] };
-  verdict?: { value: number; text: string; pluginName?: string };
+  verdict?: { value: number; text: string; deviation?: string; pluginName?: string };
   /** editor layout as SVG data URL; comparison original | clone (PNG data URL) if it is in the local cache */
   gui?: { layout: string; controls: number; width: number; height: number; compare?: string };
 }

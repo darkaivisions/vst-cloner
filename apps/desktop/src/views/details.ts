@@ -47,7 +47,7 @@ export class ProfileDetailsDialog {
           h("div.detail-name", {}, d.plugin.name),
           h("div.muted", {}, [d.plugin.manufacturer, `${d.plugin.format} ${d.plugin.version}`.trim(), d.plugin.category].filter(Boolean).join(" · "))),
         d.verdict
-          ? h("span.pill", { class: verdictClass(d.verdict.text), title: d.verdict.pluginName ?? "" }, `Clone: ${d.verdict.text}`)
+          ? h("span.pill", { class: verdictClass(d.verdict.text), title: [d.verdict.pluginName, d.verdict.deviation].filter(Boolean).join(" · ") }, `Clone: ${d.verdict.text}`)
           : h("span.pill.neutral", {}, "no clone yet")),
     );
 

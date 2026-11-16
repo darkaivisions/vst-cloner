@@ -10,12 +10,17 @@ import { cloneDynamicsProfile, isDynamicsProfile } from "./dynamics/workflow.ts"
 import { cloneDistortionProfile, isDistortionProfile } from "./distortion/workflow.ts";
 import { cloneDelayProfile, isDelayProfile } from "./delay/workflow.ts";
 import { cloneReverbProfile, isReverbProfile } from "./reverb/workflow.ts";
+import { cloneNeuralProfile, isNeuralProfile } from "./neural/workflow.ts";
+import { setupNeuralEnvironment } from "./neural/train.ts";
 
 export const USAGE = `Cloning:
   vch clone   <profile> [-o <dir>] [--name <text>] [--install] [--refit] [--no-verify]
-              [--gui] [--refit-gui] [--plugin <original>]
+              [--gui] [--refit-gui] [--plugin <original>] [--neural] [--minutes <n>]
                                         Analyse, build the clone (VST3 + LV2) and compare it with the original;
-                                        --gui also rebuilds the editor of the original (Linux: needs Xvfb)
+                                        --gui also rebuilds the editor of the original (Linux: needs Xvfb);
+                                        profiles captured with --class neural (or --neural) become a universal
+                                        clone: a network trained on the GPU for --minutes (default 10)
+  vch neural-setup                      Create the Python environment for training (PyTorch, ~3 GB)
   vch analyze <profile> [--save] [--json]
                                         Fit the model and show how well it matches
   vch verify  <profile> <clone.vst3>    Compare a built clone with the original measurements
@@ -44,6 +49,8 @@ const OPTIONS = {
   save: { type: "boolean" },
   json: { type: "boolean" },
   verbose: { type: "boolean", short: "v" },
+  neural: { type: "boolean" },
+  minutes: { type: "string" },
 } as const;
 
 function logger(verbose: boolean): Logger {
@@ -67,6 +74,15 @@ export async function main(command: string, argv: string[]): Promise<number> {
   const { values, positionals } = parsed;
   const log = logger(values.verbose ?? false);
   if (command === "batch") return batchCommand(values, positionals, log);
+  if (command === "neural-setup") {
+    try {
+      console.log(`Python: ${await setupNeuralEnvironment(log)}`);
+      return 0;
+    } catch (error) {
+      console.error(`Error: ${(error as Error).message}`);
+      return 1;
+    }
+  }
   const profilePath = positionals[0] ? resolve(positionals[0]) : undefined;
   if (!profilePath) {
     console.error(`Error: missing profile path\n\n${USAGE}`);
@@ -77,6 +93,24 @@ export async function main(command: string, argv: string[]): Promise<number> {
     switch (command) {
       case "clone": {
         const loaded = await readProfile(profilePath);
+        if (values.neural || isNeuralProfile(loaded)) {
+          const result = await cloneNeuralProfile({
+            profilePath,
+            ...(values.output ? { outputDir: resolve(values.output) } : {}),
+            ...(values.name ? { pluginName: values.name } : {}),
+            ...(values.install ? { install: true } : {}),
+            ...(values.refit ? { refit: true } : {}),
+            ...(values["no-verify"] ? { skipVerify: true } : {}),
+            ...(values.gui ? { gui: true } : {}),
+            ...(values["refit-gui"] ? { gui: true, refitGui: true } : {}),
+            ...(values.plugin ? { pluginPath: resolve(values.plugin) } : {}),
+            ...(values.minutes ? { minutes: Number(values.minutes) } : {}),
+            log,
+          });
+          console.log(`VST3: ${result.build.vst3}\nLV2:  ${result.build.lv2}`);
+          for (const path of result.build.installed) console.log(`Installed: ${path}`);
+          return 0;
+        }
         if (isReverbProfile(loaded) || isDelayProfile(loaded) || isDistortionProfile(loaded) || isDynamicsProfile(loaded)) {
           const clone = isReverbProfile(loaded) ? cloneReverbProfile : isDelayProfile(loaded) ? cloneDelayProfile : isDistortionProfile(loaded) ? cloneDistortionProfile : cloneDynamicsProfile;
           const result = await clone({
