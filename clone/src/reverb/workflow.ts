@@ -25,26 +25,26 @@ export function storedReverbModel(profile: Profile): ReverbModel | undefined {
 
 const db = (v: number) => `${v.toFixed(2)} dB`;
 /** Rating of a reverb clone: decay curves per band (dB). A tail is matched as it is heard, not sample by sample. */
-export const reverbVerdict = (rms: number) => (rms < 1 ? "ausgezeichnet" : rms < 2 ? "sehr gut" : rms < 4 ? "gut" : rms < 8 ? "brauchbar" : "ungenau");
+export const reverbVerdict = (rms: number) => (rms < 1 ? "excellent" : rms < 2 ? "very good" : rms < 4 ? "good" : rms < 8 ? "usable" : "inaccurate");
 
 export function formatReverbModel(model: ReverbModel): string[] {
   const p = model.base;
   const lines = [
-    `Hall: Nachhallzeit ${p.rt.map((t) => `${t.toFixed(2)} s`).join(" / ")} (Tiefen / Mitten / Höhen), Vorverzögerung ${(p.predelaySeconds * 1000).toFixed(0)} ms, ` +
-      `Direktsignal ${p.dryDb <= REVERB_OFF_DB + 0.5 ? "aus" : `${p.dryDb.toFixed(1)} dB`}`,
+    `Reverb: decay time ${p.rt.map((t) => `${t.toFixed(2)} s`).join(" / ")} (low / mid / high), pre-delay ${(p.predelaySeconds * 1000).toFixed(0)} ms, ` +
+      `dry ${p.dryDb <= REVERB_OFF_DB + 0.5 ? "off" : `${p.dryDb.toFixed(1)} dB`}`,
     `Parameter: ${model.tables.map((t) => t.name).join(", ")}`,
   ];
-  if (!model.report.tail) lines.push("Achtung: in der Grundmessung ist kein Nachhall zu hören – der Hall konnte nicht bestimmt werden");
-  if (model.report.train) lines.push(`Modell vs. Original (Einzelparameter): ${db(model.report.train.rmsDb)} (max ${model.report.train.maxDb.toFixed(1)}) – ${reverbVerdict(model.report.train.rmsDb)}`);
-  if (model.report.validate) lines.push(`Vorhersage unbekannter Kombinationen: ${db(model.report.validate.rmsDb)} (max ${model.report.validate.maxDb.toFixed(1)}) – ${reverbVerdict(model.report.validate.rmsDb)}`);
+  if (!model.report.tail) lines.push("Warning: no reverb tail is audible in the base measurement – the reverb could not be determined");
+  if (model.report.train) lines.push(`Model vs. original (single parameters): ${db(model.report.train.rmsDb)} (max ${model.report.train.maxDb.toFixed(1)}) – ${reverbVerdict(model.report.train.rmsDb)}`);
+  if (model.report.validate) lines.push(`Prediction of unseen combinations: ${db(model.report.validate.rmsDb)} (max ${model.report.validate.maxDb.toFixed(1)}) – ${reverbVerdict(model.report.validate.rmsDb)}`);
   return lines;
 }
 
 export function formatReverbVerify(report: ReverbVerifyReport): string[] {
-  const lines = [`Klon vs. Original (${report.renders} Einstellungen): ${db(report.overall.rmsDb)} (max ${report.overall.maxDb.toFixed(1)}) – ${reverbVerdict(report.overall.rmsDb)}`];
-  if (report.validate) lines.push(`  davon unbekannte Kombinationen: ${db(report.validate.rmsDb)}`);
-  lines.push("Größte Abweichungen:", ...report.worst.map((w) => `  ${w.label}: ${db(w.rmsDb)} (max ${w.maxDb.toFixed(1)})`));
-  if (report.engineMaxDb > 1) lines.push(`Achtung: Plugin weicht vom Referenzmodell ab (max ${report.engineMaxDb.toFixed(2)} dB, ${report.engineWorst})`);
+  const lines = [`Clone vs. original (${report.renders} settings): ${db(report.overall.rmsDb)} (max ${report.overall.maxDb.toFixed(1)}) – ${reverbVerdict(report.overall.rmsDb)}`];
+  if (report.validate) lines.push(`  of which unseen combinations: ${db(report.validate.rmsDb)}`);
+  lines.push("Largest deviations:", ...report.worst.map((w) => `  ${w.label}: ${db(w.rmsDb)} (max ${w.maxDb.toFixed(1)})`));
+  if (report.engineMaxDb > 1) lines.push(`Warning: the plugin deviates from the reference model (max ${report.engineMaxDb.toFixed(2)} dB, ${report.engineWorst})`);
   return lines;
 }
 
@@ -80,13 +80,13 @@ export async function cloneReverbProfile(options: ReverbCloneOptions): Promise<R
 
   stage("analyse");
   let model = options.refit ? undefined : storedReverbModel(profile);
-  if (model) log("info", "Im Profil gespeichertes Modell wird verwendet");
+  if (model) log("info", "Using the model stored in the profile");
   else {
-    log("info", `${profile.captures.renders.length} Messungen von ${profile.manifest.plugin.name} werden analysiert …`);
+    log("info", `Analysing ${profile.captures.renders.length} measurements of ${profile.manifest.plugin.name} …`);
     model = fitReverb(profile, options.onProgress);
   }
   for (const line of formatReverbModel(model)) log("info", line);
-  if (options.gui) log("warn", "Die Oberfläche von Reverbs wird noch nicht nachgebaut");
+  if (options.gui) log("warn", "The editor of reverbs is not rebuilt yet");
 
   const { header, params } = generateReverbHeader(model, profile.parameters.parameters, pluginName, profile.captures.renders);
   stage("build");
@@ -112,6 +112,6 @@ export async function cloneReverbProfile(options: ReverbCloneOptions): Promise<R
   profile.files.set(REVERB_MODEL_FILE, strToU8(JSON.stringify({ ...model, fitRevision: REVERB_FIT_REVISION })));
   profile.files.set("report.json", strToU8(JSON.stringify({ createdAt: new Date().toISOString(), pluginName, model: model.report, ...(verify ? { verify } : {}) }, null, 1)));
   await writeProfile(options.profilePath, profile);
-  log("info", `Modell und Bericht im Profil gespeichert: ${options.profilePath}`);
+  log("info", `Model and report saved in the profile: ${options.profilePath}`);
   return { model, build, ...(verify ? { verify } : {}) };
 }

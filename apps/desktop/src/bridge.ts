@@ -64,8 +64,8 @@ export async function initBridge(): Promise<void> {
     }
   });
   await listen("bridge-exit", () => {
-    setStatus({ state: "stopped", message: "Der Hintergrundprozess wurde beendet" });
-    for (const request of pending.values()) request.reject(new Error("Hintergrundprozess beendet"));
+    setStatus({ state: "stopped", message: "The background process has ended" });
+    for (const request of pending.values()) request.reject(new Error("Background process ended"));
     pending.clear();
   });
   await listen<string>("bridge-error", ({ payload }) => setStatus({ state: "error", message: payload }));

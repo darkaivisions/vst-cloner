@@ -32,36 +32,36 @@ export function storedDynamicsModel(profile: Profile): DynamicsModel | undefined
 
 const db = (v: number) => `${v.toFixed(2)} dB`;
 /** Rating of a compressor clone (level over time; naturally less exact than an EQ's frequency response). */
-export const dynamicsVerdict = (rms: number) => (rms < 0.5 ? "ausgezeichnet" : rms < 1 ? "sehr gut" : rms < 2 ? "gut" : rms < 4 ? "brauchbar" : "ungenau");
+export const dynamicsVerdict = (rms: number) => (rms < 0.5 ? "excellent" : rms < 1 ? "very good" : rms < 2 ? "good" : rms < 4 ? "usable" : "inaccurate");
 const verdict = dynamicsVerdict;
 
 export function formatDynamicsModel(model: DynamicsModel): string[] {
   const p = model.base;
   const expander = isGate(model.structure);
   const lines = [
-    `${expander ? "Gate/Expander" : "Kompressor"}: ${model.structure.detector === "rms" ? "RMS" : "Spitzenwert"}-Detektor${expander ? "" : `, ${model.structure.topology === "feedforward" ? "Feed-forward" : "Feedback"}`}`,
-    `Grundeinstellung: Schwelle ${p.thresholdDb.toFixed(1)} dB, Verhältnis ${expander ? `1:${p.ratio.toFixed(2)}` : `${p.ratio.toFixed(2)}:1`}, Knick ${p.kneeDb.toFixed(1)} dB, ` +
-      `${expander ? `größte Absenkung ${p.slowKneeDb.toFixed(1)} dB, ` : ""}Pegel ${p.makeupDb >= 0 ? "+" : ""}${p.makeupDb.toFixed(1)} dB`,
+    `${expander ? "Gate/Expander" : "Compressor"}: ${model.structure.detector === "rms" ? "RMS" : "peak"} detector${expander ? "" : `, ${model.structure.topology === "feedforward" ? "Feed-forward" : "Feedback"}`}`,
+    `Base setting: threshold ${p.thresholdDb.toFixed(1)} dB, ratio ${expander ? `1:${p.ratio.toFixed(2)}` : `${p.ratio.toFixed(2)}:1`}, knee ${p.kneeDb.toFixed(1)} dB, ` +
+      `${expander ? `maximum attenuation ${p.slowKneeDb.toFixed(1)} dB, ` : ""}level ${p.makeupDb >= 0 ? "+" : ""}${p.makeupDb.toFixed(1)} dB`,
     // the model's attack is the time in which the reduction grows: for a gate that is its closing
-    `Zeitverhalten: Detektor ${(p.detectorTime * 1000).toFixed(1)} ms, ${expander ? "Schließen" : "Attack"} ${(p.attack * 1000).toFixed(1)} ms, ${expander ? "Öffnen" : "Release"} ${(p.release * 1000).toFixed(0)} ms` +
-      (p.charge > 0 && !expander ? `, Speicher lädt in ${(p.charge * 1000).toFixed(0)} ms, baut mit ${p.slow.toFixed(1)} dB/s ab` : ""),
-    `Klangfarbe: Sättigung ${p.drive > 0 ? `Drive ${p.drive.toFixed(2)}` : "aus"}, Detektor-Welligkeit ${(p.ripple * 100).toFixed(1)} % (${(p.rippleTime * 1000).toFixed(1)} ms)`,
+    `Timing: detector ${(p.detectorTime * 1000).toFixed(1)} ms, ${expander ? "close" : "attack"} ${(p.attack * 1000).toFixed(1)} ms, ${expander ? "open" : "release"} ${(p.release * 1000).toFixed(0)} ms` +
+      (p.charge > 0 && !expander ? `, memory charges in ${(p.charge * 1000).toFixed(0)} ms, discharges at ${p.slow.toFixed(1)} dB/s` : ""),
+    `Tone: saturation ${p.drive > 0 ? `drive ${p.drive.toFixed(2)}` : "off"}, detector ripple ${(p.ripple * 100).toFixed(1)} % (${(p.rippleTime * 1000).toFixed(1)} ms)`,
     `Parameter: ${model.tables.map((t) => t.name).join(", ")}`,
   ];
-  if (model.variants?.length) lines.push(`Eigenes Modell für Schalterstellungen: ${model.variants.map((v) => `${v.name} (${v.structure.curve ?? "compressor"})`).join(", ")}`);
-  if (model.report.train) lines.push(`Modell vs. Original (Einzelparameter): ${db(model.report.train.rmsDb)} (max ${model.report.train.maxDb.toFixed(1)}) – ${verdict(model.report.train.rmsDb)}`);
-  if (model.report.validate) lines.push(`Vorhersage unbekannter Kombinationen: ${db(model.report.validate.rmsDb)} (max ${model.report.validate.maxDb.toFixed(1)}) – ${verdict(model.report.validate.rmsDb)}`);
+  if (model.variants?.length) lines.push(`Separate model for switch positions: ${model.variants.map((v) => `${v.name} (${v.structure.curve ?? "compressor"})`).join(", ")}`);
+  if (model.report.train) lines.push(`Model vs. original (single parameters): ${db(model.report.train.rmsDb)} (max ${model.report.train.maxDb.toFixed(1)}) – ${verdict(model.report.train.rmsDb)}`);
+  if (model.report.validate) lines.push(`Prediction of unseen combinations: ${db(model.report.validate.rmsDb)} (max ${model.report.validate.maxDb.toFixed(1)}) – ${verdict(model.report.validate.rmsDb)}`);
   if (!measuredCompression(model)) {
-    lines.push(`Achtung: am Arbeitspunkt der Messung wird nicht komprimiert (${db(model.report.compressionDb ?? 0)}) – der Klon ändert fast nur den Pegel, die Fehlerwerte sagen wenig über den Kompressor aus`);
+    lines.push(`Warning: no compression at the working point of the measurement (${db(model.report.compressionDb ?? 0)}) – the clone mostly changes the level, the error figures say little about the compressor`);
   }
   return lines;
 }
 
 export function formatDynamicsVerify(report: DynamicsVerifyReport): string[] {
-  const lines = [`Klon vs. Original (${report.renders} Einstellungen): ${db(report.overall.rmsDb)} (max ${report.overall.maxDb.toFixed(1)}) – ${verdict(report.overall.rmsDb)}`];
-  if (report.validate) lines.push(`  davon unbekannte Kombinationen: ${db(report.validate.rmsDb)} (max ${report.validate.maxDb.toFixed(1)})`);
-  lines.push("Größte Abweichungen:", ...report.worst.map((w) => `  ${w.label}: ${db(w.rmsDb)} (max ${w.maxDb.toFixed(1)})`));
-  if (report.engineMaxDb > 0.1) lines.push(`Achtung: Plugin weicht vom Referenzmodell ab (max ${report.engineMaxDb.toFixed(2)} dB, ${report.engineWorst})`);
+  const lines = [`Clone vs. original (${report.renders} settings): ${db(report.overall.rmsDb)} (max ${report.overall.maxDb.toFixed(1)}) – ${verdict(report.overall.rmsDb)}`];
+  if (report.validate) lines.push(`  of which unseen combinations: ${db(report.validate.rmsDb)} (max ${report.validate.maxDb.toFixed(1)})`);
+  lines.push("Largest deviations:", ...report.worst.map((w) => `  ${w.label}: ${db(w.rmsDb)} (max ${w.maxDb.toFixed(1)})`));
+  if (report.engineMaxDb > 0.1) lines.push(`Warning: the plugin deviates from the reference model (max ${report.engineMaxDb.toFixed(2)} dB, ${report.engineWorst})`);
   return lines;
 }
 
@@ -84,7 +84,7 @@ export async function fitDynamicsInWorker(
         if (message.model) resolve(message.model);
       });
       worker.once("error", reject);
-      worker.once("exit", (code) => reject(new Error(`Kompressor-Fit beendet ohne Ergebnis (Code ${code})`)));
+      worker.once("exit", (code) => reject(new Error(`Compressor fit ended without a result (code ${code})`)));
     });
   } finally {
     signal?.removeEventListener("abort", cancel);
@@ -127,9 +127,9 @@ export async function cloneDynamicsProfile(options: DynamicsCloneOptions): Promi
 
   stage("analyse");
   let model = options.refit ? undefined : storedDynamicsModel(profile);
-  if (model) log("info", "Im Profil gespeichertes Modell wird verwendet");
+  if (model) log("info", "Using the model stored in the profile");
   else {
-    log("info", `${profile.captures.renders.length} Messungen von ${profile.manifest.plugin.name} werden analysiert …`);
+    log("info", `Analysing ${profile.captures.renders.length} measurements of ${profile.manifest.plugin.name} …`);
     model = await fitDynamicsInWorker(options.profilePath, options.onProgress, options.signal);
   }
   for (const line of formatDynamicsModel(model)) log("info", line);
@@ -138,13 +138,13 @@ export async function cloneDynamicsProfile(options: DynamicsCloneOptions): Promi
   const stored = profile.files.get(GUI_MODEL_FILE);
   let guiModel = options.refitGui || !stored ? undefined : (JSON.parse(strFromU8(stored)) as GuiModel);
   let originalRaw = join(guiCacheDir(profile), "pass2", "base.rgba");
-  if (guiModel) log("info", "Im Profil gespeicherte Oberfläche wird verwendet");
+  if (guiModel) log("info", "Using the editor layout stored in the profile");
   else if (options.gui) {
     stage("gui");
-    if (!virtualDisplayAvailable()) log("warn", "Oberfläche wird nicht nachgebaut: Xvfb fehlt (sudo pacman -S xorg-server-xvfb)");
+    if (!virtualDisplayAvailable()) log("warn", "Editor not rebuilt: Xvfb is missing (sudo pacman -S xorg-server-xvfb)");
     else {
       const pluginPath = options.pluginPath ?? (await locatePlugin(profile));
-      if (!pluginPath) log("warn", "Oberfläche wird nicht nachgebaut: Original-Plugin nicht gefunden");
+      if (!pluginPath) log("warn", "Editor not rebuilt: original plugin not found");
       else {
         const baseParams = predictModel(model, new Map());
         const captured = await captureGuiLayout(profile, pluginPath, {
@@ -193,7 +193,7 @@ export async function cloneDynamicsProfile(options: DynamicsCloneOptions): Promi
         });
         if (comparison) gui.comparison = comparison;
       } catch (error) {
-        log("warn", `Oberflächen-Vergleich nicht möglich: ${(error as Error).message}`);
+        log("warn", `Editor comparison not possible: ${(error as Error).message}`);
       }
     }
   }
@@ -202,6 +202,6 @@ export async function cloneDynamicsProfile(options: DynamicsCloneOptions): Promi
   profile.files.set(DYNAMICS_MODEL_FILE, strToU8(JSON.stringify({ ...model, fitRevision: DYNAMICS_FIT_REVISION })));
   profile.files.set(DYNAMICS_REPORT_FILE, strToU8(JSON.stringify({ createdAt: new Date().toISOString(), pluginName, model: model.report, ...(verify ? { verify } : {}) }, null, 1)));
   await writeProfile(options.profilePath, profile);
-  log("info", `Modell und Bericht im Profil gespeichert: ${options.profilePath}`);
+  log("info", `Model and report saved in the profile: ${options.profilePath}`);
   return { model, build, ...(verify ? { verify } : {}), ...(gui ? { gui } : {}) };
 }

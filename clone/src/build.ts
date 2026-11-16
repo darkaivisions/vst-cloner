@@ -70,7 +70,7 @@ export function run(command: string, args: string[], cwd: string, log: Logger, s
       signal?.removeEventListener("abort", onAbort);
       if (signal?.aborted) reject(new CancelledError());
       else if (code === 0) resolve();
-      else reject(new Error(`${command} ${args[0] ?? ""} fehlgeschlagen (Exit ${code}):\n${tail.slice(-15).join("\n")}`));
+      else reject(new Error(`${command} ${args[0] ?? ""} failed (exit ${code}):\n${tail.slice(-15).join("\n")}`));
     });
   });
 }
@@ -151,14 +151,14 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
   await writeIfChanged(join(generated, "CloneGui.h"), options.guiHeader ?? generateGuiHeader(undefined, []));
 
   const juceDir = await findJuceDir();
-  log("detail", juceDir ? `JUCE: ${juceDir}` : "JUCE 9.0.5 wird heruntergeladen (nur beim ersten Build)");
+  log("detail", juceDir ? `JUCE: ${juceDir}` : "Downloading JUCE 9.0.5 (first build only)");
 
   // a build directory configured with another JUCE checkout cannot be reused (CMake refuses the changed source,
   // also in the nested juceaide build): the checkout used is noted next to it
   const juceNote = join(workDir, "juce-dir.txt");
   const noted = existsSync(juceNote) ? await readFile(juceNote, "utf8") : undefined;
   if (noted !== (juceDir ?? "") && existsSync(buildDir)) {
-    log("detail", "JUCE-Verzeichnis hat sich geändert oder ist unbekannt: Build-Verzeichnis wird neu angelegt");
+    log("detail", "JUCE directory changed or unknown: recreating the build directory");
     await rm(buildDir, { recursive: true, force: true });
   }
   await writeFile(juceNote, juceDir ?? "");
@@ -175,15 +175,15 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
   ];
   if (!existsSync(join(buildDir, "CMakeCache.txt")) && onPath("ninja")) configure.push("-G", "Ninja");
 
-  log("info", "Plugin-Build wird vorbereitet (CMake) …");
+  log("info", "Preparing the plugin build (CMake) …");
   await run("cmake", configure, workDir, log, options.signal);
-  log("info", "Plugin wird kompiliert – beim ersten Mal ca. 1 Minute, danach Sekunden …");
+  log("info", "Compiling the plugin – about a minute the first time, seconds afterwards …");
   await run("cmake", ["--build", buildDir, "--config", "Release", "--parallel"], workDir, log, options.signal);
 
   const artefacts = join(buildDir, "vch_clone_artefacts", "Release");
   const vst3Source = join(artefacts, "VST3", `${fileName}.vst3`);
   const lv2Source = join(artefacts, "LV2", `${fileName}.lv2`);
-  for (const path of [vst3Source, lv2Source]) if (!existsSync(path)) throw new Error(`Build fertig, aber ${path} fehlt`);
+  for (const path of [vst3Source, lv2Source]) if (!existsSync(path)) throw new Error(`Build finished, but ${path} is missing`);
 
   await mkdir(options.outputDir, { recursive: true });
   const vst3 = join(options.outputDir, `${fileName}.vst3`);
@@ -192,8 +192,8 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
     await rm(to, { recursive: true, force: true });
     await cp(from, to, { recursive: true });
   }
-  log("info", `Plugin geschrieben: ${vst3}`);
-  log("info", `Plugin geschrieben: ${lv2}`);
+  log("info", `Plugin written: ${vst3}`);
+  log("info", `Plugin written: ${lv2}`);
 
   const installed: string[] = [];
   if (options.install) {

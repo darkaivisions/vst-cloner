@@ -17,10 +17,10 @@ const MIX = /mix|dry|wet|level|blend|amount/i;
 
 /** Recognises a reverb by its category or name. Returns the index of its mix control, if it has one. */
 export function detectReverb(parameters: Parameter[], category = "", name = ""): { mix?: number } {
-  if (!REVERB_NAME.test(category) && !REVERB_NAME.test(name)) throw new NotReverbError("Weder Kategorie noch Name weisen auf einen Hall hin");
-  if (NOT_A_PLAIN_REVERB.test(name)) throw new NotReverbError(`„${name}“ ist kein einfacher Hall (Faltung, Multiband, Shimmer, frühe Reflexionen …)`);
+  if (!REVERB_NAME.test(category) && !REVERB_NAME.test(name)) throw new NotReverbError("Neither category nor name point to a reverb");
+  if (NOT_A_PLAIN_REVERB.test(name)) throw new NotReverbError(`"${name}" is not a plain reverb (convolution, multiband, shimmer, early reflections …)`);
   const usable = parameters.filter((p) => p.automatable && !p.meta && !IGNORED.test(p.name));
-  if (!usable.length) throw new NotReverbError("Keine Regler gefunden");
+  if (!usable.length) throw new NotReverbError("No controls found");
   const mix = usable.find((p) => MIX.test(p.name));
   return mix ? { mix: mix.index } : {};
 }

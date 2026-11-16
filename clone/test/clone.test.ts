@@ -195,7 +195,7 @@ test("EQ detection and display tables", () => {
 
 test("EQ plan switches other bands off and covers every shape", () => {
   const plan = planEq(syntheticParameters(), { seed: 1 });
-  const renders = plan.renders.filter((r) => r.purpose && !r.label!.startsWith("Kombination"));
+  const renders = plan.renders.filter((r) => r.purpose && !r.label!.startsWith("combination"));
   assert.equal(plan.renders.length - renders.length - 1, 6, "six settings of both bands at once");
   assert.ok(renders.every((r) => r.params.some((p) => p.index === 6 && p.value === 0)), "band 2 off");
   assert.ok(renders.every((r) => r.params.some((p) => p.index === 0 && p.value === 1)), "band 1 on");
@@ -361,8 +361,8 @@ test("EQ detection: named bands, sliders, stepped shape controls; spatial effect
   assert.equal(graphic.outputGain, 0);
   assert.equal(graphic.groups!.length, 3);
   // levels from 0 to 1 are no gains in dB, two sliders are no graphic EQ
-  assert.throws(() => detectEq(namedParameters(["G1", "G2", "G3"].map((name) => ({ name, texts: texts((n) => n.toFixed(2)) })))), /Keine EQ-Bänder/);
-  assert.throws(() => detectEq(namedParameters([{ name: "G1", texts: dbTexts }, { name: "G2", texts: dbTexts }])), /Keine EQ-Bänder/);
+  assert.throws(() => detectEq(namedParameters(["G1", "G2", "G3"].map((name) => ({ name, texts: texts((n) => n.toFixed(2)) })))), /No EQ bands/);
+  assert.throws(() => detectEq(namedParameters([{ name: "G1", texts: dbTexts }, { name: "G2", texts: dbTexts }])), /No EQ bands/);
 
   // shape and switch reported as continuous controls; the bands differ in their shapes
   const plateaus = (labels: string[]) => texts((n) => labels[Math.min(labels.length - 1, Math.floor(n * labels.length))]!);
@@ -379,8 +379,8 @@ test("EQ detection: named bands, sliders, stepped shape controls; spatial effect
   assert.deepEqual(stepped.bands[0]!.params, { enable: 0, shape: 1, frequency: 2, q: 3, gain: 4 });
   assert.deepEqual(stepped.enableValues, { on: 1, off: 0 });
 
-  assert.throws(() => detectEq(namedParameters([...band(1, ["Low-shelf", "Peak", "High-shelf"]), { name: "Azimuth Band 1" }])), /Räumlicher Effekt/);
-  assert.throws(() => detectEq(namedParameters([{ name: "LowShelf Frequency", texts: hzTexts }, { name: "LowShelf Gain", texts: dbTexts }])), /Keine EQ-Bänder/);
+  assert.throws(() => detectEq(namedParameters([...band(1, ["Low-shelf", "Peak", "High-shelf"]), { name: "Azimuth Band 1" }])), /Spatial effect/);
+  assert.throws(() => detectEq(namedParameters([{ name: "LowShelf Frequency", texts: hzTexts }, { name: "LowShelf Gain", texts: dbTexts }])), /No EQ bands/);
 });
 
 test("graphic EQ: the fit finds where each slider works and what it is", () => {

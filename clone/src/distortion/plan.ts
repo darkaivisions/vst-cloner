@@ -43,8 +43,8 @@ const TIME_VARIANT_PARAMETER = /lfo|wow|flutter|vibe|vibrato|tremolo|reverb|chor
  * alone is not enough, and neither are several drives (one per band) or built-in modulation and reverb.
  */
 export function detectDistortion(parameters: Parameter[], category = "", name = ""): DistortionMapping {
-  if (OTHER_CLASS_CATEGORY.test(category) || OTHER_CLASS_CATEGORY.test(name)) throw new NotDistortionError(`„${name || category}“ (${category}) ist kein Verzerrer`);
-  if (NOT_DISTORTION_CATEGORY.test(category)) throw new NotDistortionError(`Plugin-Kategorie „${category}“ ist kein Verzerrer`);
+  if (OTHER_CLASS_CATEGORY.test(category) || OTHER_CLASS_CATEGORY.test(name)) throw new NotDistortionError(`"${name || category}" (${category}) is not a distortion`);
+  if (NOT_DISTORTION_CATEGORY.test(category)) throw new NotDistortionError(`Plugin category "${category}" is not a distortion`);
   const roles: DistortionMapping["roles"] = {};
   const other: number[] = [];
   const active = parameters.filter((p) => p.automatable && !p.meta && !IGNORED.test(p.name));
@@ -57,10 +57,10 @@ export function detectDistortion(parameters: Parameter[], category = "", name = 
   // the drive is the control named so, not the first "gain" in the list
   if (drives.length && !STRONG_DRIVE.test(parameters.find((p) => p.index === roles.drive)?.name ?? "")) roles.drive = drives[0]!.index;
   const timeVariant = active.find((p) => TIME_VARIANT_PARAMETER.test(p.name));
-  if (timeVariant) throw new NotDistortionError(`Eingebaute Modulation oder Hall („${timeVariant.name}“) – mit dem Verzerrer-Modell nicht abbildbar`);
-  if (drives.length >= 3) throw new NotDistortionError(`Mehrband-Verzerrer (${drives.length} Drive-Regler) – mit dem Verzerrer-Modell nicht abbildbar`);
+  if (timeVariant) throw new NotDistortionError(`Built-in modulation or reverb ("${timeVariant.name}") – cannot be represented by the distortion model`);
+  if (drives.length >= 3) throw new NotDistortionError(`Multiband distortion (${drives.length} drive controls) – cannot be represented by the distortion model`);
   if (!drives.length && !DISTORTION_CATEGORY.test(category) && !DISTORTION_NAME.test(name)) {
-    throw new NotDistortionError("Kein Drive/Distortion-Regler und weder Kategorie noch Name eines Verzerrers erkannt");
+    throw new NotDistortionError("No drive/distortion control and neither the category nor the name of a distortion detected");
   }
   return { roles, other };
 }

@@ -27,33 +27,33 @@ export function storedDistortionModel(profile: Profile): DistortionModel | undef
 }
 
 /** Rating from the combined error of the measured characteristics (dB). */
-export const distortionVerdict = (total: number) => (total < 1 ? "ausgezeichnet" : total < 2 ? "sehr gut" : total < 3 ? "gut" : total < 5 ? "brauchbar" : "ungenau");
+export const distortionVerdict = (total: number) => (total < 1 ? "excellent" : total < 2 ? "very good" : total < 3 ? "good" : total < 5 ? "usable" : "inaccurate");
 
 const errorLine = (e: DistortionErrors) =>
-  `Kleinsignal ${e.smallDb.toFixed(2)} dB, Grundton ${e.gainDb.toFixed(2)} dB, Oberwellen ${e.harmonicsDb.toFixed(1)} dB`;
+  `small signal ${e.smallDb.toFixed(2)} dB, fundamental ${e.gainDb.toFixed(2)} dB, harmonics ${e.harmonicsDb.toFixed(1)} dB`;
 
 const GROUP_NAMES: Record<string, string> = { input: "Eingang", pre: "Vorfilter", clip: "Kennlinie", post: "Klangregelung", output: "Ausgang" };
 
 export function formatDistortionModel(model: DistortionModel): string[] {
   const p = model.base;
   const lines = [
-    `Verzerrer: Vorfilter → Kennlinie (Härte ${p.hardness.toFixed(1)}, Asymmetrie ${(p.clipNeg / p.clipPos).toFixed(2)}) → Klangregelung` +
-      (model.delay ? `, Verzögerung ${model.delay} Samples wie das Original` : ""),
-    ...(model.report.groups ?? []).map((g) => `Regler ${g.name}: wirkt auf ${g.groups.map((x) => GROUP_NAMES[x] ?? x).join(" + ")}`),
+    `Distortion: pre-filter → curve (hardness ${p.hardness.toFixed(1)}, asymmetry ${(p.clipNeg / p.clipPos).toFixed(2)}) → tone stage` +
+      (model.delay ? `, latency ${model.delay} samples like the original` : ""),
+    ...(model.report.groups ?? []).map((g) => `Control ${g.name}: acts on ${g.groups.map((x) => GROUP_NAMES[x] ?? x).join(" + ")}`),
   ];
-  if (model.report.train) lines.push(`Modell vs. Original (Einzelregler): ${errorLine(model.report.train)} – ${distortionVerdict(model.report.train.total)}`);
-  if (model.report.validate) lines.push(`Vorhersage unbekannter Kombinationen: ${errorLine(model.report.validate)} – ${distortionVerdict(model.report.validate.total)}`);
+  if (model.report.train) lines.push(`Model vs. original (single controls): ${errorLine(model.report.train)} – ${distortionVerdict(model.report.train.total)}`);
+  if (model.report.validate) lines.push(`Prediction of unseen combinations: ${errorLine(model.report.validate)} – ${distortionVerdict(model.report.validate.total)}`);
   return lines;
 }
 
 export function formatDistortionVerify(report: DistortionVerifyReport): string[] {
   const lines = [
-    `Klon vs. Original (${report.renders} Einstellungen): ${errorLine(report.overall)} – ${distortionVerdict(report.overall.total)}`,
-    `  Signalvergleich (lautes Rauschen): Fehler/Signal ${report.esrDb.toFixed(1)} dB`,
+    `Clone vs. original (${report.renders} settings): ${errorLine(report.overall)} – ${distortionVerdict(report.overall.total)}`,
+    `  Signal comparison (loud noise): error/signal ${report.esrDb.toFixed(1)} dB`,
   ];
-  if (report.validate) lines.push(`  davon unbekannte Kombinationen: ${errorLine(report.validate)}`);
-  lines.push("Größte Abweichungen:", ...report.worst.map((w) => `  ${w.label}: ${w.total.toFixed(2)} (Fehler/Signal ${w.esrDb.toFixed(1)} dB)`));
-  if (report.engineEsrDb > -60) lines.push(`Achtung: Plugin weicht vom Referenzmodell ab (Fehler/Signal ${report.engineEsrDb.toFixed(1)} dB, ${report.engineWorst})`);
+  if (report.validate) lines.push(`  of which unseen combinations: ${errorLine(report.validate)}`);
+  lines.push("Largest deviations:", ...report.worst.map((w) => `  ${w.label}: ${w.total.toFixed(2)} (error/signal ${w.esrDb.toFixed(1)} dB)`));
+  if (report.engineEsrDb > -60) lines.push(`Warning: the plugin deviates from the reference model (error/signal ${report.engineEsrDb.toFixed(1)} dB, ${report.engineWorst})`);
   return lines;
 }
 
@@ -89,9 +89,9 @@ export async function cloneDistortionProfile(options: DistortionCloneOptions): P
 
   stage("analyse");
   let model = options.refit ? undefined : storedDistortionModel(profile);
-  if (model) log("info", "Im Profil gespeichertes Modell wird verwendet");
+  if (model) log("info", "Using the model stored in the profile");
   else {
-    log("info", `${profile.captures.renders.length} Messungen von ${profile.manifest.plugin.name} werden analysiert (alle Kerne) …`);
+    log("info", `Analysing ${profile.captures.renders.length} measurements of ${profile.manifest.plugin.name} (all cores) …`);
     model = await fitDistortion(profile, options.onProgress, options.signal);
   }
   for (const line of formatDistortionModel(model)) log("info", line);
@@ -99,13 +99,13 @@ export async function cloneDistortionProfile(options: DistortionCloneOptions): P
   const stored = profile.files.get(GUI_MODEL_FILE);
   let guiModel = options.refitGui || !stored ? undefined : (JSON.parse(strFromU8(stored)) as GuiModel);
   let originalRaw = join(guiCacheDir(profile), "pass2", "base.rgba");
-  if (guiModel) log("info", "Im Profil gespeicherte Oberfläche wird verwendet");
+  if (guiModel) log("info", "Using the editor layout stored in the profile");
   else if (options.gui) {
     stage("gui");
-    if (!virtualDisplayAvailable()) log("warn", "Oberfläche wird nicht nachgebaut: Xvfb fehlt (sudo pacman -S xorg-server-xvfb)");
+    if (!virtualDisplayAvailable()) log("warn", "Editor not rebuilt: Xvfb is missing (sudo pacman -S xorg-server-xvfb)");
     else {
       const pluginPath = options.pluginPath ?? (await locatePlugin(profile));
-      if (!pluginPath) log("warn", "Oberfläche wird nicht nachgebaut: Original-Plugin nicht gefunden");
+      if (!pluginPath) log("warn", "Editor not rebuilt: original plugin not found");
       else {
         const captured = await captureGuiLayout(profile, pluginPath, {
           log,
@@ -151,7 +151,7 @@ export async function cloneDistortionProfile(options: DistortionCloneOptions): P
         });
         if (comparison) gui.comparison = comparison;
       } catch (error) {
-        log("warn", `Oberflächen-Vergleich nicht möglich: ${(error as Error).message}`);
+        log("warn", `Editor comparison not possible: ${(error as Error).message}`);
       }
     }
   }
@@ -160,6 +160,6 @@ export async function cloneDistortionProfile(options: DistortionCloneOptions): P
   profile.files.set(DISTORTION_MODEL_FILE, strToU8(JSON.stringify({ ...model, fitRevision: DISTORTION_FIT_REVISION })));
   profile.files.set("report.json", strToU8(JSON.stringify({ createdAt: new Date().toISOString(), pluginName, model: model.report, ...(verify ? { verify } : {}) }, null, 1)));
   await writeProfile(options.profilePath, profile);
-  log("info", `Modell und Bericht im Profil gespeichert: ${options.profilePath}`);
+  log("info", `Model and report saved in the profile: ${options.profilePath}`);
   return { model, build, ...(verify ? { verify } : {}), ...(gui ? { gui } : {}) };
 }

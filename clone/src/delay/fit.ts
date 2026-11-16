@@ -27,7 +27,7 @@ export interface DelayObservation {
 
 export function delayInput(profile: Profile): DelayInput {
   const segment = profile.testSignals.segments.find((s) => s.id === "impulse" && s.kind === "impulse");
-  if (!segment) throw new Error("Das Profil enthält keine Delay-Messung (Impuls-Segment fehlt)");
+  if (!segment) throw new Error("The profile holds no delay measurement (impulse segment missing)");
   return { sampleRate: profile.manifest.capture.sampleRate, start: segment.start, length: segment.length, amplitude: segment.params?.amplitude ?? 1 };
 }
 

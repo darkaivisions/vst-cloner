@@ -134,7 +134,7 @@ function startJob(kind: string, run: (ctx: JobContext) => Promise<unknown>): { j
 
 const str = (params: Json, key: string): string => {
   const value = params[key];
-  if (typeof value !== "string" || !value) throw new Error(`Parameter „${key}“ fehlt`);
+  if (typeof value !== "string" || !value) throw new Error(`Parameter "${key}" is missing`);
   return value;
 };
 
@@ -174,7 +174,7 @@ async function imageDataUrl(path: string | undefined): Promise<string | undefine
 const svgDataUrl = (svg: string) => `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 
 const SEGMENT_NAMES: Record<string, string> = {
-  silence: "Pause", impulse: "Impuls", logSweep: "Sweep", noise: "Rauschen", levelSteps: "Pegeltreppe", toneBurst: "Ton-Burst",
+  silence: "Silence", impulse: "Impulse", logSweep: "Sweep", noise: "Noise", levelSteps: "Level steps", toneBurst: "Tone burst",
 };
 async function guiResult(gui: { controls: number; comparison?: { similarity: number; colorSimilarity: number; comparePng?: string } } | undefined) {
   if (!gui) return undefined;
@@ -186,7 +186,7 @@ async function guiResult(gui: { controls: number; comparison?: { similarity: num
 }
 
 const PLANNER_NAMES: Record<string, string> = {
-  eq: "EQ-Messung", dynamics: "Dynamik-Messung", distortion: "Verzerrer-Messung", delay: "Delay-Messung", reverb: "Hall-Messung", generic: "Allgemeine Messung",
+  eq: "EQ measurement", dynamics: "Dynamics measurement", distortion: "Distortion measurement", delay: "Delay measurement", reverb: "Reverb measurement", generic: "General measurement",
 };
 /** Rating of the main number in a report, by the measurement the profile was captured with. */
 const VERDICTS: Record<string, (value: number) => string> = { dynamics: dynamicsVerdict, distortion: distortionVerdict, delay: delayVerdict, reverb: reverbVerdict };
@@ -196,12 +196,12 @@ const MODES = ["eq", "dynamics", "distortion", "delay", "reverb", "generic"] as 
 type Mode = (typeof MODES)[number];
 const PLANNERS = { eq: eqPlanner, dynamics: dynamicsPlanner, distortion: distortionPlanner, delay: delayPlanner, reverb: reverbPlanner };
 const PLAN_NOTES: Record<Mode, string> = {
-  eq: "EQ-Messplan: jede Filterform bei mehreren Frequenzen, Gains und Güten",
-  dynamics: "Kompressor-Messplan: jeder Regler einzeln (dicht an den Enden) + Zufallskombinationen zur Gegenprobe, Messsignal mit Pegeltreppe, Bursts und langen Pausen",
-  distortion: "Verzerrer-Messplan: jeder Regler einzeln + Zufallskombinationen zur Gegenprobe, Messsignal mit Sinus-Pegeltreppen bei mehreren Frequenzen, Rauschen und leisem Sweep",
-  delay: "Delay-Messplan: jeder Regler einzeln + Zufallskombinationen zur Gegenprobe, Messsignal mit Impuls, langer Stille und Rauschburst",
-  reverb: "Hall-Messplan: jeder Regler einzeln + Zufallskombinationen zur Gegenprobe, Messsignal mit einem Impuls und seinem Ausklang",
-  generic: "Allgemeiner Messplan: jeder Parameter einzeln + Zufallskombinationen",
+  eq: "EQ plan: every filter shape at several frequencies, gains and Q values",
+  dynamics: "Compressor plan: every control on its own (dense near the ends) + random combinations as a cross-check, test signal with level staircase, bursts and long pauses",
+  distortion: "Distortion plan: every control on its own + random combinations as a cross-check, test signal with sine level staircases at several frequencies, noise and a quiet sweep",
+  delay: "Delay plan: every control on its own + random combinations as a cross-check, test signal with an impulse, long silence and a noise burst",
+  reverb: "Reverb plan: every control on its own + random combinations as a cross-check, test signal with an impulse and its decay",
+  generic: "General plan: every parameter on its own + random combinations",
 };
 
 /** Everything the library shows about a profile: plugin, capture, signal, model, editor layout. */
@@ -338,41 +338,41 @@ async function summarizeProfile(path: string): Promise<ProfileSummary> {
 
 /** Titles of the steps before the planned renders; the app shows them while nothing can be counted yet. */
 const CAPTURE_STEPS = {
-  repeat: "Wiederholbarkeit wird geprüft",
-  probe: "Arbeitspunkt wird gesucht",
-  survey: "Schalterstellungen werden gesucht",
+  repeat: "Checking repeatability",
+  probe: "Looking for a working point",
+  survey: "Looking for switch positions",
 } as const;
 
 function captureMessage(event: CaptureProgress, names: Map<number, string>): string | undefined {
   switch (event.stage) {
-    case "info": return `Plugin wird geladen: ${event.plugin}`;
-    case "begin": return `${CAPTURE_STEPS[event.step]} – ${event.renders} Vorab-Messungen`;
+    case "info": return `Loading plugin: ${event.plugin}`;
+    case "begin": return `${CAPTURE_STEPS[event.step]} – ${event.renders} preliminary renders`;
     case "repeat":
       return event.repeatable
-        ? "Das Plugin liefert bei gleicher Einstellung dasselbe Signal"
-        : "Nicht wiederholbar: das Plugin merkt sich einen Zustand zwischen den Messungen – jede Einstellung wird mit einer frischen Instanz gemessen (dauert länger)";
+        ? "The plugin gives the same signal for the same setting"
+        : "Not repeatable: the plugin keeps a state between renders – every setting is measured with a fresh instance (takes longer)";
     case "probe":
-      return `Arbeitspunkt gewählt (${event.chosen + 1} von ${event.candidates})` +
+      return `Working point chosen (${event.chosen + 1} of ${event.candidates})` +
         (event.workingPoint.length ? `: ${event.workingPoint.map((v) => `${names.get(v.index) ?? `#${v.index}`} = ${v.value.toFixed(2)}`).join(", ")}` : "");
     case "survey":
       return event.stepped.length
-        ? `Als Schalter erkannt: ${event.stepped.map((s) => `${names.get(s.index) ?? `#${s.index}`} (${s.positions} Stellungen)`).join(", ")}`
-        : "Keine versteckten Schalter gefunden";
-    case "retry": return `Messung wird wiederholt: ${event.reason}`;
-    case "settle": return `Das Plugin schwingt nach dem Laden aus (Einschaltknacks) – Vorlauf auf ${event.prerollSeconds.toFixed(1)} s verlängert`;
-    case "plan": return `${event.parameters} Parameter gefunden, ${event.selected} werden gemessen – ${event.renders} Einstellungen`;
-    case "write": return `Profil wird gespeichert: ${event.path}`;
+        ? `Detected as switches: ${event.stepped.map((s) => `${names.get(s.index) ?? `#${s.index}`} (${s.positions} positions)`).join(", ")}`
+        : "No hidden switches found";
+    case "retry": return `Repeating render: ${event.reason}`;
+    case "settle": return `The plugin settles after loading (switch-on click) – pre-roll extended to ${event.prerollSeconds.toFixed(1)} s`;
+    case "plan": return `${event.parameters} parameters found, ${event.selected} measured – ${event.renders} settings`;
+    case "write": return `Saving profile: ${event.path}`;
     default: return undefined;
   }
 }
 
 const STAGE_TITLES: Record<CloneStage, string> = {
-  analyse: "Analyse",
-  gui: "Oberfläche erfassen",
-  build: "Plugin-Build",
-  verify: "Vergleich mit dem Original",
-  "gui-verify": "Oberflächen-Vergleich",
-  save: "Speichern",
+  analyse: "Analysis",
+  gui: "Capture editor",
+  build: "Plugin build",
+  verify: "Comparison with the original",
+  "gui-verify": "Editor comparison",
+  save: "Save",
 };
 
 // ---- methods -------------------------------------------------------------------------------------
@@ -411,7 +411,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
     const effectClass = classifyPlugin(info).effectClass;
     let eq: { bands: number; shapes: string[]; renders: number; groups: number; fixedBands: number; sliders: number } | undefined;
     try {
-      if (effectClass !== "eq") throw new Error("kein EQ");
+      if (effectClass !== "eq") throw new Error("not an EQ");
       const mapping = detectEq(info.parameters);
       const groups = bandGroups(mapping);
       eq = {
@@ -524,7 +524,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
           if (event.stage === "render") ctx.progress(event.done, event.total, event.id);
           else if (event.stage === "step") ctx.progress(Math.min(event.done, event.total), event.total, CAPTURE_STEPS[event.step]);
           else if (event.stage === "begin") ctx.stage(event.step, CAPTURE_STEPS[event.step]);
-          else if (event.stage === "plan") ctx.stage("render", "Einstellungen messen");
+          else if (event.stage === "plan") ctx.stage("render", "Measuring settings");
           else if (event.stage === "repeat") isolated = !event.repeatable;
           else if (event.stage === "survey") stepped = event.stepped.map((s) => ({ name: names.get(s.index) ?? `#${s.index}`, positions: s.positions }));
           else if (event.stage === "retry") retries++;
@@ -533,7 +533,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
         },
       });
       const bytes = await fileSize(output);
-      ctx.log("success", `${profile.captures.renders.length} Einstellungen gemessen in ${((Date.now() - started) / 1000).toFixed(1)} s (${(bytes / 1024 / 1024).toFixed(1)} MiB)`);
+      ctx.log("success", `${profile.captures.renders.length} settings measured in ${((Date.now() - started) / 1000).toFixed(1)} s (${(bytes / 1024 / 1024).toFixed(1)} MiB)`);
       return { profile: output, renders: profile.captures.renders.length, bytes, name: info.plugin.name, isolated, stepped, retries };
     });
   },
@@ -561,7 +561,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
     const source = str(params, "path");
     await mkdir(profilesDir(), { recursive: true });
     const target = join(profilesDir(), basename(source));
-    if (existsSync(target)) throw new Error(`In der Bibliothek gibt es bereits ${basename(source)}`);
+    if (existsSync(target)) throw new Error(`The library already contains ${basename(source)}`);
     await summarizeProfile(source);
     await copyFile(source, target);
     return { path: target };
@@ -574,7 +574,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
 
   async "profiles.delete"(params) {
     const path = str(params, "path");
-    if (!path.startsWith(profilesDir())) throw new Error("Nur Profile aus der Bibliothek können gelöscht werden");
+    if (!path.startsWith(profilesDir())) throw new Error("Only profiles in the library can be deleted");
     await rm(path);
     return {};
   },
@@ -607,7 +607,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
           log: (level, message) => ctx.log(level, message),
         });
         const v = result.verify;
-        if (v) ctx.log("success", `Klon fertig – Abweichung zum Original ${v.overall.total.toFixed(2)} (${distortionVerdict(v.overall.total)})`);
+        if (v) ctx.log("success", `Clone ready – deviation from the original ${v.overall.total.toFixed(2)} (${distortionVerdict(v.overall.total)})`);
         return {
           kind: "distortion",
           pluginName,
@@ -657,8 +657,8 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
           measured = Boolean(result.model.report.tail);
         }
         // nothing to hear in the base render: the small error says nothing about the effect
-        const judged = !v ? "" : measured ? VERDICTS[kind]!(v.overall.rmsDb) : kind === "delay" ? "kein Echo gemessen" : "kein Nachhall gemessen";
-        if (v) ctx.log(measured ? "success" : "warn", `Klon fertig – Abweichung zum Original ${v.overall.rmsDb.toFixed(2)} dB (${judged})`);
+        const judged = !v ? "" : measured ? VERDICTS[kind]!(v.overall.rmsDb) : kind === "delay" ? "no echo measured" : "no reverb tail measured";
+        if (v) ctx.log(measured ? "success" : "warn", `Clone ready – deviation from the original ${v.overall.rmsDb.toFixed(2)} dB (${judged})`);
         return {
           kind,
           pluginName,
@@ -686,7 +686,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
           log: (level, message) => ctx.log(level, message),
         });
         const v = result.verify;
-        if (v) ctx.log("success", `Klon fertig – Abweichung zum Original ${v.overall.rmsDb.toFixed(2)} dB (${dynamicsVerdict(v.overall.rmsDb)})`);
+        if (v) ctx.log("success", `Clone ready – deviation from the original ${v.overall.rmsDb.toFixed(2)} dB (${dynamicsVerdict(v.overall.rmsDb)})`);
         return {
           kind: "dynamics",
           pluginName,
@@ -730,7 +730,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
         log: (level, message) => ctx.log(level, message),
       });
       const overall = result.verify?.overall;
-      if (overall) ctx.log("success", `Klon fertig – Abweichung zum Original ${overall.rmsDb.toFixed(2)} dB (${verdict(overall.rmsDb)})`);
+      if (overall) ctx.log("success", `Clone ready – deviation from the original ${overall.rmsDb.toFixed(2)} dB (${verdict(overall.rmsDb)})`);
       return {
         kind: "eq",
         pluginName,
@@ -837,7 +837,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
 
   async "llm.setRole"(params) {
     const role = str(params, "role");
-    if (!isRoleName(role)) throw new Error(`Unbekannte Rolle ${role}`);
+    if (!isRoleName(role)) throw new Error(`Unknown role ${role}`);
     const config = await loadConfig();
     const ref = params.model === null ? null : str(params, "model");
     if (ref === null) delete config.roles[role];
@@ -854,7 +854,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
     return startJob("llm-test", async (ctx) => {
       ctx.stage("test", `Test: ${ref}`);
       const target = await resolveModel(await loadConfig(), ref, { detailed: true });
-      ctx.log("info", "Drei kurze Prüfungen: Textantwort, Werkzeugaufruf, strukturierte Ausgabe");
+      ctx.log("info", "Three short checks: text answer, tool call, structured output");
       const report = await testModel(target);
       for (const r of report.results) ctx.log(r.ok ? "success" : "warn", `${r.name}: ${r.detail} (${(r.milliseconds / 1000).toFixed(1)} s)`);
       return report;

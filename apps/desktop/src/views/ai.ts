@@ -17,17 +17,17 @@ interface ModelInfo {
 }
 
 const KEY_LABELS: Record<string, string> = {
-  local: "lokal, kein Schlüssel nötig",
-  keychain: "Schlüssel im Schlüsselbund",
-  env: "Schlüssel aus Umgebungsvariable",
-  none: "kein Schlüssel",
-  error: "Schlüsselbund nicht erreichbar",
+  local: "local, no key needed",
+  keychain: "key in the system keychain",
+  env: "key from an environment variable",
+  none: "no key",
+  error: "keychain not reachable",
 };
 
-const ROLE_TITLES: Record<string, string> = { analyst: "Analyse", builder: "Klon-Code" };
+const ROLE_TITLES: Record<string, string> = { analyst: "Analysis", builder: "Clone code" };
 const ROLE_DESCRIPTIONS: Record<string, string> = {
-  analyst: "Wertet Plugin-Metadaten mit REA aus und schreibt die funktionale Beschreibung",
-  builder: "Schreibt den DSP-Code des Klons – sieht nur Beschreibung und Messdaten",
+  analyst: "Evaluates plugin metadata with REA and writes the functional description",
+  builder: "Writes the DSP code of the clone – sees only the description and the measurements",
 };
 
 const tokens = (n?: number) => (n === undefined ? "?" : n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M` : `${Math.round(n / 1000)}k`);
@@ -44,12 +44,12 @@ export class AiView {
   constructor() {
     this.element = h("div.view.ai-view", {},
       h("section.card", {},
-        h("header.step-header", {}, h("h2", {}, "Anbieter"), h("div.spacer"), h("button.ghost.small", { onclick: () => this.refresh() }, "Aktualisieren")),
-        h("p.hint", {}, "Lokale Modelle (Ollama, LM Studio, …) und Cloud-Dienste. Schlüssel liegen im System-Schlüsselbund, nie in einer Datei."),
+        h("header.step-header", {}, h("h2", {}, "Providers"), h("div.spacer"), h("button.ghost.small", { onclick: () => this.refresh() }, "Refresh")),
+        h("p.hint", {}, "Local models (Ollama, LM Studio, …) and cloud services. Keys are kept in the system keychain, never in a file."),
         this.providers, this.addBox),
       h("section.card", {},
-        h("header.step-header", {}, h("h2", {}, "Rollen")),
-        h("p.hint", {}, "Welches Modell welche Aufgabe übernimmt. Wird für kommende Effektarten gebraucht – EQ-Klone funktionieren ohne KI."),
+        h("header.step-header", {}, h("h2", {}, "Roles")),
+        h("p.hint", {}, "Which model does which job. Needed for upcoming effect types – EQ clones work without AI."),
         this.roles));
   }
 
@@ -68,20 +68,20 @@ export class AiView {
   private renderProviders() {
     const s = this.status!;
     clear(this.providers);
-    if (s.providers.length === 0) this.providers.appendChild(h("div.empty", {}, "Noch kein Anbieter eingerichtet."));
+    if (s.providers.length === 0) this.providers.appendChild(h("div.empty", {}, "No provider set up yet."));
     for (const p of s.providers) {
-      const keyInput = h("input.key-input", { type: "password", placeholder: "API-Schlüssel einfügen", autocomplete: "off" });
+      const keyInput = h("input.key-input", { type: "password", placeholder: "Paste API key", autocomplete: "off" });
       const keyRow = h("div.key-row.hidden", {}, keyInput,
         h("button.primary.small", { onclick: async () => {
           try {
             const r = await call<{ models: number }>("llm.setKey", { provider: p.id, key: keyInput.value });
-            toast(`Schlüssel gespeichert – ${r.models} Modelle verfügbar`);
+            toast(`Key saved – ${r.models} models available`);
             keyInput.value = "";
             await this.refresh();
           } catch (error) {
             toast((error as Error).message, "error");
           }
-        } }, "Speichern"));
+        } }, "Save"));
       const ok = p.key === "local" || p.key === "keychain" || p.key === "env";
       this.providers.appendChild(
         h("div.provider-row", {},
@@ -89,13 +89,13 @@ export class AiView {
           h("div.provider-main", {}, h("strong", {}, p.name), h("span.muted", {}, ` · ${p.id}${p.baseURL ? ` · ${p.baseURL}` : ""}`),
             h("div.muted.small", {}, KEY_LABELS[p.key] ?? p.key)),
           h("div.provider-actions", {},
-            !p.local && h("button.ghost.small", { onclick: () => keyRow.classList.toggle("hidden") }, "Schlüssel …"),
+            !p.local && h("button.ghost.small", { onclick: () => keyRow.classList.toggle("hidden") }, "Key …"),
             h("button.ghost.small.danger-text", { onclick: async () => {
-              if (!confirm(`Anbieter „${p.name}“ entfernen?`)) return;
+              if (!confirm(`Remove the provider "${p.name}"?`)) return;
               await call("llm.remove", { provider: p.id }).catch((e) => toast((e as Error).message, "error"));
               this.models.delete(p.id);
               await this.refresh();
-            } }, "Entfernen")),
+            } }, "Remove")),
           keyRow),
       );
     }
@@ -104,8 +104,8 @@ export class AiView {
       this.providers.appendChild(
         h("div.provider-row.suggestion", {},
           h("span.status-dot.good"),
-          h("div.provider-main", {}, h("strong", {}, d.name), h("span.muted", {}, ` · läuft (${d.detail})`)),
-          h("div.provider-actions", {}, h("button.primary.small", { onclick: () => this.add(d.preset) }, "Hinzufügen"))),
+          h("div.provider-main", {}, h("strong", {}, d.name), h("span.muted", {}, ` · running (${d.detail})`)),
+          h("div.provider-actions", {}, h("button.primary.small", { onclick: () => this.add(d.preset) }, "Add"))),
       );
     }
   }
@@ -114,10 +114,10 @@ export class AiView {
     const s = this.status!;
     clear(this.addBox);
     const select = h("select", {}, ...s.presets.map((p) => h("option", { value: p.id }, `${p.name} – ${p.description}`)));
-    const url = h("input.hidden", { type: "url", placeholder: "Basis-URL, z. B. https://api.groq.com/openai/v1" });
+    const url = h("input.hidden", { type: "url", placeholder: "Base URL, e.g. https://api.groq.com/openai/v1" });
     select.addEventListener("change", () => url.classList.toggle("hidden", !s.presets.find((p) => p.id === select.value)?.needsBaseURL));
-    this.addBox.append(h("span.muted", {}, "Anbieter hinzufügen:"), select, url,
-      h("button.ghost.small", { onclick: () => this.add(select.value, url.value) }, "Hinzufügen"));
+    this.addBox.append(h("span.muted", {}, "Add a provider:"), select, url,
+      h("button.ghost.small", { onclick: () => this.add(select.value, url.value) }, "Add"));
   }
 
   private async add(preset: string, baseURL = "") {
@@ -146,7 +146,7 @@ export class AiView {
       try {
         for (const m of await this.loadModels(p.id)) {
           if (m.toolCall === false) continue;
-          const price = m.cost?.input === 0 && m.cost?.output === 0 ? "kostenlos" : m.cost?.input !== undefined ? `$${Number(m.cost.input.toPrecision(3))}/$${Number((m.cost.output ?? 0).toPrecision(3))} pro 1M` : "";
+          const price = m.cost?.input === 0 && m.cost?.output === 0 ? "free" : m.cost?.input !== undefined ? `$${Number(m.cost.input.toPrecision(3))}/$${Number((m.cost.output ?? 0).toPrecision(3))} per 1M` : "";
           options.push({ value: `${p.id}/${m.id}`, label: `${p.name}: ${m.name ?? m.id} (${tokens(m.contextLength)}${price ? ` · ${price}` : ""})` });
         }
       } catch {
@@ -155,27 +155,27 @@ export class AiView {
     }
 
     for (const r of s.roles) {
-      const select = h("select", {}, h("option", { value: "" }, "– nicht gesetzt –"),
+      const select = h("select", {}, h("option", { value: "" }, "– not set –"),
         ...options.map((o) => h("option", { value: o.value, selected: o.value === r.model }, o.label)));
       if (r.model && !options.some((o) => o.value === r.model)) select.appendChild(h("option", { value: r.model, selected: true }, r.model));
       select.addEventListener("change", async () => {
         await call("llm.setRole", { role: r.role, model: select.value || null }).catch((e) => toast((e as Error).message, "error"));
       });
-      const testButton = h("button.ghost.small", {}, "Testen");
+      const testButton = h("button.ghost.small", {}, "Test");
       testButton.addEventListener("click", async () => {
-        if (!select.value) return toast("Erst ein Modell wählen", "error");
+        if (!select.value) return toast("Choose a model first", "error");
         testButton.disabled = true;
-        testButton.textContent = "Teste …";
+        testButton.textContent = "Testing …";
         try {
           const job = await startJob<{ results: { ok: boolean }[] }>("llm.test", { model: select.value });
           const report = await job.result;
           const passed = report.results.filter((x) => x.ok).length;
-          toast(`${passed} von ${report.results.length} Prüfungen bestanden – Details im Protokoll`, passed === report.results.length ? "info" : "error");
+          toast(`${passed} of ${report.results.length} checks passed – details in the log`, passed === report.results.length ? "info" : "error");
         } catch (error) {
           toast((error as Error).message, "error");
         } finally {
           testButton.disabled = false;
-          testButton.textContent = "Testen";
+          testButton.textContent = "Test";
         }
       });
       this.roles.appendChild(
@@ -184,6 +184,6 @@ export class AiView {
           select, testButton),
       );
     }
-    if (options.length === 0) this.roles.appendChild(h("p.hint", {}, "Sobald ein Anbieter eingerichtet ist, erscheinen hier seine Modelle."));
+    if (options.length === 0) this.roles.appendChild(h("p.hint", {}, "Once a provider is set up, its models appear here."));
   }
 }

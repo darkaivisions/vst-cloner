@@ -50,7 +50,7 @@ export async function verifyClone(profile: Profile, model: EqModel, clonePath: s
   const toClone = new Map<number, { index: number; toggle: boolean }>();
   for (const param of cloneParameters(model, parameters)) {
     const index = cloneIndexByName.get(param.name);
-    if (index === undefined) throw new Error(`Der Klon hat keinen Parameter „${param.name}“`);
+    if (index === undefined) throw new Error(`The clone has no parameter "${param.name}"`);
     toClone.set(param.original, { index, toggle: param.kind === "toggle" });
   }
 
@@ -81,7 +81,7 @@ export async function verifyClone(profile: Profile, model: EqModel, clonePath: s
     await writeFile(join(workDir, "input.wav"), encodeWav({ sampleRate: audio.sampleRate, channels: [audio.channels[0]!] }));
     await writeFile(join(workDir, "job.json"), JSON.stringify(job));
 
-    log("info", `Klon wird mit ${renders.length} gemessenen Einstellungen nachgemessen …`);
+    log("info", `Measuring the clone with ${renders.length} measured settings …`);
     let done = 0;
     await runHost(["render", join(workDir, "job.json")], {
       ...(options.hostPath ? { hostPath: options.hostPath } : {}),

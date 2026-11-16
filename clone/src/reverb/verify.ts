@@ -43,7 +43,7 @@ export async function verifyReverbClone(
   const originals = new Map(profile.parameters.parameters.map((p) => [p.index, p]));
   for (const param of dynamicsCloneParameters(model, profile.parameters.parameters, profile.captures.renders)) {
     const index = cloneIndexByName.get(param.name);
-    if (index === undefined) throw new Error(`Der Klon hat keinen Parameter „${param.name}“`);
+    if (index === undefined) throw new Error(`The clone has no parameter "${param.name}"`);
     toClone.set(param.original, index);
     convert.set(param.original, (value) => cloneValue(param, originals.get(param.original), value));
     asModel.set(param.original, (value) => modelValue(param, originals.get(param.original), value));
@@ -70,7 +70,7 @@ export async function verifyReverbClone(
     const { audio } = regenerateTestSignal(profile.testSignals);
     await writeFile(join(workDir, "input.wav"), encodeWav({ sampleRate: audio.sampleRate, channels: [audio.channels[0]!] }));
     await writeFile(join(workDir, "job.json"), JSON.stringify(job));
-    log("info", `Klon wird mit ${renders.length} gemessenen Einstellungen nachgemessen …`);
+    log("info", `Measuring the clone with ${renders.length} measured settings …`);
     await runHost(["render", join(workDir, "job.json")], host);
 
     const input = reverbInput(profile);
@@ -79,7 +79,7 @@ export async function verifyReverbClone(
     for (const o of reverbObservations(profile, input)) {
       const output = decodeWav(await readFile(join(workDir, "out", `${o.renderId}.wav`))).channels[0]!;
       const response = reverbResponse(output, input);
-      if (response.some((x) => !Number.isFinite(x))) throw new Error(`Der Klon liefert kein gültiges Signal (NaN/inf) bei „${o.label}“`);
+      if (response.some((x) => !Number.isFinite(x))) throw new Error(`The clone gives no valid signal (NaN/inf) at "${o.label}"`);
       const clone = describeResponse(response, sampleRate);
       rows.push({ label: o.label, purpose: o.purpose, errors: compareReverbs(clone, o.measured) });
 

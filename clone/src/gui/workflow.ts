@@ -90,13 +90,13 @@ export async function captureGuiLayout(
     ...(options.signal ? { signal: options.signal } : {}),
     ...(options.onProgress ? { onProgress: options.onProgress } : {}),
   });
-  options.log("info", "Oberfläche wird analysiert (Regler, Farben, Flächen, Beschriftungen) …");
+  options.log("info", "Analysing the editor (controls, colours, areas, labels) …");
   const model = await analyzeGui(probe, profile.parameters.parameters, profile.manifest.plugin.name,
     options.meterReduction ? { meterReduction: options.meterReduction } : {});
   const kinds = new Map<string, number>();
   for (const c of model.controls) kinds.set(c.kind, (kinds.get(c.kind) ?? 0) + 1);
-  const names: Record<string, string> = { rotary: "Drehregler", "slider-h": "Schieberegler", "slider-v": "Schieberegler", toggle: "Schalter", choice: "Auswahlfelder", value: "Wertanzeigen" };
-  options.log("info", `Erkannt: ${[...kinds].map(([k, n]) => `${n} ${names[k] ?? k}`).join(", ") || "keine Bedienelemente"}, ${model.displays.length} Anzeige(n)${model.displays.some((d) => d.kind === "meter") ? " (davon Pegelreduktions-Nadel)" : ""}, ${model.panels.length} Flächen, ${model.texts.length} Beschriftungen`);
+  const names: Record<string, string> = { rotary: "knobs", "slider-h": "sliders", "slider-v": "sliders", toggle: "switches", choice: "selectors", value: "value displays" };
+  options.log("info", `Detected: ${[...kinds].map(([k, n]) => `${n} ${names[k] ?? k}`).join(", ") || "no controls"}, ${model.displays.length} display(s)${model.displays.some((d) => d.kind === "meter") ? " (including a gain reduction needle)" : ""}, ${model.panels.length} areas, ${model.texts.length} labels`);
 
   const originalPng = join(workDir, "original.png");
   await copyFile(probe.basePng, originalPng);
@@ -160,7 +160,7 @@ export async function compareGui(
   const originalPng = join(guiCacheDir(profile), "original.png");
   if (!originalRaw || !existsSync(originalRaw)) return undefined;
   if (cloneShot.width !== model.width || cloneShot.height !== model.height) {
-    options.log("warn", `Klon-Oberfläche hat ${cloneShot.width}×${cloneShot.height} statt ${model.width}×${model.height} Pixel – kein Pixelvergleich`);
+    options.log("warn", `Clone editor is ${cloneShot.width}×${cloneShot.height} instead of ${model.width}×${model.height} pixels – no pixel comparison`);
     return { similarity: 0, colorSimilarity: 0, originalPng, clonePng };
   }
   const a = await loadRaw(originalRaw, model.width, model.height);
@@ -178,6 +178,6 @@ export async function compareGui(
     side.data.set(b.data.subarray(y * model.width * 4, (y + 1) * model.width * 4), (y * side.width + model.width + 8) * 4);
   }
   await writeFile(join(guiCacheDir(profile), "compare.png"), encodePng(side));
-  options.log("info", `Oberfläche: Struktur-Ähnlichkeit ${Math.round(similarity * 100)} %, Farb-Ähnlichkeit ${Math.round(colorSimilarity * 100)} % (Vergleichsbild: ${join(guiCacheDir(profile), "compare.png")})`);
+  options.log("info", `Editor: structural similarity ${Math.round(similarity * 100)} %, colour similarity ${Math.round(colorSimilarity * 100)} % (comparison image: ${join(guiCacheDir(profile), "compare.png")})`);
   return { similarity, colorSimilarity, originalPng, clonePng, comparePng: join(guiCacheDir(profile), "compare.png") };
 }

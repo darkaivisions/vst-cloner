@@ -1,298 +1,303 @@
 # vst-cloner
 
-![vst-cloner: Plugin wählen, als Kompressor erkannt, Kompressor-Messung](docs/images/app.png)
+![vst-cloner: choose a plugin, detected as a compressor, compressor measurement](docs/images/app.png)
 
-Gekaufte Effekt-Plugins unter Linux nutzen: Plugins werden als Black Box vermessen,
-als offenes Profil (`.vcprofile`) gespeichert und daraus als freier Klon (LV2/VST3/CLAP)
-neu gebaut. Kein dekompilierter Code, keine extrahierten Samples – nur gemessenes Klangverhalten.
+Use the effect plugins you bought on Linux: plugins are measured as a black box,
+saved as an open profile (`.vcprofile`) and rebuilt from it as a free clone (LV2/VST3/CLAP).
+No decompiled code, no extracted samples – only measured sound behaviour.
 
-Gesamtplan und Meilensteine: [PLAN.md](PLAN.md) · Profilformat: [docs/profile-format.md](docs/profile-format.md)
+Overall plan and milestones: [PLAN.md](PLAN.md) · Profile format: [docs/profile-format.md](docs/profile-format.md)
 
-**Stand: Meilenstein 6 in Arbeit** – Desktop-App, Capture-Host, Profilformat und LLM-Anbindung funktionieren.
-Klone (VST3/LV2) gibt es für **parametrische EQs**, **Kompressoren/Limiter**, **Gates/Expander** und
-**Verzerrer** (Overdrive/Distortion), jeweils mit nachgebauter Oberfläche des Originals.
-**Delays** und **Reverbs** lassen sich in einer ersten Fassung klonen (noch ohne nachgebaute Oberfläche).
-Amp-Simulationen mit NAM, Modulationseffekte und der Builder-Agent (Faust) für alle übrigen Plugins folgen.
-Getestet unter Linux mit nativen VST3-/LV2-Plugins und Windows-Plugins über yabridge.
+**Status: milestone 6 in progress** – desktop app, capture host, profile format and LLM integration work.
+Clones (VST3/LV2) exist for **parametric EQs**, **compressors/limiters**, **gates/expanders** and
+**distortions** (overdrive/distortion), each with a rebuilt editor of the original.
+**Delays** and **reverbs** can be cloned in a first version (no rebuilt editor yet).
+Amp simulations with NAM, modulation effects and the builder agent (Faust) for all other plugins will follow.
+Tested on Linux with native VST3/LV2 plugins and Windows plugins via yabridge.
 
-| Klon | Original | Abweichung | Oberfläche |
+| Clone | Original | Deviation | Editor |
 |---|---|---|---|
-| Pro-Q 3 Clone | FabFilter Pro-Q 3 (yabridge) | 0,10 dB über 149 Einstellungen | 74 % Struktur, 98 % Farbe |
-| Open Optical Clone | Open Optical (Opto-Kompressor) | 0,50 dB Pegelverlauf über 44 Einstellungen, Oberwellen meist ±2 dB | 82 % Struktur, 95 % Farbe |
-| DirectionalCompressor Clone | IEM Directional Compressor | 0,71 dB Pegelverlauf über 224 Einstellungen | 75 % Struktur, 96 % Farbe |
-| GxBoss DS1 Clone | GxBoss DS1 (Guitarix, LV2) | Grundton 0,68 dB, Oberwellen 1,8 dB, Kleinsignal 1,23 dB | noch grob |
+| Pro-Q 3 Clone | FabFilter Pro-Q 3 (yabridge) | 0.10 dB over 149 settings | 74 % structure, 98 % colour |
+| Open Optical Clone | Open Optical (opto compressor) | 0.50 dB level curve over 44 settings, harmonics mostly ±2 dB | 82 % structure, 95 % colour |
+| DirectionalCompressor Clone | IEM Directional Compressor | 0.71 dB level curve over 224 settings | 77 % structure, 96 % colour |
+| GxBoss DS1 Clone | GxBoss DS1 (Guitarix, LV2) | fundamental 0.68 dB, harmonics 1.8 dB, small signal 1.23 dB | still rough |
 
-Batch-Läufe über alle installierten Plugins einer Klasse (ohne Oberfläche, Stand 16.11.; Delays 15.11.):
+Batch runs over all installed plugins of a class (without editor, as of 16 Nov; delays 15 Nov):
 
-| Klasse | Plugins | Klon vs. Original |
+| Class | Plugins | Clone vs. original |
 |---|---|---|
-| Kompressoren, Limiter, Gates, Expander | 12 | 0,34–3,55 dB: 9 gut oder besser, 2 brauchbar, 1 ohne messbare Kompression (z. B. OmniCompressor 0,34 · x42-dpl 0,40 · ZamComp 0,45 · Open Optical 0,52 · ZamGate 1,88) |
-| Delays | 12 | 1,43–15,7 dB: 3 sehr gut (ZamDelay 1,43 · Gxdigital_delay 1,95), 2 gut (Tal-Dub-3 2,87 · GxEcho-Stereo 3,12), 2 brauchbar, 4 ungenau, 1 ohne messbares Echo |
-| Reverbs | 19 | 1,48–6,97 dB: 12 gut oder besser, 7 brauchbar (z. B. ZamVerb 1,48 · Dragonfly Hall 1,67 · Tal-Reverb-III 1,68 · FdnReverb 4,08) |
-| Verzerrer | 73 | 0,06–18,4 dB: 46 gut oder besser, 14 brauchbar, 13 ungenau (z. B. GxMicroAmp 0,06 · Wolf Shaper 0,44 · GxBoss DS1 1,15 · GxTubeScreamer 1,93) |
-| EQs | 5 | 0,04–0,83 dB: IEM MultiEQ 0,04 · x42-eq 0,50 · ZamGEQ31 0,66 · GxBarkGraphicEQ 0,62 · GxGraphicEQ 0,83 |
+| Compressors, limiters, gates, expanders | 12 | 0.34–3.55 dB: 9 good or better, 2 usable, 1 without measurable compression (e.g. OmniCompressor 0.34 · x42-dpl 0.40 · ZamComp 0.45 · Open Optical 0.52 · ZamGate 1.88) |
+| Delays | 12 | 1.43–15.7 dB: 3 very good (ZamDelay 1.43 · Gxdigital_delay 1.95), 2 good (Tal-Dub-3 2.87 · GxEcho-Stereo 3.12), 2 usable, 4 inaccurate, 1 without a measurable echo |
+| Reverbs | 19 | 1.48–6.97 dB: 12 good or better, 7 usable (e.g. ZamVerb 1.48 · Dragonfly Hall 1.67 · Tal-Reverb-III 1.68 · FdnReverb 4.08) |
+| Distortions | 73 | 0.06–18.4 dB: 46 good or better, 14 usable, 13 inaccurate (e.g. GxMicroAmp 0.06 · Wolf Shaper 0.44 · GxBoss DS1 1.15 · GxTubeScreamer 1.93) |
+| EQs | 5 | 0.04–0.83 dB: IEM MultiEQ 0.04 · x42-eq 0.50 · ZamGEQ31 0.66 · GxBarkGraphicEQ 0.62 · GxGraphicEQ 0.83 |
 
-Bei Reverbs und den meisten Delays weichen Reglerkombinationen, die nicht einzeln gemessen wurden, noch deutlich stärker ab
-(Delays: 0,8–10 dB bei sieben Plugins, sonst 15–26 dB; Reverbs: 2–16 dB).
-Plugins, die sich zwischen zwei Messungen einen Zustand merken (11 der 19 Reverbs, 17 der 73 Verzerrer), werden
-automatisch mit einer frischen Instanz pro Einstellung gemessen. Schwingt ein Plugin nach dem Laden noch aus
-(Einschaltknacks), verlängert die Aufnahme den Vorlauf; ist ein Verzerrer in der Grundeinstellung stumm, sucht sie
-einen Arbeitspunkt, an dem er klingt.
+For reverbs and most delays, control combinations that were not measured on their own still deviate much more
+(delays: 0.8–10 dB for seven plugins, otherwise 15–26 dB; reverbs: 2–16 dB).
+Plugins that keep a state between two renders (11 of the 19 reverbs, 17 of the 73 distortions) are
+measured automatically with a fresh instance per setting. If a plugin still settles after loading
+(switch-on click), the capture extends the pre-roll; if a distortion is silent at its default setting, it looks for
+a working point at which it makes sound.
 
-## Voraussetzungen
+## Requirements
 
-- Node.js ≥ 22.18 (TypeScript läuft direkt, kein Build-Schritt)
-- CMake ≥ 3.22 und ein C++20-Compiler (GCC/Clang unter Linux, MSVC unter Windows)
+- Node.js ≥ 22.18 (TypeScript runs directly, no build step)
+- CMake ≥ 3.22 and a C++20 compiler (GCC/Clang on Linux, MSVC on Windows)
 
-## Einrichten
+## Setup
 
 ```bash
 npm install
-npm run host:configure      # lädt JUCE 9.0.5 herunter
+npm run host:configure      # downloads JUCE 9.0.5
 npm run host:build
 ```
 
-Mit vorhandenem JUCE-Checkout: `cmake -S host -B host/build -DVCH_JUCE_DIR=/pfad/zu/JUCE`.
+With an existing JUCE checkout: `cmake -S host -B host/build -DVCH_JUCE_DIR=/path/to/JUCE`.
 
-## Desktop-App
-
-```bash
-npm run app        # startet die Oberfläche (beim ersten Mal wird der Rust-Teil kompiliert)
-```
-
-Drei Bereiche: **Klonen** (Plugin wählen → Messen → Klon bauen), **Bibliothek** (gespeicherte Profile:
-Klon neu bauen ohne Original, exportieren, importieren) und **KI-Modelle** (Anbieter, Schlüssel, Rollen,
-Test). Unten zeigt das **Protokoll** jeden Schritt, nach Phasen gegliedert; „Details“ blendet auch die
-Ausgaben von Compiler und Host ein.
-
-Im Bereich Klonen wählt die App den Messmodus passend zum Plugin: **EQ-Messung**, **Kompressor-Messung**,
-**Verzerrer-Messung**, **Delay-Messung**, **Hall-Messung** oder **Allgemein**. Plugins, deren Kategorie eine andere Effektklasse nennt
-(Delay, Hall, Modulation …), werden dabei nicht als Kompressor oder Verzerrer eingestuft. Während der Messung nennt der
-Fortschrittsbalken auch die Vorstufen (Wiederholbarkeit, Arbeitspunkt, Schaltersuche); darunter steht, ob das Plugin
-mit frischer Instanz pro Einstellung gemessen wird und welche Regler als versteckte Schalter erkannt wurden. Bei EQs
-zeigt das Ergebnis zusätzlich die Abweichung mit mehreren Bändern zugleich. Beim Klonen kann sie außerdem die **Oberfläche des Originals nachbauen** (das Original
-wird dafür einmal unsichtbar geöffnet, siehe unten).
-
-Profile und Klone liegen unter `~/.local/share/vst-cloner/` (Windows: `%APPDATA%\vst-cloner`).
-Voraussetzung zusätzlich zu oben: Rust (`cargo`) und unter Linux WebKitGTK 4.1.
-Die App nutzt vorerst Node.js und den Projektordner – eigenständige Installationspakete folgen mit Meilenstein 9.
-
-## Benutzung (Kommandozeile)
+## Desktop app
 
 ```bash
-# Was steckt im Plugin?
-npm run vch -- info ~/.vst3/MeinPlugin.vst3
-
-# Was würde gemessen?
-npm run vch -- plan ~/.vst3/MeinPlugin.vst3
-
-# Messen und Profil speichern
-npm run vch -- capture ~/.vst3/MeinPlugin.vst3 -o mein-plugin.vcprofile
-
-# Profil prüfen / entpacken
-npm run vch -- inspect mein-plugin.vcprofile
-npm run vch -- extract mein-plugin.vcprofile ./entpackt
+npm run app        # starts the app (the Rust part is compiled the first time)
 ```
 
-Oder direkt: `node capture/bin/vch.ts …`
+Three sections: **Clone** (choose a plugin → measure → build the clone), **Library** (saved profiles:
+rebuild a clone without the original, export, import) and **AI models** (providers, keys, roles,
+test). At the bottom, the **log** shows every step, grouped by phase; "Details" also shows the
+output of the compiler and the host.
 
-### EQ klonen
+In the Clone section the app picks the measurement mode that fits the plugin: **EQ**, **Dynamics**,
+**Distortion**, **Delay**, **Reverb** or **General**. Plugins whose category names another effect class
+(delay, reverb, modulation …) are not classified as a compressor or distortion. While measuring, the
+progress bar also names the preliminary steps (repeatability, working point, switch search); below it the app shows
+whether the plugin is measured with a fresh instance per setting and which controls were detected as hidden switches. For EQs
+the result also shows the deviation with several bands at once. When cloning, the app can also **rebuild the original's editor** (the original
+is opened invisibly once for this, see below). "Capture the editor again" and "Fit the model again" replace an editor or model
+already stored in the profile, e.g. after the detection has improved. Images open enlarged inside the app with a click.
+
+Profiles and clones are kept in `~/.local/share/vst-cloner/` (Windows: `%APPDATA%\vst-cloner`).
+Additionally required: Rust (`cargo`) and, on Linux, WebKitGTK 4.1.
+For now the app uses Node.js and the project folder – standalone installers will follow with milestone 9.
+
+## Usage (command line)
 
 ```bash
-# 1. EQ vermessen (eigener Messplan: jede Filterform bei mehreren Frequenzen, Gains und Güten)
-npm run vch -- capture ~/.vst3/MeinEQ.vst3 --class eq --tail 0.25 -o mein-eq.vcprofile
+# What is inside the plugin?
+npm run vch -- info ~/.vst3/MyPlugin.vst3
 
-# 2. Klon bauen, mit dem Original vergleichen und optional installieren
-npm run vch -- clone mein-eq.vcprofile -o ./mein-eq-clone --install
+# What would be measured?
+npm run vch -- plan ~/.vst3/MyPlugin.vst3
+
+# Measure and save a profile
+npm run vch -- capture ~/.vst3/MyPlugin.vst3 -o my-plugin.vcprofile
+
+# Check / unpack a profile
+npm run vch -- inspect my-plugin.vcprofile
+npm run vch -- extract my-plugin.vcprofile ./unpacked
 ```
 
-Erkannt werden EQs mit nummerierten Bändern („Band 1 Frequency“, „Gain 3“), Bänder mit fester Form
-(„Lowshelf Gain“, „Highpass Frequency“) und grafische EQs („32Hz“, „G7“). Bänder mit unterschiedlichen
-Filterformen werden getrennt vermessen; bei Bändern ohne Formwahl und bei den Reglern grafischer EQs
-bestimmt der Fit Form, Frequenz, Güte und Gain-Maßstab aus der Messung. Einige Einstellungen mit mehreren
-Bändern zugleich prüfen, ob sich die Bänder wie im Modell addieren.
+Or directly: `node capture/bin/vch.ts …`
 
-Der Klon ist ein eigenständiges VST3- und LV2-Plugin mit denselben Parameternamen und Regelwegen
-wie das Original (gleiche normierte Werte → gleiche Einstellung). Ablauf:
-
-1. **Analyse:** Frequenzgang jeder Messung aus der Impulsantwort.
-2. **Fit:** Pro Filterform werden Filterdesign (bilinear oder „matched“ ohne Stauchung nahe Nyquist),
-   Frequenz-/Güte-Definition und Q-Kennlinie bestimmt. Ein Teil der Messungen dient nur zur Gegenprobe.
-3. **Build:** Eine feste C++-EQ-Engine (`plugin-template/eq`) erhält das Modell als Datendatei.
-   Erster Build ca. 1 Minute, danach Sekunden.
-4. **Prüfung:** Der fertige Klon wird mit allen Einstellungen gemessen und mit dem Original verglichen.
-
-Modell und Bericht werden im Profil gespeichert (`model/eq.json`, `report.json`); ein erneutes
-`vch clone` baut den Klon dann ohne neue Analyse. Einzelschritte: `vch analyze`, `vch verify`.
-
-Unterstützte Formen: Bell, Low/High Shelf, Low/High Cut (6–96 dB/Okt. und „Brickwall“ als gefittetes
-elliptisches Filter), Notch, Band Pass, Tilt Shelf, Flat Tilt. Parameteränderungen werden geglättet
-(kein Knacken beim Drehen). Nicht unterstützte Formen leitet der Klon durch; der Bericht weist sie aus.
-
-Im Klon-Editor legt ein Klick in die Kurve ein Band an; ziehen ändert Frequenz/Gain, das Mausrad die Güte,
-Rechtsklick entfernt das Band. Für das gewählte Band erscheint eine Leiste mit Form, Frequenz, Gain, Güte
-und Flanke.
-
-### Kompressor klonen
+### Cloning an EQ
 
 ```bash
-# 1. Kompressor vermessen (Pegeltreppe, Bursts, lange Pausen; jeder Regler einzeln + Zufallskombinationen)
-npm run vch -- capture ~/.vst3/MeinKompressor.vst3 --class dynamics -o mein-comp.vcprofile
+# 1. Measure the EQ (own plan: every filter shape at several frequencies, gains and Q values)
+npm run vch -- capture ~/.vst3/MyEQ.vst3 --class eq --tail 0.25 -o my-eq.vcprofile
 
-# 2. Klon bauen (vch clone erkennt Kompressor-Profile selbst), mit Oberfläche
-npm run vch -- clone mein-comp.vcprofile -o ./mein-comp-clone --gui --install
+# 2. Build the clone, compare it with the original and optionally install it
+npm run vch -- clone my-eq.vcprofile -o ./my-eq-clone --install
 ```
 
-Das Modell bildet einen Kompressor im Steuertakt (32 Samples, kausal) nach: Detektor (RMS oder Spitze,
-Feed-forward oder Feedback, mit Energie-Mittelung), Kennlinie mit weichem Knick, Attack, schnelles
-Release und einen programmabhängigen langsamen Speicher (Opto-Verhalten). Dazu kommt die Klangfarbe:
-eine tanh-Sättigung und die Welligkeit des Detektors, die komprimierte Signale mit Oberwellen färbt.
-Der Fit wählt die Variante selbst; jeder Regler wird über eine Tabelle auf die Modellwerte abgebildet.
-Zufallskombinationen, die nie zum Fitten benutzt werden, dienen als Gegenprobe. Das Plugin
-(`plugin-template/dynamics`) rechnet sample-genau wie das TypeScript-Modell.
+Detected are EQs with numbered bands ("Band 1 Frequency", "Gain 3"), bands with a fixed shape
+("Lowshelf Gain", "Highpass Frequency") and graphic EQs ("32Hz", "G7"). Bands with different
+filter shapes are measured separately; for bands without a shape selector and for the sliders of graphic EQs
+the fit determines shape, frequency, Q and gain scale from the measurement. A few settings with several
+bands at once check whether the bands add up as in the model.
 
-### Verzerrer klonen
+The clone is a standalone VST3 and LV2 plugin with the same parameter names and control ranges
+as the original (same normalised values → same setting). Steps:
+
+1. **Analysis:** frequency response of every render from its impulse response.
+2. **Fit:** for every filter shape, the filter design (bilinear or "matched" without cramping near Nyquist),
+   the frequency/Q definition and the Q curve are determined. Part of the renders is used only as a cross-check.
+3. **Build:** a fixed C++ EQ engine (`plugin-template/eq`) receives the model as a data file.
+   First build about a minute, seconds afterwards.
+4. **Verification:** the finished clone is measured with all settings and compared with the original.
+
+Model and report are saved in the profile (`model/eq.json`, `report.json`); running
+`vch clone` again then builds the clone without a new analysis. Single steps: `vch analyze`, `vch verify`.
+
+Supported shapes: bell, low/high shelf, low/high cut (6–96 dB/oct and "brickwall" as a fitted
+elliptic filter), notch, band pass, tilt shelf, flat tilt. Parameter changes are smoothed
+(no clicks while turning). Unsupported shapes are passed through by the clone; the report lists them.
+
+In the clone's editor, a click into the curve adds a band; dragging changes frequency/gain, the mouse wheel the Q,
+a right-click removes the band. For the selected band a bar with shape, frequency, gain, Q
+and slope appears.
+
+### Cloning a compressor
 
 ```bash
-# 1. Verzerrer vermessen (Sinus-Pegeltreppen bei mehreren Frequenzen, Rauschen, leiser Sweep)
-npm run vch -- capture /usr/lib/lv2/gx_bossds1.lv2 --class distortion -o mein-ds1.vcprofile
+# 1. Measure the compressor (level staircase, bursts, long pauses; every control on its own + random combinations)
+npm run vch -- capture ~/.vst3/MyCompressor.vst3 --class dynamics -o my-comp.vcprofile
 
-# 2. Klon bauen (vch clone erkennt Verzerrer-Profile selbst)
-npm run vch -- clone mein-ds1.vcprofile -o ./mein-ds1-clone --gui
+# 2. Build the clone (vch clone detects compressor profiles by itself), with editor
+npm run vch -- clone my-comp.vcprofile -o ./my-comp-clone --gui --install
 ```
 
-Das Modell ist eine Wiener-Hammerstein-Kette: Eingangsverstärkung → Vorfilter (Hochpass, zwei Glocken,
-Tiefpass) → weiche, asymmetrische Begrenzung mit harten „Versorgungsschienen“ → Nachfilter (Glocke,
-Höhenregal, Tief- und Hochpass) → Ausgangspegel. Für jeden Regler wählt der Fit, welche Teile des Modells
-er verändert (beim DS1: LEVEL nur den Ausgang, TONE das Nachfilter, DRIVE Eingang und Vorfilter); der Fit
-läuft parallel in Worker-Threads (~2 min). Die Laufzeit des Originals wird gemessen und übernommen. Das
-Plugin (`plugin-template/distortion`) rechnet sample-genau wie das TypeScript-Modell.
+The model reproduces a compressor at control rate (32 samples, causal): detector (RMS or peak,
+feed-forward or feedback, with energy averaging), curve with a soft knee, attack, fast
+release and a programme-dependent slow memory (opto behaviour). On top of that comes the tone:
+a tanh saturation and the ripple of the detector, which colours compressed signals with harmonics.
+The fit picks the variant by itself; every control is mapped onto the model values through a table.
+Random combinations that are never used for fitting serve as a cross-check. The plugin
+(`plugin-template/dynamics`) computes sample-exactly like the TypeScript model.
 
-### Gates und Expander
-
-Gates, Expander und Ducker laufen über dieselbe Messung und denselben Befehl wie Kompressoren; der Fit
-wählt die Kennlinie (Absenkung unter der Schwelle, optional mit Range) selbst. Multiband-Kompressoren und
-dynamische EQs werden erkannt und nicht geklont – das Ein-Band-Modell kann sie nicht abbilden.
-
-### Delay und Reverb klonen
+### Cloning a distortion
 
 ```bash
-npm run vch -- capture /usr/lib/lv2/MeinDelay.lv2 --class delay -o mein-delay.vcprofile
-npm run vch -- capture ~/.vst3/MeinHall.vst3 --class reverb -o mein-hall.vcprofile
-npm run vch -- clone mein-delay.vcprofile -o ./mein-delay-clone
+# 1. Measure the distortion (sine level staircases at several frequencies, noise, quiet sweep)
+npm run vch -- capture /usr/lib/lv2/gx_bossds1.lv2 --class distortion -o my-ds1.vcprofile
+
+# 2. Build the clone (vch clone detects distortion profiles by itself)
+npm run vch -- clone my-ds1.vcprofile -o ./my-ds1-clone --gui
 ```
 
-- **Delay:** Gemessen wird ein Impuls mit langer Stille (plus Rauschburst). Das Modell ist eine Delay-Line
-  mit Feedback, Tief-/Hochpass in der Schleife und im Wet-Pfad sowie Dry- und Wet-Pegel; verglichen wird
-  der Pegel über Zeit und Frequenzband. Zwölf Kombinationsmessungen zeigen dem Fit, ob sich mehrere
-  Zeitregler multiplizieren (Tempo und Notenwert) oder addieren (Delay und Versatz). Vor der Messung tastet
-  eine Übersicht jeden stufenlos gemeldeten Regler an 61 Stellen ab und findet so versteckte Wahlschalter
-  (Notenwerte, „x2“, Sync), die dann wie echte Schalter vermessen werden.
-- **Reverb:** Gemessen wird ein Impuls samt Ausklang. Das Modell ist ein Feedback-Delay-Netzwerk hinter
-  einem Pre-Delay, das den Ausklang so wiedergibt, wie er klingt: Pegel und Nachhallzeit in drei Bändern,
-  Dry-Pegel, Einsatz des Ausklangs. Verglichen werden die Abklingkurven pro Band.
+The model is a Wiener-Hammerstein chain: input gain → pre-filter (high-pass, two bells,
+low-pass) → soft, asymmetric clipping with hard "supply rails" → post-filter (bell,
+high shelf, low- and high-pass) → output level. For every control the fit chooses which parts of the model
+it changes (for the DS1: LEVEL only the output, TONE the post-filter, DRIVE the input and the pre-filter); the fit
+runs in parallel worker threads (~2 min). The latency of the original is measured and reproduced. The
+plugin (`plugin-template/distortion`) computes sample-exactly like the TypeScript model.
 
-Schalter mit bis zu vier Stellungen bekommen ein eigenes Modell pro Stellung, wenn das die Gegenprobe
-deutlich besser trifft (Dynamik und Delay).
+### Gates and expanders
 
-### Alle Plugins einer Klasse (Batch)
+Gates, expanders and duckers use the same measurement and the same command as compressors; the fit
+picks the curve (attenuation below the threshold, optionally with a range) by itself. Multiband compressors and
+dynamic EQs are detected and not cloned – the single-band model cannot represent them.
+
+### Cloning delays and reverbs
+
+```bash
+npm run vch -- capture /usr/lib/lv2/MyDelay.lv2 --class delay -o my-delay.vcprofile
+npm run vch -- capture ~/.vst3/MyReverb.vst3 --class reverb -o my-reverb.vcprofile
+npm run vch -- clone my-delay.vcprofile -o ./my-delay-clone
+```
+
+- **Delay:** an impulse with long silence (plus a noise burst) is measured. The model is a delay line
+  with feedback, low-/high-pass in the loop and in the wet path, plus dry and wet levels; the comparison uses
+  the level over time and frequency band. Twelve combination renders show the fit whether several
+  time controls multiply (tempo and note value) or add up (delay and offset). Before the measurement,
+  a survey samples every control reported as continuous at 61 positions and so finds hidden selectors
+  (note values, "x2", sync), which are then measured like real switches.
+- **Reverb:** an impulse and its decay are measured. The model is a feedback delay network behind
+  a pre-delay that reproduces the decay as it sounds: level and decay time in three bands,
+  dry level, onset of the decay. The comparison uses the decay curves per band.
+
+Switches with up to four positions get a model of their own per position when that matches the cross-check
+clearly better (dynamics and delay).
+
+### All plugins of a class (batch)
 
 ```bash
 npm run vch -- batch --class dynamics -o ./batch-dynamics [--match <regex>] [--limit <n>] [--gui]
 ```
 
-Misst und klont jedes installierte Plugin der Klasse (`eq`, `dynamics`, `distortion`, `delay`, `reverb`),
-ohne etwas zu installieren: 60 s Zeitlimit fürs Laden, 15 min pro Plugin, ein Protokoll pro Plugin,
-`report.md`/`report.json` nach jedem Plugin. Ein neuer Start setzt fort. Der Bericht nennt auch, welche
-Plugins einer anderen oder keiner Klasse zugeordnet wurden und welche sich nicht laden ließen.
+Measures and clones every installed plugin of the class (`eq`, `dynamics`, `distortion`, `delay`, `reverb`)
+without installing anything: 60 s time limit for loading, 15 min per plugin, one log per plugin,
+`report.md`/`report.json` after every plugin. A new run continues where the last one stopped. The report also names which
+plugins were assigned to another class or to none, and which could not be loaded.
 
-### Oberfläche nachbauen
+### Rebuilding the editor
 
-Mit `--gui` (bzw. der Option in der App) öffnet `vch-gui` den Editor des Originals unsichtbar (unter
-Linux in Xvfb), bewegt jeden Regler einzeln und leitet aus den Bildern ein Layout ab: Drehregler,
-Schieber, Schalter, Auswahlfelder, Wertanzeigen, EQ-Kurve, Flächen, Linien und Texte (mit tesseract
-gelesen, falls installiert), runde Flächen mit Ringen und Speichen sowie senkrecht gesetzte Wörter.
-Schalter und Menüs, die ein Plugin als stufenlose Parameter meldet, werden an ihren Werttexten erkannt
-und im Klon zu echten Auswahl-Parametern. Bei Kompressoren läuft zusätzlich ein Testton durch das
-Original, um die Pegelreduktions-Nadel und Pegelbalken zu finden und zu kalibrieren. Gespeichert wird nur das Layout (`model/gui.json`),
-keine Grafik des Originals. Der Vergleich Klon ↔ Original landet als Bild im Cache.
+With `--gui` (or the option in the app), `vch-gui` opens the original's editor invisibly (on
+Linux in Xvfb), moves every control on its own and derives a layout from the images: knobs,
+sliders, switches, selectors, value displays, EQ curve, areas, lines and texts (read with tesseract
+if installed), round areas with rings and spokes, and vertically set words. Knobs keep their
+rim, coloured outline, tick marks, centre cap, direction of travel (including anticlockwise and full turns) and
+value arcs that start from a centre position.
+Switches and menus that a plugin reports as continuous parameters are recognised by their value texts
+and become real choice parameters in the clone. For compressors a test tone also runs through the
+original to find and calibrate the gain reduction needle and level bars. Only the layout is saved (`model/gui.json`),
+no graphics of the original. The clone ↔ original comparison is kept as an image in the cache.
 
-Zusätzlich nötig: `xorg-server-xvfb`, optional `tesseract` mit `tesseract-data-eng`/`-deu`.
-Hinweise, die ein Plugin beim Öffnen in seinen Editor zeichnet (z. B. FabFilter-Testversion), schließt
-`vch-gui` über einen Klick auf „Evaluate“.
+`--refit-gui` captures the editor again instead of using the layout stored in the profile.
 
-### Plugins mit vielen Parametern
+Additionally required: `xorg-server-xvfb`, optionally `tesseract` with `tesseract-data-eng`/`-deu`.
+Notices that a plugin draws into its editor when it opens (e.g. FabFilter trial version) are closed by
+`vch-gui` with a click on "Evaluate".
 
-Multiband-Plugins haben oft hunderte Parameter, deren Bänder erst aktiviert werden müssen.
-Mit `--set` werden Werte für alle Renders fest gesetzt, mit `--include` die zu messenden
-Parameter ausgewählt:
+### Plugins with many parameters
+
+Multiband plugins often have hundreds of parameters whose bands have to be activated first.
+`--set` fixes values for all renders, `--include` selects the parameters
+to measure:
 
 ```bash
-npm run vch -- capture ~/.vst3/yabridge/"Mein EQ.vst3" -o eq-band1.vcprofile \
+npm run vch -- capture ~/.vst3/yabridge/"My EQ.vst3" -o eq-band1.vcprofile \
   --set "Band 1 Used=Used" --set "Band 1 Enabled=Enabled" \
   --include "^Band 1 (Frequency|Gain|Q|Shape)$" --points 7 --random 8
 ```
 
-Werte für `--set` sind normalisierte Zahlen (0…1) oder Anzeigetexte diskreter Parameter.
-Ab Meilenstein 3 erzeugt die App solche Messpläne automatisch je nach Effekt-Klasse.
+Values for `--set` are normalised numbers (0…1) or display texts of discrete parameters.
+Since milestone 3 the app creates such plans automatically depending on the effect class.
 
-### Windows-Plugins
+### Windows plugins
 
-- **Unter Linux über yabridge:** Den yabridge-Ordner (z. B. `~/.vst3/yabridge/…`) angeben.
-- **Unter Windows:** vch-host mit CMake/MSVC bauen und dort capturen, das Profil
-  anschließend unter Linux weiterverarbeiten.
+- **On Linux via yabridge:** pass the yabridge folder (e.g. `~/.vst3/yabridge/…`).
+- **On Windows:** build vch-host with CMake/MSVC and capture there, then
+  process the profile further on Linux.
 
-## KI-Modelle einrichten
+## Setting up AI models
 
-Die bisherigen Klone entstehen ohne KI. Der spätere Builder-Agent (Meilenstein 7, für Plugins ohne passende
-Effektklasse) kann lokale und Cloud-Modelle nutzen. Metadaten (Kontextlänge,
-Tool-Unterstützung, Preise) kommen aus dem Anbieter selbst und dem täglich aktualisierten
-[models.dev](https://models.dev)-Katalog.
+The clones so far are built without AI. The later builder agent (milestone 7, for plugins without a matching
+effect class) can use local and cloud models. Metadata (context length,
+tool support, prices) comes from the provider itself and the daily updated
+[models.dev](https://models.dev) catalogue.
 
 ```bash
-npm run vch -- llm status                 # Überblick: Anbieter, Schlüssel, Rollen, lokale Server
-npm run vch -- llm discover --add         # laufende lokale Server (Ollama, LM Studio, …) übernehmen
-npm run vch -- llm add anthropic          # Cloud-Anbieter hinzufügen
-npm run vch -- llm key anthropic          # API-Schlüssel im System-Schlüsselbund speichern
-npm run vch -- llm models ollama          # Modelle mit Kontext, Tools, Preisen
-npm run vch -- llm test ollama/qwen3:8b   # Live-Test: Text, Tool-Aufrufe, strukturierte Ausgabe
+npm run vch -- llm status                 # overview: providers, keys, roles, local servers
+npm run vch -- llm discover --add         # take over running local servers (Ollama, LM Studio, …)
+npm run vch -- llm add anthropic          # add a cloud provider
+npm run vch -- llm key anthropic          # store an API key in the system keychain
+npm run vch -- llm models ollama          # models with context, tools, prices
+npm run vch -- llm test ollama/qwen3:8b   # live test: text, tool calls, structured output
 npm run vch -- llm role builder anthropic/claude-sonnet-5
 ```
 
-- **Anbieter:** OpenAI, Anthropic, Google Gemini, Mistral, OpenRouter, Ollama, LM Studio,
-  llama.cpp, vLLM sowie jeder OpenAI-kompatible Endpunkt (`vch llm add custom --base-url …
-  --catalog <models.dev-id>`, z. B. Groq oder DeepSeek).
-- **Rollen:** `analyst` (wertet Plugin-Metadaten mit REA aus, „Dirty Room“) und `builder`
-  (schreibt den Klon-Code nur aus Spezifikation und Messdaten, „Clean Room“).
-- **Schlüssel** liegen im System-Schlüsselbund (GNOME Keyring/KWallet, Windows-Anmeldeinformationsverwaltung),
-  nie in Konfigurationsdateien. Umgebungsvariablen wie `ANTHROPIC_API_KEY` haben Vorrang.
-  `vch llm key` fragt den Schlüssel verdeckt ab – am besten in einem normalen Terminal ausführen.
-- **Ollama:** Für lange Agent-Sitzungen `OLLAMA_CONTEXT_LENGTH=32768` setzen.
+- **Providers:** OpenAI, Anthropic, Google Gemini, Mistral, OpenRouter, Ollama, LM Studio,
+  llama.cpp, vLLM and any OpenAI-compatible endpoint (`vch llm add custom --base-url …
+  --catalog <models.dev-id>`, e.g. Groq or DeepSeek).
+- **Roles:** `analyst` (evaluates plugin metadata with REA, "dirty room") and `builder`
+  (writes the clone code only from the specification and the measurements, "clean room").
+- **Keys** are kept in the system keychain (GNOME Keyring/KWallet, Windows Credential Manager),
+  never in configuration files. Environment variables such as `ANTHROPIC_API_KEY` take precedence.
+  `vch llm key` asks for the key without echoing it – best run it in a normal terminal.
+- **Ollama:** for long agent sessions, set `OLLAMA_CONTEXT_LENGTH=32768`.
 
-## Aufbau
+## Structure
 
 ```
-host/      vch-host: C++20/JUCE 9, headless. Lädt VST3/LV2, rendert offline.
-           Ausgabe als JSON-Zeilen auf stdout (Plugin-Ausgaben werden nach stderr umgeleitet).
-profile/   JSON-Schemas, Reader/Writer mit Prüfsummen, WAV-I/O
-capture/   Testsignale, Messplan, Ansteuerung von vch-host, CLI `vch`
-agent/     LLM-Anbieter (Vercel AI SDK), models.dev-Katalog, Schlüsselbund, Fähigkeitstests, Rollen
-clone/     Analyse, Messpläne, Fits und Codegeneratoren: eq/ (Filter-Fit), dynamics/ (Kompressor-Modell),
-           distortion/ (Wiener-Hammerstein-Modell, paralleler Fit), delay/ (Delay-Line mit Feedback),
-           reverb/ (Feedback-Delay-Netzwerk), batch.ts (Klassifizierung, Batch-Lauf),
-           gui/ (Oberflächen-Analyse, Texterkennung), dsp/ (Biquads, elliptische Filter, Optimierer);
-           Plugin-Build und Vergleich mit dem Original
+host/      vch-host: C++20/JUCE 9, headless. Loads VST3/LV2, renders offline.
+           Output as JSON lines on stdout (plugin output is redirected to stderr).
+profile/   JSON schemas, reader/writer with checksums, WAV I/O
+capture/   test signals, measurement plan, driving vch-host, CLI `vch`
+agent/     LLM providers (Vercel AI SDK), models.dev catalogue, keychain, capability tests, roles
+clone/     analysis, measurement plans, fits and code generators: eq/ (filter fit), dynamics/ (compressor model),
+           distortion/ (Wiener-Hammerstein model, parallel fit), delay/ (delay line with feedback),
+           reverb/ (feedback delay network), batch.ts (classification, batch run),
+           gui/ (editor analysis, text recognition), dsp/ (biquads, elliptic filters, optimisers);
+           plugin build and comparison with the original
 plugin-template/
-           eq/        C++/JUCE-EQ-Engine (Formeln identisch mit clone/src/dsp/biquad.ts)
-           dynamics/  C++/JUCE-Kompressor-Engine (identisch mit clone/src/dynamics/model.ts)
-           distortion/ C++/JUCE-Verzerrer-Engine (identisch mit clone/src/distortion/model.ts)
-           delay/     C++/JUCE-Delay-Engine (identisch mit clone/src/delay/model.ts)
-           reverb/    C++/JUCE-Reverb-Engine (identisch mit clone/src/reverb/model.ts)
-           common/    Parameter und nachgebauter Editor, gemeinsam für alle Vorlagen
-host/      zusätzlich vch-gui: öffnet Plugin-Editoren unsichtbar und nimmt sie auf
-bridge/    JSON-Zeilen-Schnittstelle zwischen Oberfläche und den Paketen (Jobs, Fortschritt, Protokoll)
+           eq/        C++/JUCE EQ engine (formulas identical to clone/src/dsp/biquad.ts)
+           dynamics/  C++/JUCE compressor engine (identical to clone/src/dynamics/model.ts)
+           distortion/ C++/JUCE distortion engine (identical to clone/src/distortion/model.ts)
+           delay/     C++/JUCE delay engine (identical to clone/src/delay/model.ts)
+           reverb/    C++/JUCE reverb engine (identical to clone/src/reverb/model.ts)
+           common/    parameters and rebuilt editor, shared by all templates
+host/      also vch-gui: opens plugin editors invisibly and takes screenshots
+bridge/    JSON-lines interface between the app and the packages (jobs, progress, log)
 apps/desktop/
-           Tauri-App: Web-Oberfläche (TypeScript) + Rust-Hülle, die die Bridge startet
+           Tauri app: web UI (TypeScript) + Rust shell that starts the bridge
 ```
 
 ## Tests
@@ -300,11 +305,11 @@ apps/desktop/
 ```bash
 npm run typecheck
 npm test
-VCH_TEST_PLUGIN=~/.vst3/MeinPlugin.vst3 npm test   # inkl. Capture mit echtem Plugin
-VCH_TEST_MODEL=ollama/qwen3:8b npm test             # inkl. Live-Test eines Modells
-VCH_TEST_BUILD=1 npm test                           # inkl. Plugin-Build und Engine-Vergleich
+VCH_TEST_PLUGIN=~/.vst3/MyPlugin.vst3 npm test   # including a capture with a real plugin
+VCH_TEST_MODEL=ollama/qwen3:8b npm test           # including a live test of a model
+VCH_TEST_BUILD=1 npm test                         # including a plugin build and engine comparison
 ```
 
-## Lizenz
+## Licence
 
-GPL-3.0-or-later (vch-host nutzt JUCE unter GPLv3).
+GPL-3.0-or-later (vch-host uses JUCE under GPLv3).

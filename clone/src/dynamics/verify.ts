@@ -43,7 +43,7 @@ export async function verifyDynamicsClone(
   const originals = new Map(profile.parameters.parameters.map((p) => [p.index, p]));
   for (const param of dynamicsCloneParameters(model, profile.parameters.parameters, profile.captures.renders)) {
     const index = cloneIndexByName.get(param.name);
-    if (index === undefined) throw new Error(`Der Klon hat keinen Parameter „${param.name}“`);
+    if (index === undefined) throw new Error(`The clone has no parameter "${param.name}"`);
     toClone.set(param.original, index);
     convert.set(param.original, (value) => cloneValue(param, originals.get(param.original), value));
     asModel.set(param.original, (value) => modelValue(param, originals.get(param.original), value));
@@ -70,7 +70,7 @@ export async function verifyDynamicsClone(
     const { audio } = regenerateTestSignal(profile.testSignals);
     await writeFile(join(workDir, "input.wav"), encodeWav({ sampleRate: audio.sampleRate, channels: [audio.channels[0]!] }));
     await writeFile(join(workDir, "job.json"), JSON.stringify(job));
-    log("info", `Klon wird mit ${renders.length} gemessenen Einstellungen nachgemessen …`);
+    log("info", `Measuring the clone with ${renders.length} measured settings …`);
     await runHost(["render", join(workDir, "job.json")], host);
 
     const input = dynamicsInput(profile);
@@ -83,7 +83,7 @@ export async function verifyDynamicsClone(
       const cloneDb = windowRmsDb(output, input.windowDb.length).map((v, w) => v - input.windowDb[w]!);
       // a clone that puts out NaN/inf must never pass as a result (compare() would skip those windows)
       if (cloneDb.some((v, w) => !Number.isFinite(v) && !Number.isNaN(o.measuredDb[w]!))) {
-        throw new Error(`Der Klon liefert kein gültiges Signal (NaN/inf) bei „${o.label}“`);
+        throw new Error(`The clone gives no valid signal (NaN/inf) at "${o.label}"`);
       }
       rows.push({ label: o.label, purpose: o.purpose, errors: compare(cloneDb, o.measuredDb) });
 

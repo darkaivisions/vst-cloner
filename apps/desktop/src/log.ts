@@ -20,11 +20,11 @@ export class LogPanel {
       h(
         "header.log-header",
         {},
-        h("button.log-title", { onclick: () => this.element.classList.toggle("collapsed"), title: "Ein-/ausklappen" }, h("span.chevron"), "Protokoll", this.count),
+        h("button.log-title", { onclick: () => this.element.classList.toggle("collapsed"), title: "Expand/collapse" }, h("span.chevron"), "Log", this.count),
         h("div.log-actions", {},
           h("label.toggle", {}, detailsToggle, "Details"),
-          h("button.ghost.small", { onclick: () => this.copy() }, "Kopieren"),
-          h("button.ghost.small", { onclick: () => this.clear() }, "Leeren"),
+          h("button.ghost.small", { onclick: () => this.copy() }, "Copy"),
+          h("button.ghost.small", { onclick: () => this.clear() }, "Clear"),
         ),
       ),
       this.list,
@@ -34,7 +34,7 @@ export class LogPanel {
   }
 
   private time(ms: number): string {
-    return new Date(ms).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    return new Date(ms).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   }
 
   private push(row: HTMLElement, text: string) {
@@ -62,12 +62,12 @@ export class LogPanel {
         break;
       }
       case "done":
-        this.push(h("div.log-row.success.done", {}, h("span.log-time", {}, time), h("span.log-dot"), h("span.log-msg", {}, "Fertig")), `${time} Fertig`);
+        this.push(h("div.log-row.success.done", {}, h("span.log-time", {}, time), h("span.log-dot"), h("span.log-msg", {}, "Done")), `${time} Done`);
         break;
       case "failed":
         this.push(
-          h(`div.log-row.${event.cancelled ? "warn" : "error"}`, {}, h("span.log-time", {}, time), h("span.log-dot"), h("pre.log-msg", {}, event.cancelled ? "Abgebrochen" : `Fehler: ${event.error}`)),
-          `${time} ${event.cancelled ? "Abgebrochen" : `Fehler: ${event.error}`}`,
+          h(`div.log-row.${event.cancelled ? "warn" : "error"}`, {}, h("span.log-time", {}, time), h("span.log-dot"), h("pre.log-msg", {}, event.cancelled ? "Cancelled" : `Error: ${event.error}`)),
+          `${time} ${event.cancelled ? "Cancelled" : `Error: ${event.error}`}`,
         );
         this.element.classList.remove("collapsed");
         break;

@@ -26,18 +26,18 @@ export const EFFECT_CLASSES: EffectClass[] = ["eq", "dynamics", "distortion", "d
 export function classifyPlugin(info: Pick<HostInfo, "parameters" | "plugin"> & Partial<Pick<HostInfo, "mainInputChannels">>): { effectClass?: EffectClass; reason: string } {
   // synths have attack/release/drive controls too, but nothing to measure: they do not process an input
   if (info.plugin.isInstrument || info.mainInputChannels === 0 || /instrument|synth|generator/i.test(info.plugin.category)) {
-    return { reason: "Instrument (verarbeitet kein Eingangssignal)" };
+    return { reason: "Instrument (does not process an input signal)" };
   }
   // delays and echoes say so in their category or name; their filter and level controls fit no other class
   try {
     detectDelay(info.parameters, info.plugin.category, info.plugin.name);
-    return { effectClass: "delay", reason: "Delay erkannt" };
+    return { effectClass: "delay", reason: "Delay detected" };
   } catch {
     // not a delay: the other classes follow
   }
   try {
     detectReverb(info.parameters, info.plugin.category, info.plugin.name);
-    return { effectClass: "reverb", reason: "Hall erkannt" };
+    return { effectClass: "reverb", reason: "Reverb detected" };
   } catch {
     // not a reverb
   }
@@ -47,13 +47,13 @@ export function classifyPlugin(info: Pick<HostInfo, "parameters" | "plugin"> & P
   const reasons: string[] = [];
   try {
     detectEq(info.parameters);
-    return { effectClass: "eq", reason: "EQ-Bänder erkannt" };
+    return { effectClass: "eq", reason: "EQ bands detected" };
   } catch (error) {
     reasons.push((error as Error).message);
   }
   try {
     detectDynamics(info.parameters, info.plugin.category, info.plugin.name);
-    return { effectClass: "dynamics", reason: "Kompressor-Parameter erkannt" };
+    return { effectClass: "dynamics", reason: "Compressor parameters detected" };
   } catch (error) {
     // a gate, expander or dynamic EQ is no distortion either, whatever its "gain" control suggests
     if (error instanceof NotDynamicsError && error.otherProcessor) return { reason: error.message };
@@ -61,7 +61,7 @@ export function classifyPlugin(info: Pick<HostInfo, "parameters" | "plugin"> & P
   }
   try {
     detectDistortion(info.parameters, info.plugin.category, info.plugin.name);
-    return { effectClass: "distortion", reason: "Drive-Regler oder Verzerrer-Kategorie erkannt" };
+    return { effectClass: "distortion", reason: "Drive control or distortion category detected" };
   } catch (error) {
     reasons.push((error as Error).message);
   }
@@ -123,7 +123,7 @@ const REPORT_FILE = "report.json";
 function errorSummary(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  const first = lines[0] ?? "unbekannter Fehler";
+  const first = lines[0] ?? "unknown error";
   const errorLines = lines.filter((l) => /error|fehler|\*\*\*/i.test(l) && l !== first).slice(-2);
   return [first, ...errorLines].join(" | ").slice(0, 400);
 }
@@ -161,7 +161,7 @@ export async function runBatch(options: BatchOptions): Promise<BatchReport> {
     const vst3 = new Set(entries.filter((e) => e.format === "VST3").map((e) => key(e.name)));
     entries = entries.filter((e) => e.format === "VST3" || !vst3.has(key(e.name)));
   }
-  log("info", `${entries.length} Plugins werden geprüft (Klasse ${effectClass}) – Ergebnisse: ${join(out, "report.md")}`);
+  log("info", `Checking ${entries.length} plugins (class ${effectClass}) – results: ${join(out, "report.md")}`);
 
   let counted = 0;
   for (const entry of entries) {
@@ -179,8 +179,8 @@ export async function runBatch(options: BatchOptions): Promise<BatchReport> {
     await save();
     const quality = row.quality ? ` – ${row.quality.text}` : "";
     const level = row.status === "failed" || row.status === "timeout" ? "warn" : "info";
-    if (row.status === "skipped") log("detail", `${entry.name}: übersprungen (${row.error})`);
-    else log(level, `${entry.name}: ${row.status === "ok" ? "OK" : row.status === "timeout" ? "Zeitlimit" : `Fehler beim Schritt ${row.stage}`}${quality}${row.error ? ` – ${row.error}` : ""} (${row.seconds.toFixed(0)} s)`);
+    if (row.status === "skipped") log("detail", `${entry.name}: skipped (${row.error})`);
+    else log(level, `${entry.name}: ${row.status === "ok" ? "OK" : row.status === "timeout" ? "time limit" : `failed at step ${row.stage}`}${quality}${row.error ? ` – ${row.error}` : ""} (${row.seconds.toFixed(0)} s)`);
   }
   await save();
   return report;
@@ -212,7 +212,7 @@ async function runOne(entry: Pick<PluginEntry, "path" | "name" | "format">, opti
     try {
       info = await pluginInfo(entry.path, { signal: loading.signal });
     } catch (error) {
-      if (loading.signal.aborted && !signal.aborted) throw new Error("Plugin lädt nicht (keine Antwort nach 60 s)");
+      if (loading.signal.aborted && !signal.aborted) throw new Error("Plugin does not load (no answer after 60 s)");
       throw error;
     } finally {
       clearTimeout(loadTimer);
@@ -226,7 +226,7 @@ async function runOne(entry: Pick<PluginEntry, "path" | "name" | "format">, opti
     if (effectClass) row.detected = effectClass;
     if (effectClass !== options.effectClass) {
       row.status = "skipped";
-      row.error = effectClass ? `erkannt als ${effectClass}` : reason.slice(0, 200);
+      row.error = effectClass ? `detected as ${effectClass}` : reason.slice(0, 200);
       return row;
     }
 
@@ -267,7 +267,7 @@ async function runOne(entry: Pick<PluginEntry, "path" | "name" | "format">, opti
       const v = result.verify;
       if (v) {
         // nothing compressed at the centre of the measurement: the small error is that of a level change, not of a compressor
-        const judged = measuredCompression(result.model) ? dynamicsVerdict(v.overall.rmsDb) : "keine Kompression gemessen";
+        const judged = measuredCompression(result.model) ? dynamicsVerdict(v.overall.rmsDb) : "no compression measured";
         row.quality = {
           value: v.overall.rmsDb, verdict: judged,
           text: `${v.overall.rmsDb.toFixed(2)} dB (${judged})`,
@@ -280,14 +280,14 @@ async function runOne(entry: Pick<PluginEntry, "path" | "name" | "format">, opti
       const v = result.verify;
       if (v) {
         // without an echo in the base render there was nothing to measure: the error says nothing about a delay
-        const judged = result.model.report.echoes > 0 ? delayVerdict(v.overall.rmsDb) : "kein Echo gemessen";
+        const judged = result.model.report.echoes > 0 ? delayVerdict(v.overall.rmsDb) : "no echo measured";
         row.quality = { value: v.overall.rmsDb, verdict: judged, text: `${v.overall.rmsDb.toFixed(2)} dB (${judged})`, ...(v.validate ? { validate: v.validate.rmsDb } : {}) };
       }
     } else if (options.effectClass === "reverb") {
       const result = await cloneReverbProfile(common);
       const v = result.verify;
       if (v) {
-        const judged = result.model.report.tail ? reverbVerdict(v.overall.rmsDb) : "kein Nachhall gemessen";
+        const judged = result.model.report.tail ? reverbVerdict(v.overall.rmsDb) : "no reverb tail measured";
         row.quality = { value: v.overall.rmsDb, verdict: judged, text: `${v.overall.rmsDb.toFixed(2)} dB (${judged})`, ...(v.validate ? { validate: v.validate.rmsDb } : {}) };
       }
     } else {
@@ -296,7 +296,7 @@ async function runOne(entry: Pick<PluginEntry, "path" | "name" | "format">, opti
       if (v) {
         row.quality = {
           value: v.overall.total, verdict: distortionVerdict(v.overall.total),
-          text: `${v.overall.total.toFixed(2)} (${distortionVerdict(v.overall.total)}; Grundton ${v.overall.gainDb.toFixed(1)} dB, Oberwellen ${v.overall.harmonicsDb.toFixed(1)} dB, Fehler/Signal ${v.esrDb.toFixed(1)} dB)`,
+          text: `${v.overall.total.toFixed(2)} (${distortionVerdict(v.overall.total)}; fundamental ${v.overall.gainDb.toFixed(1)} dB, harmonics ${v.overall.harmonicsDb.toFixed(1)} dB, error/signal ${v.esrDb.toFixed(1)} dB)`,
           ...(v.validate ? { validate: v.validate.total } : {}),
         };
       }
@@ -308,7 +308,7 @@ async function runOne(entry: Pick<PluginEntry, "path" | "name" | "format">, opti
     const timedOut = signal.aborted && !options.signal?.aborted;
     if (options.signal?.aborted) throw error;
     row.status = timedOut ? "timeout" : "failed";
-    row.error = timedOut ? `Zeitlimit (${options.timeoutSeconds ?? 900} s) überschritten` : errorSummary(error);
+    row.error = timedOut ? `time limit (${options.timeoutSeconds ?? 900} s) exceeded` : errorSummary(error);
     void writeLog("error", error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error));
     return row;
   } finally {
@@ -326,25 +326,25 @@ export function formatBatchMarkdown(report: BatchReport): string {
   const tried = rows.filter((r) => r.status !== "skipped" && r.stage !== "info");
   const ok = tried.filter((r) => r.status === "ok");
   const lines = [
-    `# Batch-Lauf ${report.effectClass} (${report.startedAt.slice(0, 16).replace("T", " ")})`,
+    `# Batch run ${report.effectClass} (${report.startedAt.slice(0, 16).replace("T", " ")})`,
     "",
-    `${tried.length} Plugins der Klasse versucht · ${ok.length} geklont · ${tried.length - ok.length} fehlgeschlagen · ${rows.length - tried.length - unloadable.length} übersprungen · ${unloadable.length} nicht ladbar`,
+    `${tried.length} plugins of the class tried · ${ok.length} cloned · ${tried.length - ok.length} failed · ${rows.length - tried.length - unloadable.length} skipped · ${unloadable.length} not loadable`,
     "",
   ];
   const verdicts = new Map<string, number>();
   for (const r of ok) if (r.quality) verdicts.set(r.quality.verdict, (verdicts.get(r.quality.verdict) ?? 0) + 1);
-  if (verdicts.size) lines.push(`Bewertungen: ${[...verdicts].map(([v, n]) => `${n}× ${v}`).join(", ")}`, "");
+  if (verdicts.size) lines.push(`Ratings: ${[...verdicts].map(([v, n]) => `${n}× ${v}`).join(", ")}`, "");
 
   const failed = tried.filter((r) => r.status !== "ok");
   if (failed.length) {
-    lines.push("## Fehlgeschlagen", "", "| Plugin | Format | Schritt | Fehler | Dauer |", "|---|---|---|---|---|");
+    lines.push("## Failed", "", "| Plugin | Format | Step | Error | Time |", "|---|---|---|---|---|");
     for (const r of failed) lines.push(`| ${r.name} | ${r.format} | ${r.stage} | ${(r.error ?? "").replace(/\|/g, "/")} | ${r.seconds.toFixed(0)} s |`);
     lines.push("");
   }
   if (ok.length) {
-    lines.push("## Geklont", "", "| Plugin | Format | Klon vs. Original | Unbekannte Kombinationen | Oberfläche | Dauer |", "|---|---|---|---|---|---|");
+    lines.push("## Cloned", "", "| Plugin | Format | Clone vs. original | Unseen combinations | Editor | Time |", "|---|---|---|---|---|---|");
     for (const r of [...ok].sort((a, b) => (b.quality?.value ?? 0) - (a.quality?.value ?? 0))) {
-      const gui = r.gui ? `${r.gui.controls} Elemente${r.gui.similarity !== undefined ? `, ${Math.round(r.gui.similarity * 100)} %` : ""}` : "–";
+      const gui = r.gui ? `${r.gui.controls} controls${r.gui.similarity !== undefined ? `, ${Math.round(r.gui.similarity * 100)} %` : ""}` : "–";
       lines.push(`| ${r.name} | ${r.format} | ${r.quality?.text ?? "–"} | ${r.quality?.validate !== undefined ? r.quality.validate.toFixed(2) : "–"} | ${gui} | ${r.seconds.toFixed(0)} s |`);
     }
     lines.push("");
@@ -353,15 +353,15 @@ export function formatBatchMarkdown(report: BatchReport): string {
   if (skipped.length) {
     const other = new Map<string, string[]>();
     for (const r of skipped) {
-      const key = r.detected ? `erkannt als ${r.detected}` : "keiner Klasse zugeordnet";
+      const key = r.detected ? `detected as ${r.detected}` : "no class";
       other.set(key, [...(other.get(key) ?? []), r.name]);
     }
-    lines.push("## Übersprungen", "");
+    lines.push("## Skipped", "");
     for (const [key, names] of other) lines.push(`- ${key} (${names.length}): ${names.join(", ")}`);
     lines.push("");
   }
   if (unloadable.length) {
-    lines.push("## Nicht ladbar", "", "| Plugin | Format | Fehler |", "|---|---|---|");
+    lines.push("## Not loadable", "", "| Plugin | Format | Error |", "|---|---|---|");
     for (const r of unloadable) lines.push(`| ${r.name} | ${r.format} | ${(r.error ?? "").replace(/\|/g, "/")} |`);
     lines.push("");
   }

@@ -17,10 +17,10 @@ export class LibraryView {
   constructor(private readonly onBuild: (profile: ProfileSummary) => void) {
     this.element = h("div.view.library-view", {},
       h("section.card", {},
-        h("header.step-header", {}, h("h2", {}, "Bibliothek"), h("div.spacer"),
-          h("button.ghost.small", { onclick: () => this.importProfile() }, "Profil importieren …"),
-          h("button.ghost.small", { onclick: () => this.profilesDir && openInSystem(this.profilesDir) }, "Ordner öffnen")),
-        h("p.hint", {}, "Gespeicherte Messungen (.vcprofile). Aus einem Profil lässt sich der Klon jederzeit neu bauen – ohne das Original-Plugin."),
+        h("header.step-header", {}, h("h2", {}, "Library"), h("div.spacer"),
+          h("button.ghost.small", { onclick: () => this.importProfile() }, "Import profile …"),
+          h("button.ghost.small", { onclick: () => this.profilesDir && openInSystem(this.profilesDir) }, "Open folder")),
+        h("p.hint", {}, "Saved measurements (.vcprofile). A clone can be rebuilt from a profile at any time – without the original plugin."),
         this.list));
   }
 
@@ -38,7 +38,7 @@ export class LibraryView {
     }
     clear(this.list);
     if (profiles.length === 0) {
-      this.list.appendChild(h("div.empty", {}, "Noch keine Profile – unter „Klonen“ ein Plugin messen."));
+      this.list.appendChild(h("div.empty", {}, "No profiles yet – measure a plugin under \"Clone\"."));
       return;
     }
     for (const p of profiles) {
@@ -48,32 +48,32 @@ export class LibraryView {
             h("div.profile-name", {}, p.name, h("span.muted", {}, p.manufacturer ? ` · ${p.manufacturer}` : "")),
             h("div.profile-meta", {},
               h("span", {}, formatDate(p.createdAt)),
-              h("span", {}, `${p.renders} Messungen`),
-              h("span", {}, { eq: "EQ-Messung", dynamics: "Dynamik-Messung", distortion: "Verzerrer-Messung", delay: "Delay-Messung", reverb: "Hall-Messung" }[p.planner] ?? "allgemein"),
+              h("span", {}, `${p.renders} measurements`),
+              h("span", {}, { eq: "EQ measurement", dynamics: "Dynamics measurement", distortion: "Distortion measurement", delay: "Delay measurement", reverb: "Reverb measurement" }[p.planner] ?? "general"),
               h("span", {}, formatBytes(p.bytes)))),
           p.verdict
-            ? h("span.pill", { class: verdictClass(p.verdict), title: `Abweichung ${formatDb(p.rmsDb ?? 0)}` }, `Klon: ${p.verdict}`)
-            : h("span.pill.neutral", {}, "noch kein Klon"),
+            ? h("span.pill", { class: verdictClass(p.verdict), title: `Deviation ${formatDb(p.rmsDb ?? 0)}` }, `Clone: ${p.verdict}`)
+            : h("span.pill.neutral", {}, "no clone yet"),
           h("div.profile-actions", {},
             h("button.ghost.small", { onclick: () => this.details.show(p.path) }, "Details"),
             h("button.primary.small", {
               disabled: !CLONEABLE.has(p.planner),
-              title: CLONEABLE.has(p.planner) ? "" : "Klone sind bisher nur für EQ-, Dynamik-, Verzerrer-, Delay- und Hall-Messungen möglich",
+              title: CLONEABLE.has(p.planner) ? "" : "Clones are so far only possible from EQ, dynamics, distortion, delay and reverb measurements",
               onclick: () => this.onBuild(p),
-            }, "Klon bauen"),
-            h("button.ghost.small", { onclick: () => this.exportProfile(p) }, "Exportieren …"),
-            h("button.ghost.small", { onclick: () => revealInFolder(p.path) }, "Zeigen"),
-            h("button.ghost.small.danger-text", { onclick: () => this.deleteProfile(p) }, "Löschen"))),
+            }, "Build clone"),
+            h("button.ghost.small", { onclick: () => this.exportProfile(p) }, "Export …"),
+            h("button.ghost.small", { onclick: () => revealInFolder(p.path) }, "Show"),
+            h("button.ghost.small.danger-text", { onclick: () => this.deleteProfile(p) }, "Delete"))),
       );
     }
   }
 
   private async importProfile() {
-    const path = await open({ title: "Profil importieren", filters: [{ name: "vst-cloner-Profil", extensions: ["vcprofile"] }] });
+    const path = await open({ title: "Import profile", filters: [{ name: "vst-cloner profile", extensions: ["vcprofile"] }] });
     if (typeof path !== "string") return;
     try {
       await call("profiles.import", { path });
-      toast("Profil importiert");
+      toast("Profile imported");
       await this.refresh();
     } catch (error) {
       toast((error as Error).message, "error");
@@ -81,18 +81,18 @@ export class LibraryView {
   }
 
   private async exportProfile(p: ProfileSummary) {
-    const target = await save({ title: "Profil exportieren", defaultPath: p.file, filters: [{ name: "vst-cloner-Profil", extensions: ["vcprofile"] }] });
+    const target = await save({ title: "Export profile", defaultPath: p.file, filters: [{ name: "vst-cloner profile", extensions: ["vcprofile"] }] });
     if (!target) return;
     try {
       await call("profiles.export", { path: p.path, target });
-      toast("Profil exportiert");
+      toast("Profile exported");
     } catch (error) {
       toast((error as Error).message, "error");
     }
   }
 
   private async deleteProfile(p: ProfileSummary) {
-    if (!confirm(`Profil „${p.name}“ vom ${formatDate(p.createdAt)} löschen?`)) return;
+    if (!confirm(`Delete the profile "${p.name}" from ${formatDate(p.createdAt)}?`)) return;
     try {
       await call("profiles.delete", { path: p.path });
       await this.refresh();

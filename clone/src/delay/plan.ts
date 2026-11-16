@@ -32,8 +32,8 @@ const NOT_A_PLAIN_DELAY = /loop|grain|pitch|multi\s*-?band|\bmb|stuck|bent|rever
 
 /** Recognises a delay or echo by its category or name; a delay time control is required. */
 export function detectDelay(parameters: Parameter[], category = "", name = ""): DelayMapping {
-  if (!DELAY_NAME.test(category) && !DELAY_NAME.test(name)) throw new NotDelayError("Weder Kategorie noch Name weisen auf ein Delay hin");
-  if (NOT_A_PLAIN_DELAY.test(name)) throw new NotDelayError(`„${name}“ ist kein einfaches Delay (Looper, Granular, Pitch, Multiband …)`);
+  if (!DELAY_NAME.test(category) && !DELAY_NAME.test(name)) throw new NotDelayError("Neither category nor name point to a delay");
+  if (NOT_A_PLAIN_DELAY.test(name)) throw new NotDelayError(`"${name}" is not a plain delay (looper, granular, pitch, multiband …)`);
   const roles: DelayMapping["roles"] = {};
   const other: number[] = [];
   for (const p of parameters) {
@@ -42,7 +42,7 @@ export function detectDelay(parameters: Parameter[], category = "", name = ""): 
     if (role) roles[role] = p.index;
     else other.push(p.index);
   }
-  if (roles.time === undefined) throw new NotDelayError("Kein Regler für die Verzögerungszeit erkannt");
+  if (roles.time === undefined) throw new NotDelayError("No delay time control detected");
   return { roles, other };
 }
 

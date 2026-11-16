@@ -1,78 +1,78 @@
-# `.vcprofile` – Profilformat v1
+# `.vcprofile` – profile format v1
 
-Ein Profil enthält alles, um einen Klon ohne das Original-Plugin neu zu bauen:
-Plugin-Metadaten, Parameterbeschreibung, die Beschreibung des Testsignals und die
-aufgenommenen Antworten des Plugins. Es enthält **keine** Binärdateien, Samples oder
-Code des Originals.
+A profile holds everything needed to rebuild a clone without the original plugin:
+plugin metadata, the parameter description, the description of the test signal and the
+recorded responses of the plugin. It contains **no** binaries, samples or
+code of the original.
 
 ## Container
 
-ZIP-Archiv (Deflate). `manifest.json` steht zuerst, damit Werkzeuge das Format schnell erkennen.
+ZIP archive (deflate). `manifest.json` comes first so that tools can recognise the format quickly.
 
-| Datei | Pflicht | Inhalt | Schema |
+| File | Required | Content | Schema |
 |---|---|---|---|
-| `manifest.json` | ja | Format, Version, Plugin, Capture-Einstellungen | `profile/schema/manifest.schema.json` |
-| `parameters.json` | ja | Alle Parameter des Plugins | `profile/schema/parameters.schema.json` |
-| `test-signals.json` | ja | Segmente des Eingangssignals + SHA-256 | `profile/schema/test-signals.schema.json` |
-| `captures.json` | ja | Index der Renders | `profile/schema/captures.schema.json` |
-| `captures/<id>.wav` | ja | Antwort des Plugins, WAV 32-bit float | – |
-| `model/eq.json` | nein | Gefittetes EQ-Modell (von `vch clone`/`vch analyze --save`) | – |
-| `report.json` | nein | Fit- und Vergleichsbericht des letzten Klons | – |
-| `spec.md` | nein | Funktionale Spezifikation (ab Meilenstein 7) | – |
-| `checksums.sha256` | ja | `sha256  pfad` für jede andere Datei | – |
+| `manifest.json` | yes | format, version, plugin, capture settings | `profile/schema/manifest.schema.json` |
+| `parameters.json` | yes | all parameters of the plugin | `profile/schema/parameters.schema.json` |
+| `test-signals.json` | yes | segments of the input signal + SHA-256 | `profile/schema/test-signals.schema.json` |
+| `captures.json` | yes | index of the renders | `profile/schema/captures.schema.json` |
+| `captures/<id>.wav` | yes | response of the plugin, WAV 32-bit float | – |
+| `model/eq.json` | no | fitted EQ model (from `vch clone`/`vch analyze --save`) | – |
+| `report.json` | no | fit and comparison report of the last clone | – |
+| `spec.md` | no | functional specification (from milestone 7) | – |
+| `checksums.sha256` | yes | `sha256  path` for every other file | – |
 
-Beim Lesen werden alle Prüfsummen, die JSON-Schemas und Querverweise geprüft
-(jede Capture-Datei vorhanden, jeder Parameterindex bekannt, keine unsicheren Pfade).
-Nicht gelistete Dateien führen zum Abbruch.
+On reading, all checksums, the JSON schemas and cross-references are checked
+(every capture file present, every parameter index known, no unsafe paths).
+Files that are not listed cause the read to fail.
 
-## Parameterwerte
+## Parameter values
 
-Alle Werte sind **normalisiert (0…1)**, so wie der Plugin-Host sie sieht.
-`parameters.json` enthält zu jedem Parameter Anzeigetexte (`texts`): bei diskreten
-Parametern für jeden Schritt, sonst an 11 gleichmäßig verteilten Punkten.
-Damit lässt sich die Zuordnung normalisiert → Anzeigewert (z. B. Hz, dB) rekonstruieren.
+All values are **normalised (0…1)**, as the plugin host sees them.
+`parameters.json` holds display texts (`texts`) for every parameter: for discrete
+parameters one per step, otherwise at 11 evenly spaced points.
+This allows reconstructing the mapping normalised → display value (e.g. Hz, dB).
 
-## Grundzustand
+## Base state
 
-Jeder Render startet vom Zustand des Plugins direkt nach dem Laden (`value` in
-`parameters.json`). `captures.json` listet pro Render nur die davon abweichenden
-Parameter, jeweils mit dem vom Plugin zurückgemeldeten Wert und Anzeigetext.
+Every render starts from the state of the plugin right after loading (`value` in
+`parameters.json`). `captures.json` lists per render only the parameters that differ from it,
+each with the value and display text reported back by the plugin.
 
-Ablauf pro Render im Host:
-1. Grundzustand wiederherstellen, Render-Parameter setzen
-2. Einen Block Stille verarbeiten (Parameter zustellen), `reset()`
-3. `prerollSeconds` Stille verarbeiten (Parameter-Glättung einschwingen lassen)
-4. Testsignal + `tailSeconds` Stille verarbeiten; die gemeldete Latenz wird abgeschnitten
+Steps per render in the host:
+1. Restore the base state, set the render parameters
+2. Process one block of silence (deliver the parameters), `reset()`
+3. Process `prerollSeconds` of silence (let parameter smoothing settle)
+4. Process the test signal + `tailSeconds` of silence; the reported latency is cut off
 
-Damit ist jede Capture-Datei sampelgenau zum Eingangssignal ausgerichtet und
-genau `length + tailSeconds * sampleRate` Samples lang.
+So every capture file is aligned sample-exactly with the input signal and is
+exactly `length + tailSeconds * sampleRate` samples long.
 
-Optionale Felder pro Render:
-- `mono: true` – alle Ausgangskanäle waren bitgleich; die Datei enthält nur einen Kanal.
-- `purpose` – `"train"` (für den Fit) oder `"validate"` (nur zur Gegenprobe).
-- `label` – lesbare Beschreibung, z. B. „Bell · 1000 Hz · +12.0 dB · Q 0.70“.
+Optional fields per render:
+- `mono: true` – all output channels were bit-identical; the file holds only one channel.
+- `purpose` – `"train"` (for the fit) or `"validate"` (only as a cross-check).
+- `label` – readable description, e.g. "Bell · 1000 Hz · +12.0 dB · Q 0.70".
 
-## Testsignal
+## Test signal
 
-Das Eingangssignal wird nicht gespeichert, sondern aus `test-signals.json` neu erzeugt
-(`vch extract` schreibt es als `input.wav`). `sha256` ist der Hash der erzeugten
-WAV-Datei. Weicht er ab (anderer Generator), bleiben die Segmentgrenzen trotzdem gültig.
+The input signal is not stored but regenerated from `test-signals.json`
+(`vch extract` writes it as `input.wav`). `sha256` is the hash of the generated
+WAV file. If it differs (another generator), the segment boundaries still remain valid.
 
-`preset` nennt die Segmentfolge: `full` (Standard) oder `eq` (kurz: Impuls mit 1 s Fenster,
-Sweep 1,5 s, für lineare Effekte).
+`preset` names the segment sequence: `full` (default) or `eq` (short: impulse with a 1 s window,
+1.5 s sweep, for linear effects).
 
-Segmente der Generator-Version 1, Preset `full` (alle Kanäle identisch):
+Segments of generator version 1, preset `full` (all channels identical):
 
-| Segment | Art | Zweck |
+| Segment | Kind | Purpose |
 |---|---|---|
-| `impulse` | Einzelimpuls, Amplitude 0,5 | Impulsantwort, Latenz |
-| `sweep` | Exponentieller Sinus-Sweep 20 Hz…20 kHz, −6 dBFS, 3 s | Frequenzgang, Klirrfaktor |
-| `noise` | Weißes Gauß-Rauschen, −18 dBFS RMS, 2 s | Nichtlineare Modelle |
-| `levels` | 1 kHz, −60…0 dBFS in 6-dB-Stufen | Statische Kompressor-Kennlinie |
-| `burst` | 1 kHz, −30 → −6 → −30 dBFS | Attack/Release |
-| `lead`, `gap-*` | Stille | Abklingen zwischen den Segmenten |
+| `impulse` | single impulse, amplitude 0.5 | impulse response, latency |
+| `sweep` | exponential sine sweep 20 Hz…20 kHz, −6 dBFS, 3 s | frequency response, distortion |
+| `noise` | white Gaussian noise, −18 dBFS RMS, 2 s | non-linear models |
+| `levels` | 1 kHz, −60…0 dBFS in 6 dB steps | static compressor curve |
+| `burst` | 1 kHz, −30 → −6 → −30 dBFS | attack/release |
+| `lead`, `gap-*` | silence | decay between the segments |
 
-## Versionierung
+## Versioning
 
-`schemaVersion` wird nur bei inkompatiblen Änderungen erhöht. Zusätzliche optionale
-Felder und Dateien sind innerhalb einer Version erlaubt.
+`schemaVersion` is only increased for incompatible changes. Additional optional
+fields and files are allowed within a version.

@@ -78,7 +78,7 @@ export function multibandReason(parameters: Parameter[]): string | undefined {
   const stages = Math.max(count(/thresh|thr\b/i), count(/\bratio|ratio\s*\d*$/i));
   const crossover = count(/cross\s*-?over/i) > 0;
   if (stages >= 3 || (crossover && stages >= 2)) {
-    return `Multiband- oder Mehrstufen-Kompressor (${stages} Stufen${crossover ? ", Crossover" : ""}) – mit dem Einband-Modell nicht abbildbar`;
+    return `Multiband or multi-stage compressor (${stages} stages${crossover ? ", crossover" : ""}) – cannot be represented by the single-band model`;
   }
   return undefined;
 }
@@ -88,9 +88,9 @@ export function multibandReason(parameters: Parameter[]): string | undefined {
  * category and name). Which curve it has is decided by the fit, on the measurement.
  */
 export function detectDynamics(parameters: Parameter[], category = "", name = ""): DynamicsMapping {
-  if (OTHER_CLASS_CATEGORY.test(category)) throw new NotDynamicsError(`Plugin-Kategorie „${category}“ ist kein Kompressor`);
-  if (NOT_COMPRESSOR_CATEGORY.test(category)) throw new NotDynamicsError(`Plugin-Kategorie „${category}“ ist kein Kompressor`, true);
-  if (NOT_COMPRESSOR_NAME.test(name)) throw new NotDynamicsError(`„${name}“ ist ein dynamischer EQ oder Hüllkurvenfolger, kein Kompressor`, true);
+  if (OTHER_CLASS_CATEGORY.test(category)) throw new NotDynamicsError(`Plugin category "${category}" is not a compressor`);
+  if (NOT_COMPRESSOR_CATEGORY.test(category)) throw new NotDynamicsError(`Plugin category "${category}" is not a compressor`, true);
+  if (NOT_COMPRESSOR_NAME.test(name)) throw new NotDynamicsError(`"${name}" is a dynamic EQ or envelope follower, not a compressor`, true);
   const multiband = multibandReason(parameters);
   if (multiband) throw new NotDynamicsError(multiband, true);
   const roles: DynamicsMapping["roles"] = {};
@@ -110,7 +110,7 @@ export function detectDynamics(parameters: Parameter[], category = "", name = ""
   const level = roles.threshold !== undefined || roles.reduction !== undefined;
   const behaviour = roles.ratio !== undefined || roles.attack !== undefined || roles.release !== undefined || roles.limit !== undefined || roles.reduction !== undefined;
   if (!level || !behaviour) {
-    throw new NotDynamicsError("Keine Kompressor-Parameter erkannt (Threshold/Peak Reduction und Ratio/Attack/Release)");
+    throw new NotDynamicsError("No compressor parameters detected (threshold/peak reduction and ratio/attack/release)");
   }
   return { roles, other };
 }
@@ -206,7 +206,7 @@ export function planSweeps(parameters: Parameter[], options: PlanOptions, ignore
   };
   const fixed = [...(options.fixed ?? []), ...working];
 
-  const renders: Omit<PlannedRender, "id">[] = [{ kind: "default", purpose: "train", label: working.length ? "Arbeitspunkt" : "Grundeinstellung", params: [...fixed] }];
+  const renders: Omit<PlannedRender, "id">[] = [{ kind: "default", purpose: "train", label: working.length ? "working point" : "base setting", params: [...fixed] }];
   for (const p of selected) {
     const values = positions(p)?.values.slice() ?? [...DYNAMICS_SWEEP];
     // a parameter moved to the working point: its initial value must be measured as well
@@ -253,7 +253,7 @@ export function planSweeps(parameters: Parameter[], options: PlanOptions, ignore
         for (let i = 0; i < SWITCH_CHECKS; i++) {
           block.push({
             kind: "random", purpose: "train",
-            label: `${s.name} = ${percent(s, position)}: Kombination ${i + 1}`,
+            label: `${s.name} = ${percent(s, position)}: combination ${i + 1}`,
             params: [
               ...fixed.filter((f) => !selected.some((p) => p.index === f.index)),
               ...selected.map((p) => ({ index: p.index, value: p === s ? position : stepped(p) ? randomPosition(p, checks) : checks() })),
@@ -271,7 +271,7 @@ export function planSweeps(parameters: Parameter[], options: PlanOptions, ignore
     const isSwitch = (p: Parameter) => stepped(p) && numPositions(p) <= SWITCH_STATES;
     for (let i = 0; i < extra.combinations; i++) {
       renders.push({
-        kind: "random", purpose: "train", label: `Kombination ${i + 1}`,
+        kind: "random", purpose: "train", label: `combination ${i + 1}`,
         params: [
           ...fixed.filter((f) => !selected.some((p) => p.index === f.index)),
           ...selected.map((p) => ({ index: p.index, value: isSwitch(p) ? base(p) : stepped(p) ? randomPosition(p, mixes) : mixes() })),
@@ -284,7 +284,7 @@ export function planSweeps(parameters: Parameter[], options: PlanOptions, ignore
     renders.push({
       kind: "random",
       purpose: "validate",
-      label: `Zufallskombination ${i + 1}`,
+      label: `random combination ${i + 1}`,
       params: [...fixed.filter((f) => !selected.some((p) => p.index === f.index)), ...selected.map((p) => ({ index: p.index, value: stepped(p) ? randomPosition(p, random) : random() }))],
     });
   }

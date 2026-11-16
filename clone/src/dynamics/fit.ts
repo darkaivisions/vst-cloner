@@ -710,7 +710,7 @@ export function fitDynamics(profile: Profile, onProgress?: (done: number, total:
   const fitCore = (base: DynamicsObservation, train: DynamicsObservation[], colour?: CompressorParams) => {
 
     const candidates = (list: CompressorStructure[]) => list.map((structure) => {
-      onProgress?.(done++, total, `Struktur ${structure.detector}/${structure.topology}${structure.curve ? `/${structure.curve}` : ""}`);
+      onProgress?.(done++, total, `structure ${structure.detector}/${structure.topology}${structure.curve ? `/${structure.curve}` : ""}`);
       return { structure, ...fitRender(base, input, structure) };
     });
     const structures = candidates(STRUCTURES);
@@ -793,7 +793,7 @@ export function fitDynamics(profile: Profile, onProgress?: (done: number, total:
     });
 
     // saturation drive, jointly: base value + a (penalised) change per sweep point
-    onProgress?.(Math.min(done, total - 1), total, "Sättigung");
+    onProgress?.(Math.min(done, total - 1), total, "saturation");
     const drives = colour ? { base: colour.drive, changes: points.map(() => 0) } : fitDrives(input, structure, baseFit.params, base, points);
     baseFit.params.drive = drives.base;
     const DRIVE = 10;

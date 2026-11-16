@@ -1,258 +1,263 @@
-# Plan: VST-Cloner (Effekt-Plugins unter Linux nutzbar machen)
+# Plan: VST-Cloner (making effect plugins usable on Linux)
 
-Stand: 16.11.2026 (überarbeitet: Abgleich des ursprünglichen Plans mit dem Erreichten)
+As of: 16 Nov 2026 (revised: original plan compared with what has been achieved)
 
-## Ziel
-Gekaufte Windows-Effekt-Plugins unter Linux nutzen:
-1. Zuerst prüfen, ob das Original per **yabridge + Wine** läuft (beste Lösung, 100 % Klangtreue).
-2. Falls nicht (iLok/PACE, Crashes, CPU, GUI): Plugin per **Black-Box-Capture** vermessen,
-   als offenes Profil (`.vcprofile`) speichern und daraus einen **freien Klon** (LV2/VST3/CLAP) bauen.
+## Goal
+Use bought Windows effect plugins on Linux:
+1. First check whether the original runs via **yabridge + Wine** (best solution, 100 % sound fidelity).
+2. If not (iLok/PACE, crashes, CPU, GUI): measure the plugin by **black-box capture**,
+   save it as an open profile (`.vcprofile`) and build a **free clone** (LV2/VST3/CLAP) from it.
 
-Privatnutzung. Kein Umschreiben von dekompiliertem Code, keine Extraktion von Samples/Assets.
+Private use. No rewriting of decompiled code, no extraction of samples/assets.
 
-## Grundprinzipien
-- **Black-Box first:** Klon basiert auf gemessenem Klangverhalten, nicht auf Code.
-- **Clean-Room-Trennung:** REA liefert nur Metadaten/funktionale Spezifikation (Text, ohne Code).
-  Der Code-generierende Agent erhält nie dekompilierten Code im Kontext (technisch erzwungen).
-- **Profile sind wiederverwendbar:** Einmal capturen, beliebig oft neu bauen.
-- **Plattformen:** Capture auf Windows (Lizenz/Kopierschutz funktionieren nativ) oder Linux via yabridge.
-  Analyse, Klonbau und Nutzung auf Linux (Windows ebenfalls unterstützt).
-- **Jeder Klon wird gemessen:** Der fertige Klon durchläuft dieselben Messungen wie das Original;
-  ein Teil der Messungen (Zufallskombinationen) dient nur zur Gegenprobe und nie zum Fitten.
+## Principles
+- **Black box first:** the clone is based on measured sound behaviour, not on code.
+- **Clean-room separation:** REA provides only metadata/a functional specification (text, no code).
+  The code-generating agent never gets decompiled code in its context (enforced technically).
+- **Profiles are reusable:** capture once, rebuild as often as you like.
+- **Platforms:** capture on Windows (licence/copy protection work natively) or on Linux via yabridge.
+  Analysis, clone building and use on Linux (Windows supported as well).
+- **Every clone is measured:** the finished clone goes through the same measurements as the original;
+  part of the measurements (random combinations) serves only as a cross-check and is never used for fitting.
 
 ## Workflow
 ```
-Windows-PC (Plugin lizenziert)         Linux-PC
+Windows PC (plugin licensed)           Linux PC
 ┌─────────────────────────┐  .vcprofile ┌───────────────────────────┐
-│ Capture-Host            │ ──────────► │ App: Analyse + Klonbau    │
-│ misst Plugin offline    │             │ (VST3/LV2), Vergleich mit │
-└─────────────────────────┘             │ den Messungen             │
+│ Capture host            │ ──────────► │ App: analysis + clone     │
+│ measures plugin offline │             │ build (VST3/LV2),         │
+└─────────────────────────┘             │ comparison with the       │
+                                         │ measurements              │
                                          └───────────────────────────┘
 ```
 
-## Architektur
+## Architecture
 ```
-┌──────────── UI: Tauri v2 (Rust + Web) ─────────────┐
-│ Plugin wählen → Messen → Klonen · Bibliothek · KI  │
+┌──────────── UI: Tauri v2 (Rust + web) ─────────────┐
+│ Choose plugin → measure → clone · library · AI     │
 └──────────────────────┬─────────────────────────────┘
-                       │ JSON-Zeilen (Jobs, Fortschritt, Abbruch)
+                       │ JSON lines (jobs, progress, cancel)
 ┌──────────────────────▼─────────────────────────────┐
 │ bridge (Node/TS)                                   │
 ├────────────┬───────────────────────┬───────────────┤
 │ capture    │ clone                 │ agent         │
-│ Messplan,  │ Weg A: Fit + feste    │ LLM-Anbieter, │
-│ Profil     │        C++-Engine     │ Rollen        │
-│            │ Weg B: Builder-Agent  │ (für Weg B)   │
-│            │        + Faust (M7)   │               │
+│ plan,      │ path A: fit + fixed   │ LLM providers,│
+│ profile    │         C++ engine    │ roles         │
+│            │ path B: builder agent │ (for path B)  │
+│            │         + Faust (M7)  │               │
 └─────┬──────┴──────────┬────────────┴───────────────┘
       │ stdio/JSON      │ CMake
 ┌─────▼──────────┐ ┌────▼─────────────────────────┐
-│ vch-host,      │ │ plugin-template/<klasse>     │
-│ vch-gui        │ │ C++/JUCE-Engine + Modell als │
-│ C++ / JUCE 9   │ │ Daten → VST3 + LV2           │
+│ vch-host,      │ │ plugin-template/<class>      │
+│ vch-gui        │ │ C++/JUCE engine + model as   │
+│ C++ / JUCE 9   │ │ data → VST3 + LV2            │
 └────────────────┘ └──────────────────────────────┘
 ```
 
-### Zwei Wege zum Klon
-- **Weg A – feste Engines (gebaut):** Pro Effektklasse gibt es ein parametrisches Modell, einen
-  deterministischen Fit in TypeScript (Worker-Threads) und eine C++/JUCE-Engine, die sample-genau wie die
-  TypeScript-Referenz rechnet und das Modell als Datendatei erhält. Schnell (Sekunden bis wenige Minuten),
-  ohne LLM, reproduzierbar. Deckt EQ, Dynamik, Verzerrer, Delay und Reverb ab.
-- **Weg B – Builder-Agent (geplant, Meilenstein 7):** Ein Agent schreibt Faust-Code aus `spec.md` und
-  Messdaten und verbessert ihn in einer Schleife. Für alles, was keine feste Engine abdeckt – Plugins ohne
-  Klasse, Multiband-Kompressoren, dynamische EQs, Multieffekte – und als Nachbesserung, wenn Weg A nur
-  „ungenau“ liefert.
+### Two paths to a clone
+- **Path A – fixed engines (built):** for every effect class there is a parametric model, a
+  deterministic fit in TypeScript (worker threads) and a C++/JUCE engine that computes sample-exactly like the
+  TypeScript reference and receives the model as a data file. Fast (seconds to a few minutes),
+  without an LLM, reproducible. Covers EQ, dynamics, distortion, delay and reverb.
+- **Path B – builder agent (planned, milestone 7):** an agent writes Faust code from `spec.md` and the
+  measurements and improves it in a loop. For everything no fixed engine covers – plugins without a
+  class, multiband compressors, dynamic EQs, multi-effects – and as a follow-up when path A only
+  delivers "inaccurate".
 
-### Komponenten
-- **UI:** Tauri v2 (`apps/desktop`): Klonen, Bibliothek, KI-Modelle, Live-Protokoll.
-- **bridge:** JSON-Zeilen-Schnittstelle zwischen Oberfläche und den Paketen (Jobs mit Fortschritt/Abbruch).
-- **vch-host / vch-gui:** C++20 mit JUCE 9. Bewusst „dumm“: lädt Plugin, liest Parameter, rendert
-  WAV-Eingang → WAV-Ausgang pro Parametersatz; `vch-gui` öffnet Editoren unsichtbar (Xvfb) und nimmt sie auf.
-- **capture (Node/TS):** Testsignale (deterministisch), Messplan, Ansteuerung von vch-host, Profil, CLI `vch`,
-  Plugin-Scanner.
-- **clone (Node/TS):** Messpläne, Fits, Vergleich und Codegeneratoren pro Klasse (`eq/`, `dynamics/`,
-  `distortion/`, `delay/`, `reverb/`), Oberflächen-Analyse (`gui/`), Klassifizierung und Batch-Lauf.
-- **plugin-template:** C++/JUCE-Engines pro Klasse, gemeinsame Parameter-Logik und Klon-Editor in `common/`.
-- **agent (Node/TS):** Vercel AI SDK für alle LLM-Anbieter, später MCP-Client für REA.
-  Zwei getrennte Rollen: `analyst` (darf REA nutzen, erzeugt `spec.md`) und
-  `builder` (sieht nur `spec.md`, Parameter, Captures, Metriken). Bisher nur Einrichtung, noch nicht in der
-  Klon-Pipeline.
-- **dsp/:** Faust-Templates (Weg B) und NAM-Training (Meilenstein 5c) – noch leer.
-- TypeScript läuft ohne Build-Schritt direkt mit Node ≥ 22.18 (Type Stripping).
+### Components
+- **UI:** Tauri v2 (`apps/desktop`): clone, library, AI models, live log.
+- **bridge:** JSON-lines interface between the UI and the packages (jobs with progress/cancel).
+- **vch-host / vch-gui:** C++20 with JUCE 9. Deliberately "dumb": loads a plugin, reads parameters, renders
+  WAV input → WAV output per parameter set; `vch-gui` opens editors invisibly (Xvfb) and takes screenshots.
+- **capture (Node/TS):** test signals (deterministic), measurement plan, driving vch-host, profile, CLI `vch`,
+  plugin scanner.
+- **clone (Node/TS):** measurement plans, fits, comparison and code generators per class (`eq/`, `dynamics/`,
+  `distortion/`, `delay/`, `reverb/`), editor analysis (`gui/`), classification and batch run.
+- **plugin-template:** C++/JUCE engines per class, shared parameter logic and clone editor in `common/`.
+- **agent (Node/TS):** Vercel AI SDK for all LLM providers, later an MCP client for REA.
+  Two separate roles: `analyst` (may use REA, produces `spec.md`) and
+  `builder` (sees only `spec.md`, parameters, captures, metrics). So far only the setup, not yet part of the
+  clone pipeline.
+- **dsp/:** Faust templates (path B) and NAM training (milestone 5c) – still empty.
+- TypeScript runs without a build step directly with Node ≥ 22.18 (type stripping).
 
-## LLM-Anbindung
-- Provider: OpenAI, Anthropic, Google Gemini, Mistral, OpenRouter (Cloud);
-  Ollama, LM Studio, llama.cpp-Server, vLLM (lokal, OpenAI-kompatibel, Auto-Discovery).
-- Modellwahl pro Rolle (z. B. Analyse lokal, Codegenerierung in der Cloud).
-- Fähigkeitstest beim Einrichten: Tool-Calling, Kontextlänge, strukturierte Ausgabe.
-- Token-/Kostenanzeige pro Job, API-Keys im OS-Keychain (libsecret / Windows Credential Manager).
-- REA als gepinnte Version gebündelt, Update-Check über `rea update` (REA braucht Node ≥ 22.23.4).
+## LLM integration
+- Providers: OpenAI, Anthropic, Google Gemini, Mistral, OpenRouter (cloud);
+  Ollama, LM Studio, llama.cpp server, vLLM (local, OpenAI-compatible, auto-discovery).
+- Model choice per role (e.g. analysis locally, code generation in the cloud).
+- Capability test during setup: tool calling, context length, structured output.
+- Token/cost display per job, API keys in the OS keychain (libsecret / Windows Credential Manager).
+- REA bundled as a pinned version, update check via `rea update` (REA needs Node ≥ 22.23.4).
 
-## Effekt-Klassen und Methoden
-Klassifizierung über Regeln (`classifyPlugin`: Parameternamen, Kategorie, Name), eine Stelle für App und Batch.
-Instrumente, Multiband-Kompressoren und dynamische EQs erhalten bewusst keine Klasse. Wo die Regeln nichts
-finden, entscheidet später das LLM (Meilenstein 7).
+## Effect classes and methods
+Classification by rules (`classifyPlugin`: parameter names, category, name), one place for the app and batch.
+Instruments, multiband compressors and dynamic EQs deliberately get no class. Where the rules find
+nothing, the LLM will decide later (milestone 7).
 
-| Klasse | Messung | Modell (Weg A) | Stand |
+| Class | Measurement | Model (path A) | Status |
 |---|---|---|---|
-| EQ / Filter | Impulsantwort pro Bandgruppe und Filterform × Frequenz × Gain × Güte, dazu mehrere Bänder zugleich | Biquad-Kette, elliptische Brickwall-Flanken, gefittete Q-Kennlinie; Bänder mit fester Form und Regler grafischer EQs: Form, Frequenz, Güte und Gain-Maßstab aus der Messung | ✔ – offen: linearphasig |
-| Kompressor / Limiter | Pegeltreppe, Bursts, lange Pausen, 100-Hz-Stufen, Rauschen | Detektor (RMS/Peak, FF/FB), Kennlinie mit Knick, Attack/Release, Opto-Speicher, Sättigung | ✔ |
-| Gate / Expander / Ducker | wie Kompressor | Expander-Kennlinie mit Range, invertierte Kennlinie | ✔ |
-| Verzerrer (Pedale) | Sinus-Pegeltreppen bei mehreren Frequenzen, Rauschen, leiser Sweep | Wiener-Hammerstein (Vorfilter → Begrenzung → Nachfilter) | ✔ – 73 Plugins im Batch, 46 gut oder besser |
-| Amp / Tape | Rauschen + Musik über Parameterraster | NAM / RTNeural-LSTM, Parameter-konditioniert | offen (5c) |
-| Delay / Echo | Impuls mit langer Stille, Rauschburst | Delay-Line mit Feedback, Tief-/Hochpass in der Schleife und im Wet-Pfad | erste Fassung |
-| Reverb | Impuls und Ausklang | FDN hinter Pre-Delay; Pegel und Nachhallzeit in drei Bändern | erste Fassung |
-| Modulation (Chorus, Flanger, Phaser, Tremolo) | lange Sweeps, LFO-Erkennung | – | offen (6b) |
-| alles andere | allgemeiner Messplan | Weg B (Faust) | offen (7) |
+| EQ / filter | impulse response per band group and filter shape × frequency × gain × Q, plus several bands at once | biquad chain, elliptic brickwall slopes, fitted Q curve; bands with a fixed shape and sliders of graphic EQs: shape, frequency, Q and gain scale from the measurement | ✔ – open: linear phase |
+| Compressor / limiter | level staircase, bursts, long pauses, 100 Hz steps, noise | detector (RMS/peak, FF/FB), curve with knee, attack/release, opto memory, saturation | ✔ |
+| Gate / expander / ducker | like compressor | expander curve with range, inverted curve | ✔ |
+| Distortion (pedals) | sine level staircases at several frequencies, noise, quiet sweep | Wiener-Hammerstein (pre-filter → clipping → post-filter) | ✔ – 73 plugins in the batch, 46 good or better |
+| Amp / tape | noise + music over a parameter grid | NAM / RTNeural LSTM, parameter-conditioned | open (5c) |
+| Delay / echo | impulse with long silence, noise burst | delay line with feedback, low-/high-pass in the loop and in the wet path | first version |
+| Reverb | impulse and decay | FDN behind a pre-delay; level and decay time in three bands | first version |
+| Modulation (chorus, flanger, phaser, tremolo) | long sweeps, LFO detection | – | open (6b) |
+| everything else | general measurement plan | path B (Faust) | open (7) |
 
-- **Parameterraster:** Einzelparameter-Sweeps + Zufallskombinationen zur Gegenprobe; pro Regler eine Tabelle
-  auf die Modellwerte (PCHIP), Wechselwirkungen (z. B. automatisches Makeup) als eigene Terme.
-- **Schalter:** bis vier Stellungen bekommen bei Bedarf ein eigenes Modell samt Struktur.
-- **Arbeitspunkt-Probe:** Der Messplan sucht eine Einstellung, in der der Effekt hörbar arbeitet
-  (Kompressor komprimiert, Delay hat ein Echo).
-- **DAW-Kompatibilität:** Klon übernimmt Parameternamen und -bereiche (Automation/Projekte übertragbar).
+- **Parameter grid:** single-parameter sweeps + random combinations as a cross-check; per control a table
+  onto the model values (PCHIP), interactions (e.g. automatic make-up) as terms of their own.
+- **Switches:** up to four positions get a model of their own, including its structure, when needed.
+- **Working point probe:** the measurement plan looks for a setting in which the effect audibly works
+  (compressor compresses, delay has an echo).
+- **DAW compatibility:** the clone keeps parameter names and ranges (automation/projects carry over).
 
-## Agent-Schleife (Builder, Weg B)
-1. Faust-Code (bzw. Modell-Config) aus `spec.md` + Messdaten generieren
-2. Kompilieren (Fehler zurück an Agent)
-3. Mit identischen Testsignalen rendern
-4. Metriken pro Parameterpunkt: ESR, spektrale Distanz (Multi-Resolution STFT), Pegel-/Latenzabgleich;
-   für Plugins mit Klasse zusätzlich die Kennzahl der Klasse (wie Weg A, damit beide Wege vergleichbar sind)
-5. Iterieren bis Schwellwert oder max. Iterationen; Qualitätsbericht ins Profil
+## Agent loop (builder, path B)
+1. Generate Faust code (or a model config) from `spec.md` + measurements
+2. Compile (errors go back to the agent)
+3. Render with identical test signals
+4. Metrics per parameter point: ESR, spectral distance (multi-resolution STFT), level/latency alignment;
+   for plugins with a class also the metric of the class (as in path A, so that both paths are comparable)
+5. Iterate until a threshold or the maximum number of iterations; quality report into the profile
 
-Erfahrung aus Meilenstein 3: Faust übersetzt langsam (≈ 11 s pro EQ-Band). Die Schleife braucht deshalb
-kleine Übersetzungseinheiten und einen Cache.
+Experience from milestone 3: Faust compiles slowly (≈ 11 s per EQ band). The loop therefore needs
+small compilation units and a cache.
 
-## Qualitätssicherung
-- **`vch batch --class <klasse>`** misst und klont jedes installierte Plugin einer Klasse (derzeit 339 Plugins,
-  Zeitlimit 15 min pro Plugin, Bericht `report.md`/`report.json`, Fortsetzen nach Abbruch). Dient als
-  Regressionstest: Jede Änderung an Fit oder Modell wird am ganzen Bestand geprüft.
-- **Kennzahlen:** „Klon vs. Original“ (alle Messungen) und „unbekannte Kombinationen“ (nur Gegenprobe).
-  Bewertung in fünf Stufen von „ausgezeichnet“ bis „ungenau“; Schwellen je Klasse.
-- Klone, die NaN ausgeben oder deren Messung den Effekt gar nicht zeigt („keine Kompression gemessen“),
-  werden ausgewiesen statt gut bewertet.
-- Tests zunächst mit freien/Open-Source-Plugins, bei denen das Ergebnis überprüfbar ist.
+## Quality assurance
+- **`vch batch --class <class>`** measures and clones every installed plugin of a class (currently 339 plugins,
+  time limit 15 min per plugin, report `report.md`/`report.json`, resumes after a cancel). Serves as a
+  regression test: every change to a fit or model is checked against the whole collection.
+- **Metrics:** "clone vs. original" (all measurements) and "unseen combinations" (cross-check only).
+  Rating in five levels from "excellent" to "inaccurate"; thresholds per class.
+- Clones that output NaN or whose measurement does not show the effect at all ("no compression measured")
+  are flagged instead of rated well.
+- Tests first with free/open-source plugins, where the result can be checked.
 
-Stand der Batch-Läufe (16.11. mit neu gebautem Host; Delay 15.11.):
+State of the batch runs (16 Nov with the rebuilt host; delay 15 Nov):
 
-| Klasse | Plugins | Ergebnis |
+| Class | Plugins | Result |
 |---|---|---|
-| Dynamik | 12 (9 Kompressoren/Limiter, 2 Gates, 1 Expander) | 0,34–3,55 dB; 3× ausgezeichnet, 2× sehr gut, 4× gut, 2× brauchbar (GxCompressor 2,37 dB, GxExpander 3,55 dB), 1× „keine Kompression gemessen“; unbekannte Kombinationen 0,41–9,97 dB |
-| Delay | 12 | 3× sehr gut (ZamDelay 1,43 dB, Gxdigital_delay 1,95/1,94 dB), 2× gut (Tal-Dub-3 2,87 dB, GxEcho-Stereo 3,12 dB), 2× brauchbar, 4× ungenau, 1× „kein Echo gemessen“; unbekannte Kombinationen 0,78–10,5 dB bei sieben Plugins, sonst 15–26 dB |
-| Reverb | 19 | 1,48–6,97 dB; 5× sehr gut, 7× gut, 7× brauchbar; unbekannte Kombinationen 2–16 dB; 11 Plugins nicht wiederholbar und isoliert gemessen (FdnReverb 13,0 → 4,08 dB, ZynReverb lässt sich jetzt messen) |
-| Verzerrer | 73 (+4 Fehler: 3× Absturz beim Messen, 1× Klon lädt nicht) | 0,06–18,4 dB (GxFuzzFaceFuller nach Korrektur 13,95, im Lauf vom 16.11. noch 58,7); 12× ausgezeichnet, 20× sehr gut, 14× gut, 14× brauchbar, 13× ungenau; 17 Plugins nicht wiederholbar und isoliert gemessen (dRowAudio Distortion 3,30 → 1,96); unbekannte Kombinationen meist nahe am Gesamtwert, sonst bis 28 dB |
-| EQ | 5 (+1 Fehler: ZamEQ2 gibt im Mess-Host nur NaN aus) | MultiEQ 0,04 dB (ausgezeichnet), x42-eq 0,50 dB (sehr gut, jetzt mit Shelves und Hoch-/Tiefpass), ZamGEQ31 0,66 dB, GxBarkGraphicEQ 0,62 dB, GxGraphicEQ 0,83 dB (gut); mehrere Bänder zugleich 0,25–2,13 dB |
+| Dynamics | 12 (9 compressors/limiters, 2 gates, 1 expander) | 0.34–3.55 dB; 3× excellent, 2× very good, 4× good, 2× usable (GxCompressor 2.37 dB, GxExpander 3.55 dB), 1× "no compression measured"; unseen combinations 0.41–9.97 dB |
+| Delay | 12 | 3× very good (ZamDelay 1.43 dB, Gxdigital_delay 1.95/1.94 dB), 2× good (Tal-Dub-3 2.87 dB, GxEcho-Stereo 3.12 dB), 2× usable, 4× inaccurate, 1× "no echo measured"; unseen combinations 0.78–10.5 dB for seven plugins, otherwise 15–26 dB |
+| Reverb | 19 | 1.48–6.97 dB; 5× very good, 7× good, 7× usable; unseen combinations 2–16 dB; 11 plugins not repeatable and measured in isolation (FdnReverb 13.0 → 4.08 dB, ZynReverb can now be measured) |
+| Distortion | 73 (+4 failures: 3× crash while measuring, 1× clone does not load) | 0.06–18.4 dB (GxFuzzFaceFuller 13.95 after the fix, still 58.7 in the run of 16 Nov); 12× excellent, 20× very good, 14× good, 14× usable, 13× inaccurate; 17 plugins not repeatable and measured in isolation (dRowAudio Distortion 3.30 → 1.96); unseen combinations mostly close to the overall value, otherwise up to 28 dB |
+| EQ | 5 (+1 failure: ZamEQ2 outputs only NaN in the capture host) | MultiEQ 0.04 dB (excellent), x42-eq 0.50 dB (very good, now with shelves and high/low-pass), ZamGEQ31 0.66 dB, GxBarkGraphicEQ 0.62 dB, GxGraphicEQ 0.83 dB (good); several bands at once 0.25–2.13 dB |
 
-## Profilformat `.vcprofile`
-Details: [docs/profile-format.md](docs/profile-format.md). ZIP-Container, versioniertes JSON-Schema:
+## Profile format `.vcprofile`
+Details: [docs/profile-format.md](docs/profile-format.md). ZIP container, versioned JSON schema:
 ```
-manifest.json        Schema-Version, Plugin-Info, Capture-Einstellungen, Host/OS
-parameters.json      Parameter, Bereiche, Defaults, Wertetexte
-test-signals.json    Segmente + Seeds der Testsignale (reproduzierbar statt gespeichert) + SHA-256
-captures.json        Index: Render-ID → Datei, Parameterwerte, Latenz, Pegel
-captures/*.wav       Antworten als WAV float32 (verlustfrei, ZIP-komprimiert)
-model/               Modell der Klasse (eq.json, …), gui.json; später Faust .dsp, .nam
-report.json          Qualitätsmetriken des letzten Builds
-spec.md              Funktionale Spezifikation (ohne Code)            (ab M7)
+manifest.json        schema version, plugin info, capture settings, host/OS
+parameters.json      parameters, ranges, defaults, value texts
+test-signals.json    segments + seeds of the test signals (reproducible instead of stored) + SHA-256
+captures.json        index: render ID → file, parameter values, latency, level
+captures/*.wav       responses as WAV float32 (lossless, ZIP-compressed)
+model/               model of the class (eq.json, …), gui.json; later Faust .dsp, .nam
+report.json          quality metrics of the last build
+spec.md              functional specification (no code)                (from M7)
 checksums.sha256
 ```
-- Import → Neubau des Klons ohne Original-Plugin.
-- Keine Binärteile, Samples oder Code des Originals im Profil.
+- Import → rebuild of the clone without the original plugin.
+- No binaries, samples or code of the original in the profile.
 
-## Projektstruktur (Monorepo)
+## Project structure (monorepo)
 ```
 vst-cloner/
 ├─ apps/desktop/      Tauri v2 UI
-├─ bridge/            JSON-Zeilen-Schnittstelle UI ↔ Pakete
-├─ host/              C++/JUCE vch-host und vch-gui (CMake, Win + Linux)
-├─ capture/           Node/TS: Testsignale, Messplan, Plugin-Scanner, CLI `vch`
-├─ profile/           JSON-Schema + Reader/Writer + WAV-I/O (TS)
-├─ clone/             Node/TS: Fits, Modelle, Vergleich, GUI-Analyse, Batch
-├─ plugin-template/   C++/JUCE-Engines: eq, dynamics, distortion, delay, reverb, common
-├─ agent/             Node/TS: AI SDK, Rollen; MCP→REA, Analyst-/Builder-Agent (M7)
-├─ dsp/               Faust-Templates, NAM-Training (M5c, M7)
+├─ bridge/            JSON-lines interface UI ↔ packages
+├─ host/              C++/JUCE vch-host and vch-gui (CMake, Win + Linux)
+├─ capture/           Node/TS: test signals, measurement plan, plugin scanner, CLI `vch`
+├─ profile/           JSON schema + reader/writer + WAV I/O (TS)
+├─ clone/             Node/TS: fits, models, comparison, editor analysis, batch
+├─ plugin-template/   C++/JUCE engines: eq, dynamics, distortion, delay, reverb, common
+├─ agent/             Node/TS: AI SDK, roles; MCP→REA, analyst/builder agent (M7)
+├─ dsp/               Faust templates, NAM training (M5c, M7)
 └─ docs/
 ```
 
-## Meilensteine
-1. **Profilformat + Capture-Host** ✔
-2. **LLM-Layer** ✔ – Anbieter, Auto-Discovery, Fähigkeitstest, Keychain, Kosten, Rollen; CLI `vch llm …`
-3. **EQ/Filter** ✔ – Pro-Q 3: 0,10 dB über 149 Einstellungen
-   - Offen: linearphasiger Modus
-4. **Desktop-Oberfläche** ✔ – Klonen, Bibliothek, KI-Modelle, Protokoll; Modi EQ, Dynamik, Verzerrer, Delay, Hall, Allgemein
-   - Anzeigen für die Messung ✔ – Vorstufen im Fortschritt (Wiederholbarkeit, Arbeitspunkt, Schaltersuche), Hinweise
-     „nicht wiederholbar“ und „als Schalter erkannt“, EQ-Plakette für grafische EQs/feste Formen/Bandgruppen,
-     Ergebniszeile „mehrere Bänder zugleich“; im Fenster geprüft mit ZamGEQ31 und Tal-Dub-3
-   - Vorab-Messungen werden mitgezählt; der Delay-Hinweis nennt die Schaltersuche und „mindestens n Einstellungen“ ✔
-   - **4b Oberflächen-Nachbau** (läuft) – Wiggle-Test, OCR, Nadeln, Pegelbalken, Schalter-Erkennung;
-     74–82 % Struktur-, 95–98 % Farbähnlichkeit an vier Plugins
-     - Offen: XY-Punkte, farbige Vollringe um Regler, Regler mit Verlauf und kleinem Zeiger (DS1), Skalen der
-       Pegelmesser, Schriftstärken innerhalb eines Titels, Logos, Rahmen/Dekor; Bänder direkt in der Kurve
-       bedienen im Klon-Editor prüfen; Oberflächen im Batch-Lauf mitprüfen
-5. **Dynamik + Verzerrer**
-   - **5a Dynamik** ✔ – Kompressor, Limiter, Gate, Expander, Ducker; Arbeitspunkt-Probe, Wechselwirkungen,
-     Modelle pro Schalterstellung
-     - Offen: Fit-Zeit (1–4 min pro Plugin), GxCompressor und DirectionalCompressor bei unbekannten
-       Kombinationen (7–10 dB)
-   - **5b Verzerrer (Pedale)** ✔ – Wiener-Hammerstein; GxBoss DS1: Grundton 0,68 dB, Oberwellen 1,8 dB
-     - Erkennung geschärft (97 → 77 Treffer: ein Gain-Regler allein reicht nicht mehr); Batch über 77 Plugins:
-       73 geklont, 46 gut oder besser
-     - Stumme Grundeinstellung ✔ – der Messplan sucht einen Arbeitspunkt (Drive-Regler aufdrehen), wenn in der
-       Grundeinstellung nichts herauskommt; stumme Reglerstellungen werden als „aus“ modelliert; die Aufnahme
-       verlängert den Vorlauf, wenn das Plugin nach dem Laden noch ausschwingt (Einschaltknacks, alle Klassen);
-       GxFuzzFaceFuller 58,7 → 13,95
-     - Offen: Gate-Verhalten von Fuzz-Pedalen (GxFuzzFaceFuller lässt leise Signale nicht durch);
-       Fuzz-Pedale mit Grundton-Fehlern über 10 dB (GxAxisFace, GxFuzzFaceFuller, GxSunFace, Hip2B),
-       Bitcrusher (Bitta, MaBitcrush – brauchen ein anderes Modell), Absturz beim Messen (GxAmplifier-X,
-       GxCabinet), Zeitbereichs-Term im Fit
-   - **5c Amps mit NAM** – lokales Training (CPU/GPU), Swanky Amp, TONE3000
-6. **Delay + Reverb + Modulation**
-   - **6a Delay + Reverb** ← in Arbeit – erste Fassung in CLI, Batch und App ✔
-     - Delay-Kombinationen, erster Schritt ✔ – Echo-Erkennung relativ zum Pegel und am Anstieg, Zeit-Tabellen
-       (Punkte ohne sichtbares Echo, Regler linear in Sekunden oder Tempo), Kombinationsmessungen für den Fit,
-       Summenregel für mehrere Zeitregler; ZamDelay 2,71 → 0,78 dB, GxDelay-Stereo 10,9 → 6,1 dB
-     - Regler mit vielen Stufen (0 … 127, Zyn-Plugins) werden interpoliert statt wie Schalter auf den nächsten
-       Messpunkt gesetzt – alle Klassen; ZynEcho 24,5 → 20,3 dB
-     - Versteckte Schalter ✔ – Vorab-Abtastung (`survey`) findet Wahlschalter und Taster, die das Plugin als
-       stufenlose Regler meldet; die erste Stufe eines Wählers („aus“) bekommt ein eigenes Modell; Tal-Dub-3
-       24,4 → 8,1 dB bei unbekannten Kombinationen
-     - Wiederholbarkeit ✔ – die Aufnahme prüft pro Regler, ob das Plugin Zustand behält, der kein Parameterwert
-       ist (Taster), und lädt dann für jede Messung eine frische Instanz (`isolate` im Host, alle Klassen)
-     - Offen bei Delays: Modulation (LFO bei GxEcho/GxDelay), Filterflanken steiler als ein Pol
-       (Gxdigital_delay), Selbstoszillation und Resonanzfilter (Tal-Dub-3); außerhalb des Modells: zwei
-       Leitungen mit Übersprechen (ZynEcho, „L/R Delay“), Bandecho mit mehreren Köpfen (GxEchoCat),
-       Röhrensättigung (GxTubeDelay), Ducking (Gxduck_delay), DualDelay
-     - Offen: Oberfläche für Delay und Reverb
-     - EQ-Erkennung erweitert ✔ – Bandgruppen mit eigenen Formen (MultiEQ), benannte Bänder mit fester Form
-       (Lowshelf, Highpass, L/H), Regler grafischer EQs, stufenlos gemeldete Schalter; räumliche Effekte
-       (DirectivityShaper) ausgeschlossen; Gegenprobe mit mehreren Bändern zugleich
-     - Offen bei EQs: Hoch-/Tiefpass von x42-eq (1,7 dB – Form hängt von der Frequenz ab), 24-dB-Flanken von
-       MultiEQ (0,3 dB), ZamEQ2 (NaN im Mess-Host), EQs mit Reglern ohne dB-Anzeige (Luftikus, EQinox) und
-       Crossover-EQs (3 Band EQ) bekommen keine Klasse
-   - **6b Modulation** – Chorus, Flanger, Phaser, Tremolo
-7. **Builder-Agent (Weg B)** – Faust-Schleife, Analyst-Agent mit REA und `spec.md`, Clean-Room-Trennung,
-   Klassifizierung durch LLM für Plugins ohne Klasse
-8. **yabridge-Check** – App prüft zuerst, ob das Original über yabridge läuft
-9. **Distribution** – Installer, Updates, Profilbibliothek, CLAP, Windows-Build prüfen
+## Milestones
+1. **Profile format + capture host** ✔
+2. **LLM layer** ✔ – providers, auto-discovery, capability test, keychain, costs, roles; CLI `vch llm …`
+3. **EQ/filter** ✔ – Pro-Q 3: 0.10 dB over 149 settings
+   - Open: linear-phase mode
+4. **Desktop UI** ✔ – clone, library, AI models, log; modes EQ, dynamics, distortion, delay, reverb, general
+   - Measurement displays ✔ – preliminary steps in the progress bar (repeatability, working point, switch search), notes
+     "not repeatable" and "detected as switches", EQ badge for graphic EQs/fixed shapes/band groups,
+     result line "several bands at once"; checked in the window with ZamGEQ31 and Tal-Dub-3
+   - Preliminary renders are counted; the delay hint names the switch search and "at least n settings" ✔
+   - Links to folders and images work (hidden folders were refused by the opener scope), images open
+     enlarged inside the app, "capture the editor again" and "fit the model again" as options; English UI ✔
+   - **4b Editor reconstruction** (in progress) – wiggle test, OCR, needles, level bars, switch detection;
+     74–82 % structural, 95–98 % colour similarity on four plugins
+     - Knobs ✔ – rim and coloured outline, tick marks on mixed backgrounds, centre cap, direction of travel
+       (anticlockwise, full turns), value arcs starting from a centre position
+     - Open: XY points, knobs with a gradient and a small pointer (DS1), meter scales, font weights within a
+       title, logos, frames/decoration; check operating bands directly in the curve in the clone editor; check
+       editors in the batch run as well
+5. **Dynamics + distortion**
+   - **5a Dynamics** ✔ – compressor, limiter, gate, expander, ducker; working point probe, interactions,
+     models per switch position
+     - Open: fit time (1–4 min per plugin), GxCompressor and DirectionalCompressor on unseen
+       combinations (7–10 dB)
+   - **5b Distortion (pedals)** ✔ – Wiener-Hammerstein; GxBoss DS1: fundamental 0.68 dB, harmonics 1.8 dB
+     - Detection sharpened (97 → 77 hits: a gain control alone is no longer enough); batch over 77 plugins:
+       73 cloned, 46 good or better
+     - Silent default setting ✔ – the measurement plan looks for a working point (turn up the drive control) when
+       nothing comes out at the default setting; silent control positions are modelled as "off"; the capture
+       extends the pre-roll when the plugin still settles after loading (switch-on click, all classes);
+       GxFuzzFaceFuller 58.7 → 13.95
+     - Open: gate behaviour of fuzz pedals (GxFuzzFaceFuller does not let quiet signals through);
+       fuzz pedals with fundamental errors above 10 dB (GxAxisFace, GxFuzzFaceFuller, GxSunFace, Hip2B),
+       bitcrushers (Bitta, MaBitcrush – need another model), crashes while measuring (GxAmplifier-X,
+       GxCabinet), time-domain term in the fit
+   - **5c Amps with NAM** – local training (CPU/GPU), Swanky Amp, TONE3000
+6. **Delay + reverb + modulation**
+   - **6a Delay + reverb** ← in progress – first version in CLI, batch and app ✔
+     - Delay combinations, first step ✔ – echo detection relative to the level and at the rise, time tables
+       (points without a visible echo, controls linear in seconds or tempo), combination renders for the fit,
+       sum rule for several time controls; ZamDelay 2.71 → 0.78 dB, GxDelay-Stereo 10.9 → 6.1 dB
+     - Controls with many steps (0 … 127, Zyn plugins) are interpolated instead of being snapped to the nearest
+       measured point like switches – all classes; ZynEcho 24.5 → 20.3 dB
+     - Hidden switches ✔ – a preliminary scan (`survey`) finds selectors and buttons that the plugin reports as
+       continuous controls; the first step of a selector ("off") gets a model of its own; Tal-Dub-3
+       24.4 → 8.1 dB on unseen combinations
+     - Repeatability ✔ – the capture checks per control whether the plugin keeps a state that is not a parameter
+       value (buttons), and then loads a fresh instance for every render (`isolate` in the host, all classes)
+     - Open for delays: modulation (LFO in GxEcho/GxDelay), filter slopes steeper than one pole
+       (Gxdigital_delay), self-oscillation and resonant filters (Tal-Dub-3); outside the model: two
+       lines with crosstalk (ZynEcho, "L/R Delay"), tape echo with several heads (GxEchoCat),
+       tube saturation (GxTubeDelay), ducking (Gxduck_delay), DualDelay
+     - Open: editor for delay and reverb
+     - EQ detection extended ✔ – band groups with their own shapes (MultiEQ), named bands with a fixed shape
+       (lowshelf, highpass, L/H), sliders of graphic EQs, switches reported as continuous; spatial effects
+       (DirectivityShaper) excluded; cross-check with several bands at once
+     - Open for EQs: high/low-pass of x42-eq (1.7 dB – the shape depends on the frequency), 24 dB slopes of
+       MultiEQ (0.3 dB), ZamEQ2 (NaN in the capture host), EQs with controls without a dB display (Luftikus, EQinox) and
+       crossover EQs (3 Band EQ) get no class
+   - **6b Modulation** – chorus, flanger, phaser, tremolo
+7. **Builder agent (path B)** – Faust loop, analyst agent with REA and `spec.md`, clean-room separation,
+   classification by the LLM for plugins without a class
+8. **yabridge check** – the app first checks whether the original runs via yabridge
+9. **Distribution** – installer, updates, profile library, CLAP, check the Windows build
 
-## Abweichungen vom ursprünglichen Plan
-- **Feste Engines statt generiertem Faust-Code** für die bekannten Klassen (pro Klon generierter Faust-Code war
-  zu langsam zu übersetzen). Faust bleibt für Weg B.
-- **Fits in TypeScript** statt Python-Tools.
-- **Klassifizierung über Regeln** statt LLM; das LLM übernimmt erst die Fälle ohne Klasse.
-- **Verzerrer als Wiener-Hammerstein-Modell** statt NAM; NAM bleibt für Amps.
-- **Reverb als FDN in C++** statt Faltung oder Faust.
-- **Klassenspezifische Kennzahlen in dB** statt ESR/MR-STFT; diese bleiben für Weg B.
-- **Batch-Lauf** und **Oberflächen-Nachbau** waren nicht geplant und sind dazugekommen.
-- Delay und Reverb wurden vor Amps/NAM begonnen.
+## Deviations from the original plan
+- **Fixed engines instead of generated Faust code** for the known classes (Faust code generated per clone was
+  too slow to compile). Faust remains for path B.
+- **Fits in TypeScript** instead of Python tools.
+- **Classification by rules** instead of an LLM; the LLM only takes over the cases without a class.
+- **Distortion as a Wiener-Hammerstein model** instead of NAM; NAM remains for amps.
+- **Reverb as an FDN in C++** instead of convolution or Faust.
+- **Class-specific metrics in dB** instead of ESR/MR-STFT; those remain for path B.
+- **Batch run** and **editor reconstruction** were not planned and were added.
+- Delay and reverb were started before amps/NAM.
 
-## Risiken / Erwartungen
-- Sehr gut klonbar: EQs, Kompressoren, Limiter, einfache Verzerrer (Overdrive, Distortion, Booster).
-- Mit dem jetzigen Verzerrer-Modell ungenau: Fuzz mit starker Pegelabhängigkeit, Bitcrusher, Amps mit mehreren Stufen.
-- Brauchbar, aber noch nicht treu über alle Reglerkombinationen: Delays, Reverbs.
-- Nur angenähert: stark zeitvariante/zufällige Effekte, komplexe Multieffekte.
-- Erst mit Weg B: Multiband-Kompressoren, dynamische EQs, Plugins ohne Klasse.
-- Fehlklassifizierung führt zu Klonen mit falschem Modell; die Bewertung fängt das nur teilweise ab.
-- GUI wird als Layout nachgebaut (Formen, Farben, Regler), nicht pixelgenau; Grafiken des Originals werden nicht übernommen.
-- NAM-Training ohne GPU langsam (Minuten bis Stunden pro Modell).
-- yabridge löst viele Fälle ohne Klon; App soll das zuerst anbieten.
+## Risks / expectations
+- Very well clonable: EQs, compressors, limiters, simple distortions (overdrive, distortion, boosters).
+- Inaccurate with the current distortion model: fuzz with strong level dependence, bitcrushers, amps with several stages.
+- Usable, but not yet faithful across all control combinations: delays, reverbs.
+- Only approximated: strongly time-variant/random effects, complex multi-effects.
+- Only with path B: multiband compressors, dynamic EQs, plugins without a class.
+- Misclassification leads to clones with the wrong model; the rating catches this only partly.
+- The GUI is rebuilt as a layout (shapes, colours, controls), not pixel-exact; graphics of the original are not taken over.
+- NAM training without a GPU is slow (minutes to hours per model).
+- yabridge solves many cases without a clone; the app should offer it first.

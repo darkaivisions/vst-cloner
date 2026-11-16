@@ -34,28 +34,28 @@ export function clear(el: Element): void {
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KiB`;
-  return `${(bytes / 1024 / 1024).toFixed(1).replace(".", ",")} MiB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 }
 
 export function formatDb(db: number): string {
-  return `${db.toFixed(2).replace(".", ",")} dB`;
+  return `${db.toFixed(2)} dB`;
 }
 
 export function formatDate(iso: string): string {
   if (!iso) return "";
-  return new Date(iso).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" });
+  return new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
 }
 
 /** CSS class for a verdict text from the bridge. */
 export function verdictClass(verdict: string | undefined): string {
   switch (verdict) {
-    case "ausgezeichnet": return "good";
-    case "sehr gut": return "good";
-    case "gut": return "ok";
-    case "angenähert": return "warn";
-    case "brauchbar": return "warn";
-    case "abweichend": return "bad";
-    case "ungenau": return "bad";
+    case "excellent": return "good";
+    case "very good": return "good";
+    case "good": return "ok";
+    case "approximate": return "warn";
+    case "usable": return "warn";
+    case "off": return "bad";
+    case "inaccurate": return "bad";
     default: return "neutral";
   }
 }
@@ -75,7 +75,7 @@ export async function openInSystem(path: string): Promise<void> {
   try {
     await openPath(path);
   } catch (error) {
-    toast(`Konnte nicht geöffnet werden: ${path} (${errorText(error)})`, "error");
+    toast(`Could not open ${path} (${errorText(error)})`, "error");
   }
 }
 
@@ -114,10 +114,10 @@ export function zoomImage(src: string, alt: string, file?: string): void {
   const overlay = h("div.lightbox", { onclick: (e: Event) => (e.target === overlay || e.target === frame) && close() },
     h("div.lightbox-bar", {},
       h("span.lightbox-title", {}, alt),
-      h("span.muted.small", {}, "Klick aufs Bild: Originalgröße · Esc: schließen"),
+      h("span.muted.small", {}, "Click the image: actual size · Esc: close"),
       h("div.spacer"),
-      file ? h("button.ghost.small", { onclick: () => void openInSystem(file) }, "Im Bildbetrachter öffnen") : "",
-      h("button.ghost.small", { onclick: close }, "Schließen")),
+      file ? h("button.ghost.small", { onclick: () => void openInSystem(file) }, "Open in image viewer") : "",
+      h("button.ghost.small", { onclick: close }, "Close")),
     frame);
   image.addEventListener("click", () => overlay.classList.toggle("actual-size"));
   window.addEventListener("keydown", onKey, true);

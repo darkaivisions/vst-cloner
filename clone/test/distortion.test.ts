@@ -55,9 +55,9 @@ test("distortion detection: a gain control alone, tools, several bands and built
   assert.throws(() => detectDistortion(names("GAIN", "THRESHOLD", "LEVEL"), "Analyser Plugin", "GxTuner"), NotDistortionError);
   assert.throws(() => detectDistortion(names("Drive", "Decay", "Range", "Freq", "Mix"), "Filter Plugin", "Auto-wah"), NotDistortionError);
   // one drive per band, tape with wow and flutter, amp with tremolo
-  assert.throws(() => detectDistortion(names("DRIVE1", "DRIVE2", "DRIVE3", "GAIN"), "Distortion Plugin"), /Mehrband/);
-  assert.throws(() => detectDistortion(names("Drive", "WowDepth", "FlutterDepth"), "Filter Plugin", "GxTape"), /Modulation/);
-  assert.throws(() => detectDistortion(names("Gain", "Tone", "Volume", "Speed", "Intensity"), "Amplifier Plugin"), /Modulation/);
+  assert.throws(() => detectDistortion(names("DRIVE1", "DRIVE2", "DRIVE3", "GAIN"), "Distortion Plugin"), /Multiband/);
+  assert.throws(() => detectDistortion(names("Drive", "WowDepth", "FlutterDepth"), "Filter Plugin", "GxTape"), /modulation/);
+  assert.throws(() => detectDistortion(names("Gain", "Tone", "Volume", "Speed", "Intensity"), "Amplifier Plugin"), /modulation/);
   // amps by category or name, the drive is the control named so
   assert.equal(detectDistortion(names("MasterGain", "PreGain", "Distortion", "Drive"), "Simulator Plugin").roles.drive, 2);
   assert.ok(detectDistortion(names("InputLevel", "OutputLevel", "GainStages"), "Fx", "Swanky Amp"));

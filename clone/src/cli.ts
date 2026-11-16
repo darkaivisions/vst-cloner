@@ -153,7 +153,7 @@ async function batchCommand(values: Record<string, string | boolean | undefined>
   }
   const controller = new AbortController();
   process.once("SIGINT", () => {
-    log("warn", "Abbruch – der Bericht enthält alle fertigen Plugins, ein neuer Start setzt dort fort");
+    log("warn", "Cancelled – the report holds all finished plugins, a new run continues from there");
     controller.abort();
   });
   try {
@@ -172,7 +172,7 @@ async function batchCommand(values: Record<string, string | boolean | undefined>
       signal: controller.signal,
     });
     const tried = report.rows.filter((r) => r.status !== "skipped");
-    console.log(`${tried.filter((r) => r.status === "ok").length} von ${tried.length} geklont – ${join(resolve(values.output), "report.md")}`);
+    console.log(`${tried.filter((r) => r.status === "ok").length} of ${tried.length} cloned – ${join(resolve(values.output), "report.md")}`);
     return 0;
   } catch (error) {
     if (controller.signal.aborted) return 130;

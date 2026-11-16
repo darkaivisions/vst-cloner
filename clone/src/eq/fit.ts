@@ -418,14 +418,14 @@ export function fitEq(profile: Profile, onProgress?: (p: FitProgress) => void): 
   const baselineDb = baselineCurve.reduce((a, b) => a + b, 0) / baselineCurve.length;
   // a plugin that puts out NaN or nothing at all cannot be measured; a model fitted to it would be NaN as well
   if (!Number.isFinite(baselineDb)) {
-    throw new Error("Das Original gibt in der Grundeinstellung kein gültiges Signal aus (NaN oder Stille) – die Messung ist unbrauchbar");
+    throw new Error("The original gives no valid signal at its base setting (NaN or silence) – the measurement is unusable");
   }
   const baselineFlatnessDb = baselineCurve.reduce((m, v) => Math.max(m, Math.abs(v - baselineDb)), 0);
   // remove only the constant offset; a non-flat baseline is reported, not hidden
   const offset = new Float64Array(grid.length).fill(baselineDb);
 
   const observations = extractObservations(profile, mapping, grid, offset);
-  if (observations.length === 0) throw new Error("Das Profil enthält keine EQ-Messungen – bitte mit der EQ-Messung (--class eq) aufnehmen");
+  if (observations.length === 0) throw new Error("The profile holds no EQ measurements – capture it with the EQ measurement (--class eq)");
 
   const groups = bandGroups(mapping);
   const byIndex = new Map(parameters.map((p) => [p.index, p]));
@@ -469,12 +469,12 @@ export function fitEq(profile: Profile, onProgress?: (p: FitProgress) => void): 
 
       if (shape.kind === "unsupported") {
         shapes.push({ label: shape.label, kind: shape.kind });
-        reports.push({ label, kind: shape.kind, ...tag, note: "Form noch nicht unterstützt – der Klon leitet das Signal unverändert durch" });
+        reports.push({ label, kind: shape.kind, ...tag, note: "Shape not supported yet – the clone passes the signal through unchanged" });
         return;
       }
       if (train.length === 0) {
         shapes.push({ label: shape.label, kind: shape.kind });
-        reports.push({ label, kind: shape.kind, ...tag, note: "keine Messungen für diese Form" });
+        reports.push({ label, kind: shape.kind, ...tag, note: "no measurements for this shape" });
         return;
       }
 
@@ -525,7 +525,7 @@ export function fitEq(profile: Profile, onProgress?: (p: FitProgress) => void): 
         ...(validateStats ? { validate: validateStats } : {}),
         ...(approximateStats ? { approximate: approximateStats } : {}),
         ...(brickwallStats ? { brickwall: brickwallStats } : {}),
-        ...(approximateSlopes?.length ? { note: `angenähert durch die steilste exakte Flanke: ${approximateSlopes.join(", ")}` } : {}),
+        ...(approximateSlopes?.length ? { note: `approximated by the steepest exact slope: ${approximateSlopes.join(", ")}` } : {}),
       });
     });
   });

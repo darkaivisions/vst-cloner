@@ -37,7 +37,7 @@ export interface ReverbObservation {
 
 export function reverbInput(profile: Profile): ReverbInput {
   const segment = profile.testSignals.segments.find((s) => s.id === "impulse" && s.kind === "impulse");
-  if (!segment) throw new Error("Das Profil enthält keine Hall-Messung (Impuls-Segment fehlt)");
+  if (!segment) throw new Error("The profile holds no reverb measurement (impulse segment missing)");
   return { sampleRate: profile.manifest.capture.sampleRate, start: segment.start, length: segment.length, amplitude: segment.params?.amplitude ?? 1 };
 }
 

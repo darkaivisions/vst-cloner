@@ -42,7 +42,7 @@ export function findGuiHost(): string {
     if (existsSync(candidate)) return candidate;
   }
   const found = onPath(EXE);
-  if (!found) throw new Error("vch-gui nicht gefunden – bitte den Host neu bauen (npm run host:build)");
+  if (!found) throw new Error("vch-gui not found – rebuild the host (npm run host:build)");
   return found;
 }
 
@@ -60,7 +60,7 @@ export async function withVirtualDisplay<T>(fn: (display: string | undefined) =>
   if (process.env.VCH_DISPLAY) return fn(process.env.VCH_DISPLAY);
 
   const xvfb = onPath("Xvfb");
-  if (!xvfb) throw new Error("Xvfb fehlt – bitte installieren (Arch/CachyOS: sudo pacman -S xorg-server-xvfb)");
+  if (!xvfb) throw new Error("Xvfb is missing – install it (Arch/CachyOS: sudo pacman -S xorg-server-xvfb)");
 
   let number = 90;
   while (existsSync(`/tmp/.X11-unix/X${number}`) || existsSync(`/tmp/.X${number}-lock`)) number++;
@@ -72,7 +72,7 @@ export async function withVirtualDisplay<T>(fn: (display: string | undefined) =>
       throwIfCancelled(signal);
       await new Promise((r) => setTimeout(r, 50));
     }
-    if (!existsSync(`/tmp/.X11-unix/X${number}`)) throw new Error("Xvfb ist nicht gestartet");
+    if (!existsSync(`/tmp/.X11-unix/X${number}`)) throw new Error("Xvfb did not start");
     return await fn(display);
   } finally {
     server.kill();
@@ -158,12 +158,12 @@ export async function runGuiSnapshot(
     });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => (stderr = (stderr + chunk).slice(-4000)));
-    child.on("error", (e) => reject(new Error(`vch-gui konnte nicht gestartet werden: ${e.message}`)));
+    child.on("error", (e) => reject(new Error(`vch-gui could not be started: ${e.message}`)));
     child.on("close", (code) => {
       options.signal?.removeEventListener("abort", onAbort);
       if (options.signal?.aborted) reject(new CancelledError());
-      else if (error) reject(new Error(`Plugin-Oberfläche: ${error}`));
-      else if (!done) reject(new Error(`vch-gui wurde unerwartet beendet (Exit ${code})\n${stderr.trim().split("\n").slice(-8).join("\n")}`));
+      else if (error) reject(new Error(`Plugin editor: ${error}`));
+      else if (!done) reject(new Error(`vch-gui ended unexpectedly (exit ${code})\n${stderr.trim().split("\n").slice(-8).join("\n")}`));
       else resolve({ ...size, shots, dialogs });
     });
   });

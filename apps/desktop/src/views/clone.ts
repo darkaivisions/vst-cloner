@@ -18,12 +18,12 @@ export class CloneView {
   private captureJob?: JobHandle<CaptureResult>;
   private cloneJob?: JobHandle<CloneResult>;
 
-  private readonly search = h("input.search", { type: "search", placeholder: "Plugin suchen …" });
+  private readonly search = h("input.search", { type: "search", placeholder: "Search plugins …" });
   private readonly list = h("div.plugin-list");
   private readonly details = h("div.plugin-details");
   private readonly modeBox = h("div.segmented");
   private readonly captureHint = h("p.hint");
-  private readonly captureButton = h("button.primary", {}, "Messen starten");
+  private readonly captureButton = h("button.primary", {}, "Start measuring");
   private readonly captureProgress = new Progress();
   private readonly captureNote = h("div.capture-note");
   private readonly profileLine = h("div.profile-line");
@@ -31,7 +31,7 @@ export class CloneView {
   private readonly guiBox = h("input", { type: "checkbox", checked: true });
   private readonly refitGuiBox = h("input", { type: "checkbox" });
   private readonly refitBox = h("input", { type: "checkbox" });
-  private readonly cloneButton = h("button.primary", {}, "Klon bauen");
+  private readonly cloneButton = h("button.primary", {}, "Build clone");
   private readonly cloneProgress = new Progress();
   private readonly result = h("div.result");
   private readonly steps: HTMLElement[];
@@ -43,27 +43,27 @@ export class CloneView {
     this.guiBox.addEventListener("change", () => this.update());
 
     const step1 = h("section.card.step", {},
-      h("header.step-header", {}, h("span.step-number", {}, "1"), h("h2", {}, "Plugin wählen"),
+      h("header.step-header", {}, h("span.step-number", {}, "1"), h("h2", {}, "Choose a plugin"),
         h("div.spacer"),
-        h("button.ghost.small", { onclick: () => this.pickFile() }, "Andere Datei …"),
-        h("button.ghost.small", { onclick: () => this.refresh(), title: "Plugin-Ordner neu durchsuchen" }, "Aktualisieren")),
+        h("button.ghost.small", { onclick: () => this.pickFile() }, "Other file …"),
+        h("button.ghost.small", { onclick: () => this.refresh(), title: "Scan the plugin folders again" }, "Refresh")),
       this.search, this.list, this.details);
 
     const step2 = h("section.card.step", {},
-      h("header.step-header", {}, h("span.step-number", {}, "2"), h("h2", {}, "Messen")),
+      h("header.step-header", {}, h("span.step-number", {}, "2"), h("h2", {}, "Measure")),
       this.modeBox, this.captureHint,
       h("div.actions", {}, this.captureButton), this.captureProgress.element, this.captureNote);
 
     const step3 = h("section.card.step", {},
-      h("header.step-header", {}, h("span.step-number", {}, "3"), h("h2", {}, "Klon bauen")),
+      h("header.step-header", {}, h("span.step-number", {}, "3"), h("h2", {}, "Build the clone")),
       this.profileLine,
-      h("label.check", {}, this.installBox, "Nach dem Bau installieren (für die DAW sichtbar)"),
-      h("label.check", { title: "Das Original-Plugin wird dafür kurz unsichtbar geöffnet und jeder Regler einmal bewegt" },
-        this.guiBox, "Oberfläche des Originals nachbauen"),
-      h("label.check.sub", { title: "Eine im Profil gespeicherte Oberfläche wird sonst wiederverwendet. Neu erfassen nutzt die aktuelle Erkennung – das Original-Plugin muss installiert sein." },
-        this.refitGuiBox, "Oberfläche neu erfassen (statt der im Profil gespeicherten)"),
-      h("label.check", { title: "Ein im Profil gespeichertes Modell wird sonst wiederverwendet. Neu berechnen dauert je nach Effektart Sekunden bis wenige Minuten." },
-        this.refitBox, "Modell neu berechnen (statt des im Profil gespeicherten)"),
+      h("label.check", {}, this.installBox, "Install after building (visible to the DAW)"),
+      h("label.check", { title: "The original plugin is opened invisibly for this and every control is moved once" },
+        this.guiBox, "Rebuild the original's editor"),
+      h("label.check.sub", { title: "Otherwise an editor layout stored in the profile is reused. Capturing it again uses the current detection – the original plugin has to be installed." },
+        this.refitGuiBox, "Capture the editor again (instead of the one stored in the profile)"),
+      h("label.check", { title: "Otherwise a model stored in the profile is reused. Fitting it again takes seconds to a few minutes depending on the effect type." },
+        this.refitBox, "Fit the model again (instead of the one stored in the profile)"),
       h("div.actions", {}, this.cloneButton), this.cloneProgress.element, this.result);
 
     this.steps = [step1, step2, step3];
@@ -73,7 +73,7 @@ export class CloneView {
 
   async refresh(): Promise<void> {
     clear(this.list);
-    this.list.appendChild(h("div.empty", {}, "Plugin-Ordner werden durchsucht …"));
+    this.list.appendChild(h("div.empty", {}, "Scanning plugin folders …"));
     try {
       this.plugins = await call<PluginEntry[]>("plugins.scan");
     } catch (error) {
@@ -96,21 +96,21 @@ export class CloneView {
     const query = this.search.value.trim().toLowerCase();
     const items = this.plugins.filter((p) => !query || p.name.toLowerCase().includes(query));
     if (items.length === 0) {
-      this.list.appendChild(h("div.empty", {}, this.plugins.length ? "Kein Treffer" : "Keine Plugins gefunden – „Andere Datei …“ wählen"));
+      this.list.appendChild(h("div.empty", {}, this.plugins.length ? "No match" : "No plugins found – choose \"Other file …\""));
       return;
     }
     for (const plugin of items) {
       const row = h("button.plugin-row", { class: plugin === this.selected ? "selected" : "", onclick: () => this.select(plugin) },
         h("span.plugin-name", {}, plugin.name),
         h("span.badge", {}, plugin.format),
-        plugin.source === "yabridge" && h("span.badge.accent", { title: "Windows-Plugin über yabridge" }, "Windows"),
-        plugin.clone && h("span.badge.muted", {}, "Klon"));
+        plugin.source === "yabridge" && h("span.badge.accent", { title: "Windows plugin via yabridge" }, "Windows"),
+        plugin.clone && h("span.badge.muted", {}, "Clone"));
       this.list.appendChild(row);
     }
   }
 
   private async pickFile() {
-    const path = await open({ directory: true, title: "Plugin-Bundle wählen (.vst3 oder .lv2)" });
+    const path = await open({ directory: true, title: "Choose a plugin bundle (.vst3 or .lv2)" });
     if (typeof path !== "string") return;
     const name = path.split(/[\\/]/).pop()!.replace(/\.(vst3|lv2)$/i, "");
     const entry: PluginEntry = { path, name, format: /\.lv2$/i.test(path) ? "LV2" : "VST3", source: /yabridge/i.test(path) ? "yabridge" : "native", clone: false };
@@ -128,14 +128,14 @@ export class CloneView {
     clear(this.captureNote);
     this.renderList();
     clear(this.details);
-    this.details.appendChild(h("div.loading", {}, `${plugin.name} wird geladen …`));
+    this.details.appendChild(h("div.loading", {}, `Loading ${plugin.name} …`));
     this.update();
     try {
       this.info = await call<PluginInfo>("plugins.info", { path: plugin.path });
       this.mode = this.info.eq ? "eq" : this.info.dynamics ? "dynamics" : this.info.distortion ? "distortion" : this.info.delay ? "delay" : this.info.reverb ? "reverb" : "generic";
     } catch (error) {
       clear(this.details);
-      this.details.appendChild(h("div.error-box", {}, `Plugin konnte nicht geladen werden: ${(error as Error).message}`));
+      this.details.appendChild(h("div.error-box", {}, `Plugin could not be loaded: ${(error as Error).message}`));
       this.update();
       return;
     }
@@ -150,20 +150,20 @@ export class CloneView {
     this.details.append(
       h("div.detail-title", {}, info.name, h("span.muted", {}, ` · ${info.manufacturer} · ${info.format} ${info.version}`)),
       h("div.detail-facts", {},
-        h("span", {}, `${info.parameters} Parameter`),
-        h("span", {}, `${info.inputs} → ${info.outputs} Kanäle`),
-        info.latency > 0 && h("span", {}, `Latenz ${info.latency} Samples`),
+        h("span", {}, `${info.parameters} parameters`),
+        h("span", {}, `${info.inputs} → ${info.outputs} channels`),
+        info.latency > 0 && h("span", {}, `Latency ${info.latency} samples`),
         info.eq
           ? h("span.badge.good", {}, eqBadge(info.eq))
           : info.dynamics
-            ? h("span.badge.good", {}, "Kompressor/Gate erkannt")
+            ? h("span.badge.good", {}, "Compressor/gate detected")
             : info.distortion
-              ? h("span.badge.good", {}, "Verzerrer erkannt")
+              ? h("span.badge.good", {}, "Distortion detected")
               : info.delay
-                ? h("span.badge.good", {}, "Delay erkannt")
+                ? h("span.badge.good", {}, "Delay detected")
                 : info.reverb
-                  ? h("span.badge.good", {}, "Hall erkannt")
-                  : h("span.badge.muted", {}, "keine klonbare Effektklasse erkannt")),
+                  ? h("span.badge.good", {}, "Reverb detected")
+                  : h("span.badge.muted", {}, "no cloneable effect class detected")),
     );
   }
 
@@ -176,44 +176,44 @@ export class CloneView {
     const option = (mode: Mode, label: string, enabled: boolean) =>
       h("button", { class: this.mode === mode ? "active" : "", disabled: !enabled || busy, onclick: () => { this.mode = mode; this.update(); } }, label);
     this.modeBox.append(
-      option("eq", "EQ-Messung", Boolean(info?.eq)),
-      option("dynamics", "Dynamik-Messung", Boolean(info?.dynamics)),
-      option("distortion", "Verzerrer-Messung", Boolean(info?.distortion)),
-      option("delay", "Delay-Messung", Boolean(info?.delay)),
-      option("reverb", "Hall-Messung", Boolean(info?.reverb)),
-      option("generic", "Allgemein", Boolean(info)),
+      option("eq", "EQ", Boolean(info?.eq)),
+      option("dynamics", "Dynamics", Boolean(info?.dynamics)),
+      option("distortion", "Distortion", Boolean(info?.distortion)),
+      option("delay", "Delay", Boolean(info?.delay)),
+      option("reverb", "Reverb", Boolean(info?.reverb)),
+      option("generic", "General", Boolean(info)),
     );
     this.captureHint.textContent = !info
-      ? "Zuerst ein Plugin wählen."
+      ? "Choose a plugin first."
       : this.mode === "eq" && info.eq
-        ? `${info.eq.renders} Einstellungen – ${info.eq.sliders === info.eq.bands ? "jeder Regler einzeln bei mehreren Gains" : "jede Filterform bei mehreren Frequenzen, Gains und Güten"}, dazu mehrere Bänder zugleich. Dauert meist nur Sekunden.`
+        ? `${info.eq.renders} settings – ${info.eq.sliders === info.eq.bands ? "every slider on its own at several gains" : "every filter shape at several frequencies, gains and Q values"}, plus several bands at once. Usually takes only seconds.`
         : this.mode === "dynamics" && info.dynamics
-          ? `${info.dynamics.renders} Einstellungen à ~27 s Messsignal (Pegeltreppe, Bursts, lange Pausen für langsames Release) – jeder Regler einzeln und in Zufallskombinationen. Dauert meist unter einer Minute.`
+          ? `${info.dynamics.renders} settings of ~27 s test signal each (level staircase, bursts, long pauses for slow release) – every control on its own and in random combinations. Usually takes less than a minute.`
           : this.mode === "distortion" && info.distortion
-            ? `${info.distortion.renders} Einstellungen à ~${info.distortion.signalSeconds} s Messsignal (Sinus-Pegeltreppen bei mehreren Frequenzen, Rauschen, leiser Sweep) – jeder Regler einzeln und in Zufallskombinationen. Das Analysieren beim Klonen dauert danach etwa 2 Minuten.`
+            ? `${info.distortion.renders} settings of ~${info.distortion.signalSeconds} s test signal each (sine level staircases at several frequencies, noise, quiet sweep) – every control on its own and in random combinations. The analysis when cloning then takes about 2 minutes.`
             : this.mode === "delay" && info.delay
-              ? `${info.delay.survey > 0 ? "Mindestens " : ""}${info.delay.renders} Einstellungen à ~${info.delay.signalSeconds} s Messsignal (Impuls, lange Stille, Rauschburst) – jeder Regler einzeln und in Zufallskombinationen.` +
+              ? `${info.delay.survey > 0 ? "At least " : ""}${info.delay.renders} settings of ~${info.delay.signalSeconds} s test signal each (impulse, long silence, noise burst) – every control on its own and in random combinations.` +
                 (info.delay.survey > 0
-                  ? ` Vorab suchen ${info.delay.survey} kurze Messungen nach versteckten Schaltern; jeder gefundene Schalter bringt weitere Einstellungen. Dauert eine bis einige Minuten.`
-                  : " Dauert meist unter einer Minute.")
+                  ? ` First ${info.delay.survey} short renders look for hidden switches; every switch found adds further settings. Takes one to a few minutes.`
+                  : " Usually takes less than a minute.")
               : this.mode === "reverb" && info.reverb
-                ? `${info.reverb.renders} Einstellungen à ~${info.reverb.signalSeconds} s Messsignal (ein Impuls und sein Ausklang) – jeder Regler einzeln und in Zufallskombinationen. Dauert meist unter einer Minute.`
-                : `${info.genericRenders} Einstellungen – jeder Parameter einzeln und in Zufallskombinationen. Klone sind bisher nur für EQs, Kompressoren, Gates/Expander, Verzerrer, Delays und Hall möglich.`;
+                ? `${info.reverb.renders} settings of ~${info.reverb.signalSeconds} s test signal each (an impulse and its decay) – every control on its own and in random combinations. Usually takes less than a minute.`
+                : `${info.genericRenders} settings – every parameter on its own and in random combinations. Clones are so far only possible for EQs, compressors, gates/expanders, distortions, delays and reverbs.`;
     this.captureButton.disabled = !info || Boolean(this.cloneJob);
-    this.captureButton.textContent = this.captureJob ? "Abbrechen" : "Messen starten";
+    this.captureButton.textContent = this.captureJob ? "Cancel" : "Start measuring";
     this.captureButton.classList.toggle("danger", Boolean(this.captureJob));
     this.steps[1]!.classList.toggle("disabled", !info);
 
     // step 3
     clear(this.profileLine);
     if (this.profile) {
-      this.profileLine.append(h("span.muted", {}, "Profil: "), h("strong", {}, this.profile.name), h("span.muted", {}, ` · ${this.profile.renders} Messungen · `),
-        h("button.link", { onclick: () => revealInFolder(this.profile!.path) }, "im Ordner zeigen"));
+      this.profileLine.append(h("span.muted", {}, "Profile: "), h("strong", {}, this.profile.name), h("span.muted", {}, ` · ${this.profile.renders} measurements · `),
+        h("button.link", { onclick: () => revealInFolder(this.profile!.path) }, "show in folder"));
     } else {
-      this.profileLine.append(h("span.muted", {}, "Nach dem Messen geht es hier weiter – oder ein Profil aus der Bibliothek wählen."));
+      this.profileLine.append(h("span.muted", {}, "After measuring, continue here – or choose a profile from the library."));
     }
     this.cloneButton.disabled = !this.profile || Boolean(this.captureJob);
-    this.cloneButton.textContent = this.cloneJob ? "Abbrechen" : "Klon bauen";
+    this.cloneButton.textContent = this.cloneJob ? "Cancel" : "Build clone";
     this.cloneButton.classList.toggle("danger", Boolean(this.cloneJob));
     this.installBox.disabled = busy;
     this.guiBox.disabled = busy;
@@ -226,7 +226,7 @@ export class CloneView {
     if (!this.info) return;
     clear(this.result);
     clear(this.captureNote);
-    this.captureProgress.busy("Plugin wird geladen …");
+    this.captureProgress.busy("Loading plugin …");
     let isolated = false;
     // title of the running preliminary step; its renders are counted on their own
     let step: string | undefined;
@@ -234,13 +234,13 @@ export class CloneView {
       this.captureJob = await startJob<CaptureResult>("capture.start", { path: this.info.path, mode: this.mode }, (event) => {
         if (event.kind === "progress") {
           this.captureProgress.set(event.done, event.total, step
-            ? `${step} – ${event.done} / ${event.total} Vorab-Messungen`
-            : `${event.done} / ${event.total} Einstellungen${isolated ? " · frische Instanz pro Messung" : ""}`);
+            ? `${step} – ${event.done} / ${event.total} preliminary renders`
+            : `${event.done} / ${event.total} settings${isolated ? " · fresh instance per render" : ""}`);
         } else if (event.kind === "stage" && event.stage !== "capture") {
           step = event.stage === "render" ? undefined : event.title;
           this.captureProgress.busy(`${event.title} …`);
         }
-        else if (event.kind === "log" && event.level === "warn" && event.message.startsWith("Nicht wiederholbar")) {
+        else if (event.kind === "log" && event.level === "warn" && event.message.startsWith("Not repeatable")) {
           isolated = true;
           this.renderCaptureNote({ isolated, stepped: [], retries: 0 });
         }
@@ -248,7 +248,7 @@ export class CloneView {
       this.update();
       const result = await this.captureJob.result;
       this.profile = { path: result.profile, name: result.name, renders: result.renders };
-      this.captureProgress.set(1, 1, `Fertig – ${result.renders} Einstellungen, ${formatBytes(result.bytes)}`);
+      this.captureProgress.set(1, 1, `Done – ${result.renders} settings, ${formatBytes(result.bytes)}`);
       this.renderCaptureNote(result);
       this.onLibraryChanged();
     } catch (error) {
@@ -265,26 +265,26 @@ export class CloneView {
     clear(this.captureNote);
     if (found.isolated) {
       this.captureNote.appendChild(h("div.note.warn", {},
-        h("strong", {}, "Nicht wiederholbar"),
-        " – das Plugin merkt sich einen Zustand zwischen den Messungen. Jede Einstellung wird mit einer frischen Instanz gemessen; das dauert länger."));
+        h("strong", {}, "Not repeatable"),
+        " – the plugin keeps a state between renders. Every setting is measured with a fresh instance; this takes longer."));
     }
     if (found.stepped.length) {
       this.captureNote.appendChild(h("div.note", {},
-        h("strong", {}, "Als Schalter erkannt"),
-        `: ${found.stepped.map((s) => `${s.name} (${s.positions} Stellungen)`).join(", ")} – vom Plugin als stufenlos gemeldet, jede Stellung wird einzeln gemessen.`));
+        h("strong", {}, "Detected as switches"),
+        `: ${found.stepped.map((s) => `${s.name} (${s.positions} positions)`).join(", ")} – reported as continuous by the plugin, every position is measured on its own.`));
     }
     if (found.retries > 0) {
-      this.captureNote.appendChild(h("div.note", {}, `${found.retries} ${found.retries === 1 ? "Messung ist" : "Messungen sind"} beim ersten Versuch fehlgeschlagen und wurden wiederholt.`));
+      this.captureNote.appendChild(h("div.note", {}, `${found.retries} ${found.retries === 1 ? "render" : "renders"} failed at the first attempt and ${found.retries === 1 ? "was" : "were"} repeated.`));
     }
   }
 
   private async buildClone() {
     if (!this.profile) return;
     clear(this.result);
-    this.cloneProgress.busy("Analyse …");
+    this.cloneProgress.busy("Analysis …");
     const titles: Record<string, string> = {
-      analyse: "Analyse …", gui: "Oberfläche des Originals wird erfasst …", build: "Plugin wird kompiliert …",
-      verify: "Vergleich mit dem Original …", "gui-verify": "Oberflächen-Vergleich …", save: "Speichern …",
+      analyse: "Analysis …", gui: "Capturing the original's editor …", build: "Compiling the plugin …",
+      verify: "Comparing with the original …", "gui-verify": "Comparing the editor …", save: "Saving …",
     };
     // the original plugin is known when the profile was measured in this session
     const plugin = this.info && this.profile.name === this.info.name ? this.info.path : undefined;
@@ -320,16 +320,16 @@ export class CloneView {
     // compressors, delays and reverbs report the same numbers; only what was compared differs
     const d = result.kind === "dynamics" ? result.dynamics : result.kind === "delay" || result.kind === "reverb" ? result.levels : undefined;
     if (d) {
-      const compared = result.kind === "delay" ? "Echo-Pegel über Zeit und Frequenzband weicht" : result.kind === "reverb" ? "Ausklang (Pegel und Abklingen pro Band) weicht" : "Pegelverlauf weicht";
+      const compared = result.kind === "delay" ? "Echo level over time and frequency band deviates" : result.kind === "reverb" ? "Decay (level and decay per band) deviates" : "Level curve deviates";
       this.result.append(
         h("div.verdict", { class: verdictClass(d.verdict) },
           h("div.verdict-main", {}, d.verdict),
-          h("div.verdict-sub", {}, `${compared} im Mittel ${formatDb(d.overall.rmsDb)} vom Original ab · ${d.renders} Einstellungen geprüft` +
-            (d.validate ? ` · unbekannte Kombinationen ${formatDb(d.validate.rmsDb)}` : ""))),
+          h("div.verdict-sub", {}, `${compared} from the original by ${formatDb(d.overall.rmsDb)} on average · ${d.renders} settings checked` +
+            (d.validate ? ` · unseen combinations ${formatDb(d.validate.rmsDb)}` : ""))),
         h("ul.model-summary", {}, ...(result.summary ?? []).map((line) => h("li", {}, line))),
       );
       if (d.worst.length) {
-        const table = h("table.shape-table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Größte Abweichungen"), h("th", {}, "Mittel"), h("th", {}, "Spitze"))));
+        const table = h("table.shape-table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Largest deviations"), h("th", {}, "Mean"), h("th", {}, "Peak"))));
         const body = h("tbody");
         for (const w of d.worst) body.appendChild(h("tr", {}, h("td", {}, w.label), h("td.num", {}, formatDb(w.rmsDb)), h("td.num", {}, formatDb(w.maxDb))));
         table.appendChild(body);
@@ -341,13 +341,13 @@ export class CloneView {
       this.result.append(
         h("div.verdict", { class: verdictClass(x.verdict) },
           h("div.verdict-main", {}, x.verdict),
-          h("div.verdict-sub", {}, `Grundton ${formatDb(x.overall.gainDb)}, Oberwellen ${formatDb(x.overall.harmonicsDb)}, Kleinsignal ${formatDb(x.overall.smallDb)} Abweichung im Mittel · ` +
-            `${x.renders} Einstellungen geprüft` + (x.validate ? ` · unbekannte Kombinationen ${x.validate.total.toFixed(2)}` : ""))),
+          h("div.verdict-sub", {}, `Mean deviation: fundamental ${formatDb(x.overall.gainDb)}, harmonics ${formatDb(x.overall.harmonicsDb)}, small signal ${formatDb(x.overall.smallDb)} · ` +
+            `${x.renders} settings checked` + (x.validate ? ` · unseen combinations ${x.validate.total.toFixed(2)}` : ""))),
         h("ul.model-summary", {}, ...(result.summary ?? []).map((line) => h("li", {}, line)),
-          h("li", {}, `Signalvergleich mit lautem Rauschen: Fehler/Signal ${x.esrDb.toFixed(1)} dB`)),
+          h("li", {}, `Signal comparison with loud noise: error/signal ${x.esrDb.toFixed(1)} dB`)),
       );
       if (x.worst.length) {
-        const table = h("table.shape-table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Größte Abweichungen"), h("th", {}, "Fehler"), h("th", {}, "Fehler/Signal"))));
+        const table = h("table.shape-table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Largest deviations"), h("th", {}, "Error"), h("th", {}, "Error/signal"))));
         const body = h("tbody");
         for (const w of x.worst) body.appendChild(h("tr", {}, h("td", {}, w.label), h("td.num", {}, w.total.toFixed(2)), h("td.num", {}, `${w.esrDb.toFixed(1)} dB`)));
         table.appendChild(body);
@@ -359,38 +359,38 @@ export class CloneView {
       this.result.append(
         h("div.verdict", { class: verdictClass(v.verdict) },
           h("div.verdict-main", {}, v.verdict),
-          h("div.verdict-sub", {}, `Abweichung zum Original ${formatDb(v.overall.rmsDb)} im Mittel · ${v.overall.renders} Einstellungen geprüft`)),
+          h("div.verdict-sub", {}, `Mean deviation from the original ${formatDb(v.overall.rmsDb)} · ${v.overall.renders} settings checked`)),
       );
-      const table = h("table.shape-table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Filterform"), h("th", {}, "Abweichung"), h("th", {}, "Bewertung"))));
+      const table = h("table.shape-table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Filter shape"), h("th", {}, "Deviation"), h("th", {}, "Rating"))));
       const body = h("tbody");
       for (const s of v.shapes) {
         body.appendChild(h("tr", {}, h("td", {}, s.label), h("td.num", {}, formatDb(s.rmsDb)), h("td", {}, h("span.pill", { class: verdictClass(s.verdict) }, s.verdict))));
       }
       for (const s of result.shapes.filter((s) => !s.supported)) {
-        body.appendChild(h("tr.muted", {}, h("td", {}, s.label), h("td.num", {}, "–"), h("td", {}, h("span.pill.neutral", {}, "nicht unterstützt"))));
+        body.appendChild(h("tr.muted", {}, h("td", {}, s.label), h("td.num", {}, "–"), h("td", {}, h("span.pill.neutral", {}, "not supported"))));
       }
       table.appendChild(body);
       this.result.appendChild(table);
       if (v.combined) {
-        body.appendChild(h("tr", {}, h("td", {}, `Mehrere Bänder zugleich (${v.combined.renders} Einstellungen)`), h("td.num", {}, formatDb(v.combined.rmsDb)),
+        body.appendChild(h("tr", {}, h("td", {}, `Several bands at once (${v.combined.renders} settings)`), h("td.num", {}, formatDb(v.combined.rmsDb)),
           h("td", {}, h("span.pill", { class: verdictClass(v.combined.verdict) }, v.combined.verdict))));
       }
       if (v.limited) {
-        this.result.appendChild(h("p.hint", {}, `Nicht exakt nachgebildet: ${v.limited.labels.join(", ")} (${v.limited.renders} Einstellungen, ${formatDb(v.limited.rmsDb)}).`));
+        this.result.appendChild(h("p.hint", {}, `Not reproduced exactly: ${v.limited.labels.join(", ")} (${v.limited.renders} settings, ${formatDb(v.limited.rmsDb)}).`));
       }
     }
     if (result.gui) {
       const g = result.gui;
       this.result.append(
         h("div.result-gui", {},
-          h("strong", {}, "Oberfläche nachgebaut"),
-          h("span.muted", {}, ` · ${g.controls} Bedienelemente${g.similarity !== undefined ? ` · ${Math.round(g.similarity * 100)} % Struktur-, ${Math.round((g.colorSimilarity ?? 0) * 100)} % Farbähnlichkeit` : ""}`),
+          h("strong", {}, "Editor rebuilt"),
+          h("span.muted", {}, ` · ${g.controls} controls${g.similarity !== undefined ? ` · ${Math.round(g.similarity * 100)} % structural, ${Math.round((g.colorSimilarity ?? 0) * 100)} % colour similarity` : ""}`),
           g.comparePng ? h("span.muted", {}, " · ") : "",
-          g.comparePng ? h("button.link", { onclick: () => openInSystem(g.comparePng!) }, "Vergleichsbild öffnen") : ""),
+          g.comparePng ? h("button.link", { onclick: () => openInSystem(g.comparePng!) }, "Open comparison image") : ""),
         g.preview
           ? h("figure.preview", {},
-            h("img", { src: g.preview, alt: "Original und Klon", onclick: () => zoomImage(g.preview!, "Original (links) und Klon (rechts)", g.comparePng) }),
-            h("figcaption", {}, "So sieht der Klon aus: Original (links), Klon (rechts)"))
+            h("img", { src: g.preview, alt: "Original and clone", onclick: () => zoomImage(g.preview!, "Original (left) and clone (right)", g.comparePng) }),
+            h("figcaption", {}, "This is what the clone looks like: original (left), clone (right)"))
           : "",
       );
     }
@@ -399,19 +399,19 @@ export class CloneView {
       h("div.result-files", {},
         h("div", {}, h("strong", {}, result.pluginName), h("span.muted", {}, " · VST3 + LV2")),
         result.installed.length > 0
-          ? h("div.muted", {}, `Installiert: ${result.installed.join(", ")}`)
-          : h("div.muted", {}, "Nicht installiert – zum Installieren „Nach dem Bau installieren“ anhaken und erneut bauen."),
-        h("div.actions", {}, h("button.ghost", { onclick: () => openInSystem(folder) }, "Ordner öffnen"))),
+          ? h("div.muted", {}, `Installed: ${result.installed.join(", ")}`)
+          : h("div.muted", {}, "Not installed – tick \"Install after building\" and build again to install."),
+        h("div.actions", {}, h("button.ghost", { onclick: () => openInSystem(folder) }, "Open folder"))),
     );
   }
 }
 
-/** "EQ erkannt: 6 Bänder, 5 Formen" – graphic EQs and bands with a fixed shape have no shapes to count. */
+/** "EQ detected: 6 bands, 5 shapes" – graphic EQs and bands with a fixed shape have no shapes to count. */
 function eqBadge(eq: NonNullable<PluginInfo["eq"]>): string {
-  if (eq.sliders === eq.bands) return `Grafischer EQ erkannt: ${eq.bands} Bänder`;
-  const parts = [`${eq.bands} Bänder`];
-  if (eq.shapes.length) parts.push(`${eq.shapes.length} Formen`);
-  if (eq.fixedBands > 0) parts.push(eq.fixedBands === eq.bands ? "feste Formen" : `${eq.fixedBands} mit fester Form`);
-  if (eq.groups > 1) parts.push(`${eq.groups} Bandgruppen`);
-  return `EQ erkannt: ${parts.join(", ")}`;
+  if (eq.sliders === eq.bands) return `Graphic EQ detected: ${eq.bands} bands`;
+  const parts = [`${eq.bands} bands`];
+  if (eq.shapes.length) parts.push(`${eq.shapes.length} shapes`);
+  if (eq.fixedBands > 0) parts.push(eq.fixedBands === eq.bands ? "fixed shapes" : `${eq.fixedBands} with a fixed shape`);
+  if (eq.groups > 1) parts.push(`${eq.groups} band groups`);
+  return `EQ detected: ${parts.join(", ")}`;
 }

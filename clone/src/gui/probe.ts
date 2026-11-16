@@ -154,7 +154,7 @@ export async function probeGui(options: ProbeOptions): Promise<GuiProbe> {
   };
 
   return withVirtualDisplay(async (display) => {
-    log("info", `Plugin-Oberfläche wird unsichtbar geöffnet – ${candidates.length} Parameter werden einzeln verstellt`);
+    log("info", `Opening the plugin editor invisibly – moving ${candidates.length} parameters one by one`);
     const pass1Steps: GuiStep[] = [
       { id: "base", params: [], png: true },
       { id: "base2", params: [] },
@@ -172,12 +172,12 @@ export async function probeGui(options: ProbeOptions): Promise<GuiProbe> {
     });
 
     const { width, height } = first;
-    for (const title of first.dialogs) log("warn", `Das Plugin hat ein zusätzliches Fenster geöffnet („${title}“) – es wurde für die Aufnahmen zur Seite geschoben`);
+    for (const title of first.dialogs) log("warn", `The plugin opened an additional window ("${title}") – it was moved aside for the screenshots`);
     const base = await loadRaw(first.shots.get("base")!.file, width, height);
     const base2 = await loadRaw(first.shots.get("base2")!.file, width, height);
     const noise = dilate(diffMask(base, base2), width, height, 2);
     const animated = countMask(noise);
-    if (animated > 0) log("detail", `${animated} Pixel bewegen sich von selbst (Animation) und werden ignoriert`);
+    if (animated > 0) log("detail", `${animated} pixels move by themselves (animation) and are ignored`);
 
     const visible: { param: Parameter; pixels: number }[] = [];
     const invisible: number[] = [];
@@ -190,7 +190,7 @@ export async function probeGui(options: ProbeOptions): Promise<GuiProbe> {
       if (pixels >= 12) visible.push({ param: p, pixels });
       else invisible.push(p.index);
     }
-    log("info", `${visible.length} sichtbare Bedienelemente gefunden${invisible.length ? `, ${invisible.length} Parameter ohne sichtbare Reaktion` : ""}`);
+    log("info", `${visible.length} visible controls found${invisible.length ? `, ${invisible.length} parameters without a visible reaction` : ""}`);
 
     const pass2Steps: GuiStep[] = [{ id: "base", params: [], png: true }, ...(eq ? [{ id: "bandbase", params: eq.context }] : [])];
     for (const { param } of visible) {

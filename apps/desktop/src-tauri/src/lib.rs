@@ -57,11 +57,11 @@ fn find_node() -> Option<PathBuf> {
 }
 
 fn start_bridge(app: &AppHandle, bridge: &Bridge) -> Result<(), String> {
-    let node = find_node().ok_or("Node.js wurde nicht gefunden (VCH_NODE setzen)")?;
+    let node = find_node().ok_or("Node.js not found (set VCH_NODE)")?;
     let root = repo_root();
     let script = root.join("bridge").join("bin").join("bridge.ts");
     if !script.is_file() {
-        return Err(format!("Bridge nicht gefunden: {}", script.display()));
+        return Err(format!("Bridge not found: {}", script.display()));
     }
 
     let mut command = Command::new(&node);
@@ -81,11 +81,11 @@ fn start_bridge(app: &AppHandle, bridge: &Bridge) -> Result<(), String> {
 
     let mut child = command
         .spawn()
-        .map_err(|e| format!("Bridge konnte nicht gestartet werden: {e}"))?;
+        .map_err(|e| format!("Bridge could not be started: {e}"))?;
 
-    let stdout = child.stdout.take().ok_or("kein stdout")?;
-    let stderr = child.stderr.take().ok_or("kein stderr")?;
-    let stdin = child.stdin.take().ok_or("kein stdin")?;
+    let stdout = child.stdout.take().ok_or("no stdout")?;
+    let stderr = child.stderr.take().ok_or("no stderr")?;
+    let stdin = child.stdin.take().ok_or("no stdin")?;
 
     let out_handle = app.clone();
     thread::spawn(move || {
@@ -118,12 +118,12 @@ fn stop_bridge(bridge: &Bridge) {
 #[tauri::command]
 fn bridge_send(bridge: State<'_, Bridge>, line: String) -> Result<(), String> {
     let mut guard = bridge.stdin.lock().unwrap();
-    let stdin = guard.as_mut().ok_or("Bridge läuft nicht")?;
+    let stdin = guard.as_mut().ok_or("Bridge is not running")?;
     stdin
         .write_all(line.as_bytes())
         .and_then(|_| stdin.write_all(b"\n"))
         .and_then(|_| stdin.flush())
-        .map_err(|e| format!("Senden an die Bridge fehlgeschlagen: {e}"))
+        .map_err(|e| format!("Sending to the bridge failed: {e}"))
 }
 
 #[tauri::command]

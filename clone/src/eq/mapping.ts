@@ -293,7 +293,7 @@ export function bandLabel(band: BandMapping): string {
  */
 export function detectEq(parameters: Parameter[], renders: CaptureRender[] = []): EqMapping {
   if (parameters.some((p) => SPATIAL.test(p.name))) {
-    throw new NotAnEqError("Räumlicher Effekt (Azimut/Elevation): die Bänder sind Richtungen, kein EQ");
+    throw new NotAnEqError("Spatial effect (azimuth/elevation): the bands are directions, not an EQ");
   }
   const found = new Map<string, { name: BandName; mapping: BandMapping }>();
   const byIndex = new Map(parameters.map((p) => [p.index, p]));
@@ -334,7 +334,7 @@ export function detectEq(parameters: Parameter[], renders: CaptureRender[] = [])
   const entries = numbered || graphic ? [...parametric, ...(graphic ? sliders : [])] : [];
 
   if (entries.length === 0) {
-    throw new NotAnEqError("Keine EQ-Bänder gefunden (erwartet werden Parameter wie „Band 1 Frequency“, „Band 1 Gain“ oder die Regler eines grafischen EQs)");
+    throw new NotAnEqError("No EQ bands found (expected parameters like \"Band 1 Frequency\", \"Band 1 Gain\" or the sliders of a graphic EQ)");
   }
 
   // bands without a number get one after the numbered ones, in the order of their parameters

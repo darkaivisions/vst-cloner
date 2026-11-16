@@ -29,7 +29,7 @@ function formatLabel(t: Target, shapes: ShapeOption[] | undefined, mapping: EqMa
 
 /** settings of several bands at once: they check that the bands add up as the model assumes */
 export const COMBINATION_RENDERS = 6;
-export const COMBINATION_LABEL = "Kombination";
+export const COMBINATION_LABEL = "combination";
 
 /**
  * Builds the EQ measurement plan: for every group of bands its template band alone, with every shape at several

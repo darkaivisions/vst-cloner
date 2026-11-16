@@ -56,7 +56,7 @@ export function distortionInput(profile: Profile): DistortionInput {
   for (let f = 30; f <= Math.min(16000, sampleRate * 0.4); f *= 2 ** (1 / 12)) grid.push(f);
   const segments = profile.testSignals.segments;
   const sweep = segments.find((s) => s.id === "sweep-quiet");
-  if (!sweep) throw new Error("Das Profil enthält keine Distortion-Messung – bitte mit --class distortion aufnehmen");
+  if (!sweep) throw new Error("The profile holds no distortion measurement – capture it with --class distortion");
   return {
     sampleRate,
     signal,
@@ -483,8 +483,8 @@ export async function fitDistortion(
   const starts = baseStarts(base, input);
   const total = starts.length + train.length;
 
-  onProgress?.(0, total, "Grundeinstellung");
-  const baseResults = await runJobs(input, starts.map((start) => ({ kind: "base", observation: base, start })), (d) => onProgress?.(d, total, "Grundeinstellung"), signal);
+  onProgress?.(0, total, "base setting");
+  const baseResults = await runJobs(input, starts.map((start) => ({ kind: "base", observation: base, start })), (d) => onProgress?.(d, total, "base setting"), signal);
   const x0 = baseResults.reduce((best, r) => (r.error < best.error ? r : best)).x;
   const baseParams = unpackDistortion(x0);
 
@@ -492,7 +492,7 @@ export async function fitDistortion(
   const jobs: { o: DistortionObservation; candidate: number }[] = [];
   for (const o of train) GROUP_CANDIDATES.forEach((_, candidate) => jobs.push({ o, candidate }));
   const fits = await runJobs(input, jobs.map((j) => ({ kind: "sweep", observation: j.o, x0, groups: GROUP_CANDIDATES[j.candidate]! })),
-    (d) => onProgress?.(starts.length + Math.round((d / jobs.length) * train.length), total, "Regler"), signal);
+    (d) => onProgress?.(starts.length + Math.round((d / jobs.length) * train.length), total, "controls"), signal);
 
   const baseValues = new Map(parameters.map((p) => [p.index, working.get(p.index) ?? p.value ?? p.default]));
   const tables = new Map<number, ParamTable>();

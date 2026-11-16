@@ -296,7 +296,7 @@ namespace
             title.setJustificationType (juce::Justification::centred);
             title.setFont (makeFont (13.0f, true));
             remove.setButtonText (juce::String::fromUTF8 ("\xc3\x97"));
-            remove.setTooltip ("Band entfernen");
+            remove.setTooltip ("Remove band");
             for (auto* slider : { &frequency, &gain, &q })
             {
                 slider->setSliderStyle (juce::Slider::LinearBar);
@@ -498,7 +498,7 @@ namespace
             {
                 g.setColour (colour (display.text).withAlpha (0.8f));
                 g.setFont (makeFont (13.0f, false));
-                g.drawText (juce::String::fromUTF8 ("Klicken: Band anlegen  \xc2\xb7  Ziehen: Frequenz/Gain  \xc2\xb7  Mausrad: G\xc3\xbcte  \xc2\xb7  Rechtsklick: entfernen"),
+                g.drawText (juce::String::fromUTF8 ("Click: add band  \xc2\xb7  Drag: frequency/gain  \xc2\xb7  Mouse wheel: Q  \xc2\xb7  Right-click: remove"),
                             juce::Rectangle<float> (0, plotHeight() * 0.62f, (float) getWidth(), 20), juce::Justification::centred);
             }
         }

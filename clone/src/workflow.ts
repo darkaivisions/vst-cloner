@@ -16,11 +16,11 @@ export const MODEL_FILE = "model/eq.json";
 export const REPORT_FILE = "report.json";
 
 export function verdict(rmsDb: number): string {
-  if (rmsDb < 0.25) return "ausgezeichnet";
-  if (rmsDb < 0.5) return "sehr gut";
-  if (rmsDb < 1) return "gut";
-  if (rmsDb < 3) return "angenähert";
-  return "abweichend";
+  if (rmsDb < 0.25) return "excellent";
+  if (rmsDb < 0.5) return "very good";
+  if (rmsDb < 1) return "good";
+  if (rmsDb < 3) return "approximate";
+  return "off";
 }
 
 export function storedModel(profile: Profile): EqModel | undefined {
@@ -29,17 +29,17 @@ export function storedModel(profile: Profile): EqModel | undefined {
 }
 
 export function analyze(profile: Profile, log: Logger): EqModel {
-  log("info", `${profile.captures.renders.length} Messungen von ${profile.manifest.plugin.name} werden analysiert …`);
+  log("info", `Analysing ${profile.captures.renders.length} measurements of ${profile.manifest.plugin.name} …`);
   const model = fitEq(profile, (p) => log("detail", `Filterform ${p.index + 1}/${p.total}: ${p.shape}`));
   const bands = model.mapping.bands.length;
-  log("info", `Parametrischer EQ erkannt: ${bands} ${bands === 1 ? "Band" : "Bänder"}, ${model.shapes.length} Filterform${model.shapes.length === 1 ? "" : "en"}`);
+  log("info", `Parametric EQ detected: ${bands} band${bands === 1 ? "" : "s"}, ${model.shapes.length} filter shape${model.shapes.length === 1 ? "" : "s"}`);
   return model;
 }
 
 const stat = (s: FitStats | undefined) => (s ? `${s.rmsDb.toFixed(2)} dB (max ${s.maxDb.toFixed(1)})` : "–");
 
 export function formatModelReport(model: EqModel): string[] {
-  const lines = ["Form           Filterdesign                      Fit-Fehler         Gegenprobe         Bewertung"];
+  const lines = ["Shape          Filter design                     Fit error          Cross-check        Rating"];
   for (const r of model.report.shapes) {
     if (!r.fit) {
       lines.push(`${r.label.padEnd(14)} ${"–".padEnd(33)} ${"–".padEnd(18)} ${"–".padEnd(18)} ${r.note ?? ""}`);
@@ -55,25 +55,25 @@ export function formatModelReport(model: EqModel): string[] {
     lines.push(`${r.label.padEnd(14)} ${parts.join(" ").padEnd(33)} ${stat(r.train).padEnd(18)} ${stat(r.validate).padEnd(18)} ${check ? verdict(check.rmsDb) : ""}`);
     if (f.brickwall && r.brickwall) {
       const b = f.brickwall;
-      lines.push(`${"".padEnd(14)} Brickwall: elliptisch, Ordnung ${b.order}, ${b.passbandDb} dB Welligkeit, ${b.stopbandDb} dB Sperrdämpfung: ${stat(r.brickwall)} ${verdict(r.brickwall.rmsDb)}`);
+      lines.push(`${"".padEnd(14)} brickwall: elliptic, order ${b.order}, ${b.passbandDb} dB ripple, ${b.stopbandDb} dB stopband attenuation: ${stat(r.brickwall)} ${verdict(r.brickwall.rmsDb)}`);
     }
-    if (r.approximate) lines.push(`${"".padEnd(14)} ${r.note ?? "angenähert"}: ${stat(r.approximate)}`);
+    if (r.approximate) lines.push(`${"".padEnd(14)} ${r.note ?? "approximate"}: ${stat(r.approximate)}`);
   }
   const flat = model.report.baselineFlatnessDb;
-  lines.push(`Referenz (alle Bänder aus): Versatz ${model.baselineDb.toFixed(2)} dB, Welligkeit ${flat.toFixed(3)} dB`);
+  lines.push(`Reference (all bands off): offset ${model.baselineDb.toFixed(2)} dB, ripple ${flat.toFixed(3)} dB`);
   const mapping = Math.max(0, ...model.report.mappingErrors.map((m) => m.maxRelativeError));
-  lines.push(`Regelkurven: größte Abweichung der Anzeigetabelle ${(mapping * 100).toFixed(2)} %`);
+  lines.push(`Control curves: largest deviation of the display table ${(mapping * 100).toFixed(2)} %`);
   return lines;
 }
 
 export function formatVerifyReport(report: VerifyReport): string[] {
-  const lines = [`Klon vs. Original (${report.overall.renders} Einstellungen): ${stat(report.overall)} – ${verdict(report.overall.rmsDb)}`];
+  const lines = [`Clone vs. original (${report.overall.renders} settings): ${stat(report.overall)} – ${verdict(report.overall.rmsDb)}`];
   for (const s of report.shapes) lines.push(`  ${s.label.padEnd(14)} ${stat(s).padEnd(20)} ${verdict(s.rmsDb)}`);
-  if (report.combined) lines.push(`Mehrere Bänder zugleich (${report.combined.renders} Einstellungen): ${stat(report.combined)} – ${verdict(report.combined.rmsDb)}`);
+  if (report.combined) lines.push(`Several bands at once (${report.combined.renders} settings): ${stat(report.combined)} – ${verdict(report.combined.rmsDb)}`);
   if (report.limited) {
-    lines.push(`Nicht exakt nachgebildet (${report.limited.renders} Einstellungen: ${report.limited.labels.join(", ")}): ${stat(report.limited)}`);
+    lines.push(`Not reproduced exactly (${report.limited.renders} settings: ${report.limited.labels.join(", ")}): ${stat(report.limited)}`);
   }
-  lines.push("Größte Abweichungen:");
+  lines.push("Largest deviations:");
   for (const w of report.worst) lines.push(`  ${w.label}: ${w.rmsDb.toFixed(2)} dB (max ${w.maxDb.toFixed(1)})`);
   return lines;
 }
@@ -124,10 +124,10 @@ export async function cloneProfile(options: CloneOptions): Promise<CloneResult> 
   stage("analyse");
   let model = options.refit ? undefined : storedModel(profile);
   if (model && (model.fitRevision ?? 1) < FIT_REVISION) {
-    log("info", "Das gespeicherte Modell stammt von einer älteren Version – es wird neu berechnet");
+    log("info", "The stored model is from an older version – fitting it again");
     model = undefined;
   }
-  if (model) log("info", "Im Profil gespeichertes Modell wird verwendet");
+  if (model) log("info", "Using the model stored in the profile");
   else {
     model = analyze(profile, log);
     for (const line of formatModelReport(model)) log("info", line);
@@ -136,14 +136,14 @@ export async function cloneProfile(options: CloneOptions): Promise<CloneResult> 
   // editor layout: stored in the profile, captured on request
   let guiModel = options.refitGui ? undefined : storedGuiModel(profile);
   let originalRaw: string | undefined = join(guiCacheDir(profile), "pass2", "base.rgba");
-  if (guiModel) log("info", "Im Profil gespeicherte Oberfläche wird verwendet");
+  if (guiModel) log("info", "Using the editor layout stored in the profile");
   else if (options.gui) {
     stage("gui");
     if (!virtualDisplayAvailable()) {
-      log("warn", "Oberfläche wird nicht nachgebaut: Xvfb fehlt (sudo pacman -S xorg-server-xvfb)");
+      log("warn", "Editor not rebuilt: Xvfb is missing (sudo pacman -S xorg-server-xvfb)");
     } else {
       const pluginPath = options.pluginPath ?? (await locatePlugin(profile));
-      if (!pluginPath) log("warn", "Oberfläche wird nicht nachgebaut: Original-Plugin nicht gefunden");
+      if (!pluginPath) log("warn", "Editor not rebuilt: original plugin not found");
       else {
         const captured = await captureGuiLayout(profile, pluginPath, {
           log,
@@ -188,7 +188,7 @@ export async function cloneProfile(options: CloneOptions): Promise<CloneResult> 
         });
         if (comparison) gui.comparison = comparison;
       } catch (error) {
-        log("warn", `Oberflächen-Vergleich nicht möglich: ${(error as Error).message}`);
+        log("warn", `Editor comparison not possible: ${(error as Error).message}`);
       }
     }
   }
@@ -200,7 +200,7 @@ export async function cloneProfile(options: CloneOptions): Promise<CloneResult> 
     strToU8(JSON.stringify({ createdAt: new Date().toISOString(), pluginName, model: model.report, ...(verify ? { verify } : {}) }, null, 1)),
   );
   await writeProfile(options.profilePath, profile);
-  log("info", `Modell und Bericht im Profil gespeichert: ${options.profilePath}`);
+  log("info", `Model and report saved in the profile: ${options.profilePath}`);
 
   return { model, build, ...(verify ? { verify } : {}), ...(gui ? { gui } : {}) };
 }

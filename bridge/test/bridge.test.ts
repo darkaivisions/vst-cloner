@@ -70,7 +70,7 @@ test("errors are reported as responses", async () => {
   assert.match(unknown.error!, /unknown method/);
   const missing = await call("plugins.info", {});
   assert.equal(missing.ok, false);
-  assert.match(missing.error!, /Parameter „path“ fehlt/);
+  assert.match(missing.error!, /Parameter "path" is missing/);
 });
 
 test("empty library and LLM status", async () => {

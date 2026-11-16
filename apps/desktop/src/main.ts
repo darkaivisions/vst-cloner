@@ -42,7 +42,7 @@ async function main() {
   root.append(
     h("header.topbar", {},
       h("div.brand", {}, h("span.logo"), "vst-cloner"),
-      h("nav.tabs", {}, tab("clone", "Klonen"), tab("library", "Bibliothek"), tab("ai", "KI-Modelle")),
+      h("nav.tabs", {}, tab("clone", "Clone"), tab("library", "Library"), tab("ai", "AI models")),
       statusPill),
     banner,
     content,
@@ -59,9 +59,9 @@ async function main() {
   let started = false;
   onStatus(async (status) => {
     statusPill.className = `status-pill ${status.state}`;
-    statusPill.textContent = { starting: "startet …", ready: "bereit", stopped: "gestoppt", error: "Fehler" }[status.state];
+    statusPill.textContent = { starting: "starting …", ready: "ready", stopped: "stopped", error: "error" }[status.state];
     if (status.state === "error" || status.state === "stopped") {
-      showBanner(status.message ?? "Der Hintergrundprozess läuft nicht.", { label: "Neu starten", run: () => void restartBridge() });
+      showBanner(status.message ?? "The background process is not running.", { label: "Restart", run: () => void restartBridge() });
       return;
     }
     if (status.state !== "ready" || started) return;
@@ -73,9 +73,9 @@ async function main() {
     const missing: string[] = [];
     if (!info.host.found) missing.push("vch-host (npm run host:configure && npm run host:build)");
     if (!info.tools.cmake) missing.push("CMake");
-    if (!info.tools.compiler) missing.push("C++-Compiler");
-    if (missing.length) showBanner(`Es fehlt: ${missing.join(", ")}. Messen oder Klonen funktioniert erst danach.`);
-    log.note("info", `vst-cloner ${info.version} bereit – Daten in ${info.dataDir}`);
+    if (!info.tools.compiler) missing.push("C++ compiler");
+    if (missing.length) showBanner(`Missing: ${missing.join(", ")}. Measuring and cloning only work once it is there.`);
+    log.note("info", `vst-cloner ${info.version} ready – data in ${info.dataDir}`);
     await cloneView.refresh();
   });
 
