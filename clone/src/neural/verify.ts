@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pluginInfo, regenerateTestSignal, runHost, type RenderJob } from "@vst-cloner/capture";
-import { decodeWav, encodeWav, type Profile } from "@vst-cloner/profile";
+import { decodeWav, readCapture, encodeWav, type Profile } from "@vst-cloner/profile";
 import type { Logger } from "../build.ts";
 import { cloneValue, dynamicsCloneParameters } from "../dynamics/params.ts";
 import type { NeuralModel } from "./codegen.ts";
@@ -89,7 +89,7 @@ export async function verifyNeuralClone(
     const rows: { label: string; purpose: string; esr: number }[] = [];
     for (const r of renders) {
       const clone = decodeWav(await readFile(join(workDir, "out", `${r.id}.wav`))).channels[0]!;
-      const original = decodeWav(profile.files.get(r.file)!).channels;
+      const original = readCapture(profile, r).channels;
       // the clone is mono (one network per channel, the same for both): compared with every channel of the original
       const value = mean(original.map((channel) => esr(channel, clone)))!;
       if (!Number.isFinite(value)) throw new Error(`The clone gives no valid signal (NaN/inf) at "${r.label ?? r.id}"`);

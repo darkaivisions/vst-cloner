@@ -1,4 +1,4 @@
-import { decodeWav, type Profile, type Segment } from "@vst-cloner/profile";
+import { readCapture, type Profile, type Segment } from "@vst-cloner/profile";
 import { fft, nextPowerOfTwo } from "./fft.ts";
 
 /** Log-spaced analysis frequencies (default 1/24 octave from 20 Hz to 20 kHz or 0.45·fs). */
@@ -41,12 +41,9 @@ export function findSegment(profile: Profile, kind: Segment["kind"]): Segment {
 export function captureImpulseResponse(profile: Profile, renderId: string): Float32Array {
   const render = profile.captures.renders.find((r) => r.id === renderId);
   if (!render) throw new Error(`unknown render ${renderId}`);
-  const data = profile.files.get(render.file);
-  if (!data) throw new Error(`missing ${render.file}`);
-
   const segment = findSegment(profile, "impulse");
   const amplitude = segment.params?.amplitude ?? 1;
-  const audio = decodeWav(data);
+  const audio = readCapture(profile, render);
   const channel = audio.channels[0]!;
   const ir = channel.slice(segment.start, segment.start + segment.length);
   for (let i = 0; i < ir.length; i++) ir[i] = ir[i]! / amplitude;

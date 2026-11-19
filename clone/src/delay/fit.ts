@@ -1,4 +1,4 @@
-import { decodeWav, type Profile } from "@vst-cloner/profile";
+import { readCapture, type Profile } from "@vst-cloner/profile";
 import { fft, nextPowerOfTwo } from "../dsp/fft.ts";
 import { nelderMead } from "../dsp/optimize.ts";
 import { pchip, tableAt, type Errors, type ParamTable } from "../dynamics/fit.ts";
@@ -45,7 +45,7 @@ export function delayObservations(profile: Profile, input: DelayInput): DelayObs
     params: r.params.map((p) => ({ index: p.index, value: p.value })),
     kind: r.kind,
     ...(r.sweepParameter !== undefined ? { sweepParameter: r.sweepParameter } : {}),
-    response: delayResponse(decodeWav(profile.files.get(r.file)!).channels[0]!, input),
+    response: delayResponse(readCapture(profile, r).channels[0]!, input),
   }));
 }
 

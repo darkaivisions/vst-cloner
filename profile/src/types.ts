@@ -108,6 +108,8 @@ export interface CaptureRender {
   peak: number;
   /** All output channels were identical; the file stores one channel. */
   mono?: boolean;
+  /** The file holds the audio divided by this factor (24-bit PCM scaled to its peak); absent = 1 (see readCapture). */
+  scale?: number;
 }
 
 export interface CaptureIndex {

@@ -1,5 +1,5 @@
 import { regenerateTestSignal } from "@vst-cloner/capture";
-import { decodeWav, type Profile } from "@vst-cloner/profile";
+import { readCapture, type Profile } from "@vst-cloner/profile";
 import { nelderMead } from "../dsp/optimize.ts";
 import {
   appliedBlockGains,
@@ -113,7 +113,7 @@ function harmonicWindows(profile: Profile): DynamicsInput["harmonicWindows"] {
 
 export function dynamicsObservations(profile: Profile, input: DynamicsInput): DynamicsObservation[] {
   return profile.captures.renders.map((r) => {
-    const output = decodeWav(profile.files.get(r.file)!).channels[0]!;
+    const output = readCapture(profile, r).channels[0]!;
     const out = windowRmsDb(output, input.windowDb.length);
     const measured = out.map((v, w) => (input.windowDb[w]! > MIN_INPUT_DB ? v - input.windowDb[w]! : NaN));
     return {

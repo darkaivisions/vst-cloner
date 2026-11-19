@@ -1,6 +1,6 @@
 import { steppedParameter } from "../dynamics/plan.ts";
 import { CancelledError, regenerateTestSignal } from "@vst-cloner/capture";
-import { decodeWav, type Profile } from "@vst-cloner/profile";
+import { readCapture, type Profile } from "@vst-cloner/profile";
 import { cascadeDb } from "../dsp/biquad.ts";
 import { fft, nextPowerOfTwo } from "../dsp/fft.ts";
 import { nelderMead } from "../dsp/optimize.ts";
@@ -139,7 +139,7 @@ export function measureOutput(input: DistortionInput, output: Float32Array): { s
 
 export function distortionObservations(profile: Profile, input: DistortionInput): DistortionObservation[] {
   return profile.captures.renders.map((r) => {
-    const output = decodeWav(profile.files.get(r.file)!).channels[0]!;
+    const output = readCapture(profile, r).channels[0]!;
     return {
       renderId: r.id,
       label: r.label ?? r.id,
@@ -326,7 +326,7 @@ const meanErrors = (rows: DistortionErrors[]): DistortionErrors | undefined => {
 /** Delay of the original against the model: lag of the best correlation on the quiet sweep and the noise. */
 export function estimateDelay(profile: Profile, input: DistortionInput, base: DistortionObservation, p: DistortionParams, maxLag = 2048): number {
   const render = profile.captures.renders.find((r) => r.id === base.renderId)!;
-  const original = decodeWav(profile.files.get(render.file)!).channels[0]!;
+  const original = readCapture(profile, render).channels[0]!;
   const model = processDistortion(input.signal, p, input.sampleRate);
   const ranges = profile.testSignals.segments.filter((s) => s.id === "sweep-quiet" || s.id.startsWith("noise")).map((s) => [s.start, s.start + s.length] as const);
   let best = { lag: 0, c: -Infinity };

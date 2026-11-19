@@ -4,9 +4,11 @@ import { strToU8, unzipSync, zipSync } from "fflate";
 import {
   decodeProfile,
   decodeWav,
+  encodeCapture,
   encodeProfile,
   encodeWav,
   ProfileValidationError,
+  readCapture,
   type Profile,
 } from "../src/index.ts";
 
@@ -84,6 +86,28 @@ test("WAV decoder reads 16-bit and 24-bit PCM", () => {
   const pcm24 = header(24, 3);
   pcm24.bytes.set([0x00, 0x00, 0xc0], 44); // -0.5
   assert.deepEqual([...decodeWav(pcm24.bytes).channels[0]!], [-0.5]);
+});
+
+test("captures: 24-bit scaled to the peak, read back at their true level; float captures without scale still read", () => {
+  // a plugin turned up by 40 dB next to a quiet stretch at -100 dB
+  const loud = Float32Array.from({ length: 4800 }, (_, i) => 100 * Math.sin(i * 0.01) * (i < 2400 ? 1 : 1e-5));
+  const { bytes, scale } = encodeCapture({ sampleRate: 48000, channels: [loud, loud.map((v) => -v)] });
+  assert.ok(bytes.length < 44 + loud.length * 2 * 3 + 2);
+  const back = readCapture({ files: new Map([["captures/a.wav", bytes]]) }, { file: "captures/a.wav", scale });
+  assert.equal(back.channels.length, 2);
+  let error = 0, signal = 0;
+  for (let i = 0; i < loud.length; i++) {
+    error += (back.channels[0]![i]! - loud[i]!) ** 2;
+    signal += loud[i]! ** 2;
+  }
+  assert.ok(10 * Math.log10(error / signal) < -130);
+  // the peak itself is exact to 24 bits, nothing clips
+  assert.ok(Math.abs(Math.max(...back.channels[0]!) - Math.max(...loud)) < 100 * 2 ** -22);
+  // older profiles: 32-bit float, no scale
+  const old = encodeWav({ sampleRate: 48000, channels: [new Float32Array([0.25, 2])] });
+  assert.deepEqual([...readCapture({ files: new Map([["captures/b.wav", old]]) }, { file: "captures/b.wav" }).channels[0]!], [0.25, 2]);
+  // silence
+  assert.equal(encodeCapture({ sampleRate: 48000, channels: [new Float32Array(8)] }).scale, 1);
 });
 
 test("profile encode/decode round trip", () => {

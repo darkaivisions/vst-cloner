@@ -1,5 +1,5 @@
 import { steppedParameter } from "../dynamics/plan.ts";
-import { decodeWav, type Profile } from "@vst-cloner/profile";
+import { readCapture, type Profile } from "@vst-cloner/profile";
 import { tableAt, type Errors, type ParamTable } from "../dynamics/fit.ts";
 import {
   MAX_PREDELAY_SECONDS,
@@ -145,7 +145,7 @@ export function reverbObservations(profile: Profile, input: ReverbInput): Reverb
     params: r.params.map((p) => ({ index: p.index, value: p.value })),
     kind: r.kind,
     ...(r.sweepParameter !== undefined ? { sweepParameter: r.sweepParameter } : {}),
-    measured: describeResponse(reverbResponse(decodeWav(profile.files.get(r.file)!).channels[0]!, input), input.sampleRate),
+    measured: describeResponse(reverbResponse(readCapture(profile, r).channels[0]!, input), input.sampleRate),
   }));
 }
 

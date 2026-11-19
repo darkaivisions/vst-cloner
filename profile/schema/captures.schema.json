@@ -18,6 +18,7 @@
           "purpose": { "enum": ["train", "validate"] },
           "label": { "type": "string" },
           "mono": { "type": "boolean", "description": "All output channels were identical; the file stores one channel" },
+          "scale": { "type": "number", "exclusiveMinimum": 0, "description": "The file holds the audio divided by this factor (24-bit PCM scaled to its peak); absent = 1" },
           "params": {
             "description": "Parameters that differ from the base state (normalized values as reported by the plugin)",
             "type": "array",

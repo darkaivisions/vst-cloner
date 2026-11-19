@@ -15,7 +15,7 @@ ZIP archive (deflate). `manifest.json` comes first so that tools can recognise t
 | `parameters.json` | yes | all parameters of the plugin | `profile/schema/parameters.schema.json` |
 | `test-signals.json` | yes | segments of the input signal + SHA-256 | `profile/schema/test-signals.schema.json` |
 | `captures.json` | yes | index of the renders | `profile/schema/captures.schema.json` |
-| `captures/<id>.wav` | yes | response of the plugin, WAV 32-bit float | – |
+| `captures/<id>.wav` | yes | response of the plugin, WAV 24-bit PCM scaled to its peak (`scale`), or 32-bit float | – |
 | `model/eq.json` | no | fitted EQ model (from `vch clone`/`vch analyze --save`) | – |
 | `report.json` | no | fit and comparison report of the last clone | – |
 | `spec.md` | no | functional specification (from milestone 7) | – |
@@ -51,6 +51,11 @@ Optional fields per render:
 - `mono: true` – all output channels were bit-identical; the file holds only one channel.
 - `purpose` – `"train"` (for the fit) or `"validate"` (only as a cross-check).
 - `label` – readable description, e.g. "Bell · 1000 Hz · +12.0 dB · Q 0.70".
+- `scale` – the file holds the response divided by this factor: 24-bit PCM scaled so that the peak uses the full
+  range (a plugin turned up by 40 dB would clip otherwise). True level = sample × `scale`. Absent = 1 (profiles
+  written before, with 32-bit float files). 24 bits relative to the peak keep everything down to −138 dB of it;
+  a profile shrinks by about 40 % against float (Tal-Filter-2, 333 renders: 348 → 207 MiB). `vch extract` writes
+  the captures back as 32-bit float at their true level, without `scale`.
 
 ## Test signal
 

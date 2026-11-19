@@ -252,8 +252,14 @@ vst-cloner/
      Batch over five plugins, clone vs. original, all / unseen combinations (before → after):
      3BandEQ 2.5 → 0.56 % / 4.5 → 1.9 %, wolf-shaper 16.2 → 0.62 % / 3.7 → 4.2 %, gxtape 24 → 10.5 % / 124 → 14 %,
      ZamComp 81 → 21 % / 164 → 24 %, Tal-Filter-2 711 → 29 % / 92 → 70 %
-   - Open: Tal-Filter-2 (one unseen combination at 1292 %, the rest around 30 %; its LFO does not run without host
-     tempo/transport), ZamComp (attack/release of a compressor, 21 %), wow/flutter/hiss of gxtape cannot match
+   - Hidden switches ✔ – the survey (33 values per continuous control) finds selectors; the network sees the
+     middle of a position in training and in the clone (Tal-Filter-2: filter type with 10 positions)
+   - Training time: ZamComp 17 % after 6 min, 4.1 % after 20 (unseen 20 → 6.9 %) – 20 minutes by default
+   - Captures 24-bit scaled to their peak (`scale` in captures.json): profiles about 40 % smaller
+   - Transport in the capture host (optional per job: tempo, playing) ✔ – not used by captures yet; tempo-synced
+     clones would have to read the host tempo themselves
+   - Open: Tal-Filter-2 (one unseen combination at 1292 %, the rest around 30 %; its modulation follows a drawn curve stored in the plugin state – flat in the
+     initial state, not a parameter), ZamComp (attack/release of a compressor, 21 %), wow/flutter/hiss of gxtape cannot match
      sample by sample
    - Open: long memory (reverb tails, long delays) and LFO modulation; stereo effects that treat the channels
      differently (one network for both channels now); plugins with more than 24 controls; hard staircase

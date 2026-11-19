@@ -59,6 +59,7 @@ def load_profile(directory):
     renders = []
     for r in captures:
         y, _ = read_wav(os.path.join(directory, r["file"]))
+        y = y * float(r.get("scale", 1.0))  # 24-bit captures are stored scaled to their peak
         values = dict(base)
         for p in r.get("params", []):
             values[p["index"]] = float(p["value"])

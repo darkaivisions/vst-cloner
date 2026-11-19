@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pluginInfo, runHost, type RenderJob } from "@vst-cloner/capture";
-import { decodeWav, encodeWav, type Profile } from "@vst-cloner/profile";
+import { decodeWav, readCapture, encodeWav, type Profile } from "@vst-cloner/profile";
 import type { Logger } from "../build.ts";
 import { cloneValue, dynamicsCloneParameters, modelValue } from "../dynamics/params.ts";
 import {
@@ -102,7 +102,7 @@ export async function verifyDistortionClone(
     let engineEsrDb = -Infinity, engineWorst = "";
     for (const o of observations) {
       const clone = decodeWav(await readFile(join(workDir, "out", `${o.renderId}.wav`))).channels[0]!;
-      const original = decodeWav(profile.files.get(renders.find((r) => r.id === o.renderId)!.file)!).channels[0]!;
+      const original = readCapture(profile, renders.find((r) => r.id === o.renderId)!).channels[0]!;
       rows.push({ label: o.label, purpose: o.purpose, errors: compareDistortion(measureOutput(input, clone), o), esrDb: esrDb(original, clone, from, to) });
       const reference = processDistortion(input.signal, predictDistortion(model, new Map(o.params.map((p) => [p.index, asModel.get(p.index)?.(p.value) ?? p.value]))), sampleRate, model.delay ?? 0);
       const engine = esrDb(reference, clone, 0, Math.min(reference.length, clone.length));

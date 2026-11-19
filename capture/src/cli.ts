@@ -1,7 +1,7 @@
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { encodeWav, readProfile, type Profile } from "@vst-cloner/profile";
+import { encodeWav, readCapture, readProfile, type Profile } from "@vst-cloner/profile";
 import { capture, type CapturePlanner, type CaptureProgress } from "./capture.ts";
 import { HostError, pluginInfo, runHost } from "./host.ts";
 import { DEFAULT_PLAN, PlanTooLargeError, planCaptures, resolveFixedValues, type PlanOptions } from "./plan.ts";
@@ -300,11 +300,16 @@ async function commandExtract(positionals: string[]): Promise<void> {
   const profile = await readProfile(resolve(requirePositional(positionals, 0, "profile path")));
   const target = resolve(requirePositional(positionals, 1, "target directory"));
 
+  // captures as 32-bit float at their true level (in the profile they are 24-bit scaled to their peak), so any
+  // tool reads them right; captures.json then has no scale
+  const captures = new Map(profile.captures.renders.map((r) => [r.file, r]));
   for (const [path, data] of profile.files) {
     const out = join(target, path);
     await mkdir(dirname(out), { recursive: true });
-    await writeFile(out, data);
+    const render = captures.get(path);
+    await writeFile(out, render ? encodeWav(readCapture(profile, render)) : data);
   }
+  profile.captures.renders = profile.captures.renders.map(({ scale: _scale, ...r }) => r);
   const { audio } = regenerateTestSignal(profile.testSignals);
   await mkdir(target, { recursive: true });
   await writeFile(join(target, "input.wav"), encodeWav(audio));

@@ -47,6 +47,48 @@ export function encodeWav(audio: Audio): Uint8Array {
   return bytes;
 }
 
+/**
+ * Encodes audio as a 24-bit PCM WAV file after dividing it by `scale` (the caller keeps the scale: samples
+ * beyond ±1, e.g. a plugin turned up by 40 dB, would otherwise clip). Error below −138 dB of `scale`.
+ */
+export function encodeWav24(audio: Audio, scale = 1): Uint8Array {
+  const numChannels = audio.channels.length;
+  const frames = audioLength(audio);
+  const dataBytes = frames * numChannels * 3;
+  const bytes = new Uint8Array(44 + dataBytes + (dataBytes & 1));
+  const view = new DataView(bytes.buffer);
+  const ascii = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i++) bytes[offset + i] = text.charCodeAt(i);
+  };
+
+  ascii(0, "RIFF");
+  view.setUint32(4, 36 + dataBytes + (dataBytes & 1), true);
+  ascii(8, "WAVE");
+  ascii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, FORMAT_PCM, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, audio.sampleRate, true);
+  view.setUint32(28, audio.sampleRate * numChannels * 3, true);
+  view.setUint16(32, numChannels * 3, true);
+  view.setUint16(34, 24, true);
+  ascii(36, "data");
+  view.setUint32(40, dataBytes, true);
+
+  const factor = 8388608 / scale;
+  let offset = 44;
+  for (let frame = 0; frame < frames; frame++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      const v = Math.max(-8388608, Math.min(8388607, Math.round(audio.channels[ch]![frame]! * factor)));
+      bytes[offset] = v & 0xff;
+      bytes[offset + 1] = (v >> 8) & 0xff;
+      bytes[offset + 2] = (v >> 16) & 0xff;
+      offset += 3;
+    }
+  }
+  return bytes;
+}
+
 /** Decodes PCM (16/24/32 bit) and IEEE float (32/64 bit) WAV files. */
 export function decodeWav(bytes: Uint8Array): Audio {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

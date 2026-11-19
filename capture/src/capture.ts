@@ -4,6 +4,7 @@ import { basename, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   decodeWav,
+  encodeCapture,
   encodeWav,
   PROFILE_FORMAT,
   SCHEMA_VERSION,
@@ -92,15 +93,16 @@ export interface CaptureProbe {
 /** longest pre-roll given to a plugin that settles slowly after loading */
 const MAX_PREROLL_SECONDS = 8;
 
-/** Re-encodes a WAV file as mono when all channels are bit-identical (halves the profile size for stereo-linked effects). */
-export function collapseIdenticalChannels(bytes: Uint8Array): { bytes: Uint8Array; mono: boolean } {
+/**
+ * A render as stored in the profile: mono when all channels are bit-identical (halves the size for stereo-linked
+ * effects), 24-bit PCM scaled to its peak (see encodeCapture).
+ */
+export function packCapture(bytes: Uint8Array): { bytes: Uint8Array; mono: boolean; scale: number } {
   const audio = decodeWav(bytes);
   const [first, ...rest] = audio.channels;
-  if (!first || rest.length === 0) return { bytes, mono: false };
-  for (const channel of rest) {
-    for (let i = 0; i < first.length; i++) if (channel[i] !== first[i]) return { bytes, mono: false };
-  }
-  return { bytes: encodeWav({ sampleRate: audio.sampleRate, channels: [first] }), mono: true };
+  const mono = !!first && rest.length > 0 && rest.every((channel) => channel.every((v, i) => v === first[i]));
+  const packed = encodeCapture(mono ? { sampleRate: audio.sampleRate, channels: [first!] } : audio);
+  return { ...packed, mono };
 }
 
 /** SHA-256 of a plugin file, or of a bundle directory (sorted relative paths + file hashes). */
@@ -304,7 +306,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
       const result = results.get(planned.id);
       if (!result) throw new Error(`vch-host did not render ${planned.id}`);
       const file = `captures/${planned.id}.wav`;
-      const { bytes, mono } = collapseIdenticalChannels(await readFile(join(workDir, file)));
+      const { bytes, mono, scale } = packCapture(await readFile(join(workDir, file)));
       files.set(file, bytes);
       renders.push({
         id: planned.id,
@@ -317,6 +319,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
         latencySamples: result.latencySamples,
         peak: result.peak,
         ...(mono ? { mono: true } : {}),
+        scale,
       });
     }
 
