@@ -4,7 +4,8 @@ import { nelderMead } from "../dsp/optimize.ts";
 import { pchip, tableAt, type Errors, type ParamTable } from "../dynamics/fit.ts";
 import { parameterPositions, positionOf, renderCondition, steppedParameter, SWITCH_STATES } from "../dynamics/plan.ts";
 import type { MeasuredSteps } from "@vst-cloner/capture";
-import { HP_OFF, hpActive, LP_OFF, lpActive, MAX_FEEDBACK_DB, OFF_DB, onePole, packDelay, processDelay, unpackDelay, type DelayParams, type DelayStructure } from "./model.ts";
+import { HP_OFF, hpActive, LP_OFF, lpActive, MAX_FEEDBACK_DB, MOD_OFF, OFF_DB, onePole, packDelay, processDelay, unpackDelay, type DelayParams, type DelayStructure } from "./model.ts";
+import { clickTaps, measureModulation, wrapPhase, type MeasuredModulation } from "./modulation.ts";
 
 export interface DelayInput {
   sampleRate: number;
@@ -12,6 +13,10 @@ export interface DelayInput {
   start: number;
   length: number;
   amplitude: number;
+  /** samples the plugin ran before the input began (pre-roll of the capture): the LFO's phase depends on it */
+  preroll: number;
+  /** the train of clicks of a modulation measurement (see modulationSegmentSpecs) */
+  clicks?: { start: number; length: number; amplitude: number; period: number };
 }
 
 export interface DelayObservation {
@@ -23,12 +28,26 @@ export interface DelayObservation {
   sweepParameter?: number;
   /** impulse response (answer to the impulse, scaled to a unit impulse) */
   response: Float32Array;
+  /** answer to the clicks, scaled to unit clicks (modulation measurements) */
+  clicks?: Float32Array;
 }
 
 export function delayInput(profile: Profile): DelayInput {
   const segment = profile.testSignals.segments.find((s) => s.id === "impulse" && s.kind === "impulse");
   if (!segment) throw new Error("The profile holds no delay measurement (impulse segment missing)");
-  return { sampleRate: profile.manifest.capture.sampleRate, start: segment.start, length: segment.length, amplitude: segment.params?.amplitude ?? 1 };
+  const sampleRate = profile.manifest.capture.sampleRate;
+  const clicks = profile.testSignals.segments.find((s) => s.kind === "clicks");
+  return {
+    sampleRate, start: segment.start, length: segment.length, amplitude: segment.params?.amplitude ?? 1,
+    preroll: Math.floor(profile.manifest.capture.prerollSeconds * sampleRate),
+    ...(clicks ? { clicks: { start: clicks.start, length: clicks.length, amplitude: clicks.params?.amplitude ?? 1, period: Math.max(1, Math.round((clicks.params?.periodSeconds ?? 0.04) * sampleRate)) } } : {}),
+  };
+}
+
+export function clicksResponse(output: ArrayLike<number>, input: DelayInput): Float32Array | undefined {
+  const c = input.clicks;
+  if (!c) return undefined;
+  return Float32Array.from({ length: c.length }, (_, i) => (output[c.start + i] ?? 0) / c.amplitude);
 }
 
 export function delayResponse(output: ArrayLike<number>, input: DelayInput): Float32Array {
@@ -45,7 +64,11 @@ export function delayObservations(profile: Profile, input: DelayInput): DelayObs
     params: r.params.map((p) => ({ index: p.index, value: p.value })),
     kind: r.kind,
     ...(r.sweepParameter !== undefined ? { sweepParameter: r.sweepParameter } : {}),
-    response: delayResponse(readCapture(profile, r).channels[0]!, input),
+    ...((): { response: Float32Array; clicks?: Float32Array } => {
+      const channel = readCapture(profile, r).channels[0]!;
+      const clicks = clicksResponse(channel, input);
+      return { response: delayResponse(channel, input), ...(clicks ? { clicks } : {}) };
+    })(),
   }));
 }
 
@@ -452,7 +475,8 @@ const combine = (model: DelayTables, values: Map<number, number>): DelayParams =
     const value = values.get(table.index) ?? reference;
     if (value === undefined || reference === undefined) continue;
     const at = tableAt(table, value), ref = tableAt(table, reference);
-    for (let i = 0; i < packed.length; i++) packed[i]! += at[i]! - ref[i]!;
+    // (tables of models fitted before the LFO have fewer values)
+    for (let i = 0; i < packed.length; i++) packed[i]! += (at[i] ?? ref[i] ?? 0) - (ref[i] ?? 0);
     seconds += Math.exp(at[0]!) - Math.exp(ref[0]!);
   }
   if (model.timeRule === "sum") packed[0] = Math.log(Math.max(seconds, 1e-4));
@@ -470,7 +494,70 @@ export function predictDelayModel(model: DelayTables & { variants?: DelayVariant
 export const predictDelay = (model: DelayTables & { variants?: DelayVariant[] }, values: Map<number, number>): DelayParams => predictDelayModel(model, values).params;
 
 /** Impulse response of the model, as long as the measured ones. */
-export const modelResponse = (p: DelayParams, s: DelayStructure, input: DelayInput) => processDelay([1], p, s, input.sampleRate, input.length);
+export const modelResponse = (p: DelayParams, s: DelayStructure, input: DelayInput) => processDelay([1], p, s, input.sampleRate, input.length, input.preroll + input.start);
+
+/** Answer of the model to the clicks (modulation measurements). */
+export function modelClicks(p: DelayParams, s: DelayStructure, input: DelayInput): Float32Array | undefined {
+  const c = input.clicks;
+  if (!c) return undefined;
+  const signal = new Float32Array(c.length);
+  for (let i = 0; i < c.length; i += c.period) signal[i] = 1;
+  return processDelay(signal, p, s, input.sampleRate, c.length, input.preroll + c.start);
+}
+
+export interface DelayAnswer {
+  response: Float32Array;
+  clicks?: Float32Array;
+}
+
+/** The model's answer to the measurement signal: impulse response and, for modulation measurements, the clicks. */
+export function modelAnswer(p: DelayParams, s: DelayStructure, input: DelayInput): DelayAnswer {
+  const clicks = modelClicks(p, s, input);
+  return { response: modelResponse(p, s, input), ...(clicks ? { clicks } : {}) };
+}
+
+/** Two answers against each other: the impulse response and, where measured, the answer to the clicks (the LFO). */
+export function compareAnswers(a: DelayAnswer, b: DelayAnswer, input: DelayInput): Errors {
+  const impulse = compareResponses(a.response, b.response, input.sampleRate);
+  if (!a.clicks || !b.clicks || !input.clicks) return impulse;
+  const lfo = compareClicks(a.clicks, b.clicks, input.sampleRate, input.clicks.period);
+  return { rmsDb: (impulse.rmsDb + lfo.rmsDb) / 2, maxDb: Math.max(impulse.maxDb, lfo.maxDb) };
+}
+
+/** Model against a measured render. */
+export const compareDelay = (p: DelayParams, s: DelayStructure, input: DelayInput, measured: DelayAnswer): Errors => compareAnswers(modelAnswer(p, s, input), measured, input);
+
+/**
+ * Difference of two answers to the clicks: the envelope comparison of the whole answer, and how far apart the
+ * two LFOs move the delay time – centre, depth and rate, with the phase aligned (the phase of an LFO when the
+ * music starts is arbitrary and inaudible). 0.5 ms of deviation counts as 6 dB.
+ */
+function compareClicks(model: Float32Array, measured: Float32Array, sampleRate: number, period: number): Errors {
+  const envelope = compareResponses(model, measured, sampleRate);
+  const deviation = lfoDeviation(measureModulation({ h: model, period }, sampleRate), measureModulation({ h: measured, period }, sampleRate), measured.length / sampleRate);
+  const lfoDb = 20 * Math.log10(1 + deviation / 0.0005);
+  return { rmsDb: (envelope.rmsDb + lfoDb) / 2, maxDb: Math.max(envelope.maxDb, lfoDb) };
+}
+
+/** RMS distance (seconds) of two delay curves centre + depth · sin(2π rate t + phase) over `seconds`, the phase of the first aligned to the second */
+export function lfoDeviation(a: MeasuredModulation | undefined, b: MeasuredModulation | undefined, seconds: number): number {
+  if (!a && !b) return 0;
+  const curve = (m: MeasuredModulation | undefined, shift: number) => (t: number) => (m ? m.centre + m.depth * Math.sin(2 * Math.PI * m.rate * t + m.phase + shift) : 0);
+  // without an LFO on one side: the other's depth (its centre is the plain delay, compared by the envelopes)
+  if (!a || !b) return (a ?? b)!.depth / Math.SQRT2;
+  const steps = 400, shifts = 64;
+  let best = Infinity;
+  for (let k = 0; k < shifts; k++) {
+    const f = curve(a, (2 * Math.PI * k) / shifts), g = curve(b, 0);
+    let sum = 0;
+    for (let i = 0; i < steps; i++) {
+      const t = (i / steps) * seconds;
+      sum += (f(t) - g(t)) ** 2;
+    }
+    best = Math.min(best, Math.sqrt(sum / steps));
+  }
+  return best;
+}
 
 /**
  * A model for a switch position must predict the check renders of that position better than the main model: by
@@ -483,6 +570,67 @@ const variantGain = (before: number[], after: number[]): boolean => {
   const mean = gains.reduce((sum, g) => sum + g, 0) / gains.length;
   return mean >= MIN_VARIANT_GAIN_DB && gains[gains.length >> 1]! >= MIN_VARIANT_GAIN_DB / 2;
 };
+
+/**
+ * Start of the LFO, common to all renders: phase φ0 and lead L (samples before the reset point) such that the
+ * phase at the first click of every render is φ0 + ω · (L + pre-roll + start of the clicks). With a single rate
+ * the lead cannot be told from the phase; it is then 0.
+ */
+export function lfoStart(measured: MeasuredModulation[], input: DelayInput): { phase: number; lead: number } {
+  const offset = input.preroll + (input.clicks?.start ?? 0);
+  // weighted by how sure each phase is: the phase error of a sine fit is about its residual over its depth
+  const items = measured.map((m) => {
+    const omega = (2 * Math.PI * m.rate) / input.sampleRate;
+    const error = m.residual / Math.max(m.depth * input.sampleRate, 1e-9);
+    return { omega, r: m.phase - omega * offset, w: 1 / (0.01 + error * error) };
+  });
+  return phaseAndLead(items, -input.preroll, input.sampleRate);
+}
+
+/** φ and L (whole samples in [from, to]) with r ≈ φ + ω · L for all items, weighted (a circular fit) */
+function phaseAndLead(items: { omega: number; r: number; w: number }[], from: number, to: number): { phase: number; lead: number } {
+  const score = (lead: number) => {
+    let re = 0, im = 0;
+    for (const { omega, r, w } of items) {
+      re += w * Math.cos(r - omega * lead);
+      im += w * Math.sin(r - omega * lead);
+    }
+    return { length: Math.hypot(re, im), phase: Math.atan2(im, re) };
+  };
+  let best = { lead: 0, ...score(0) };
+  for (let lead = from; lead <= to; lead++) {
+    const s = score(lead);
+    if (s.length > best.length * (1 + 1e-9)) best = { lead, ...s };
+  }
+  return { phase: wrapPhase(best.phase), lead: best.lead };
+}
+
+/**
+ * The phase the clicks show is not quite the phase of the delay line's LFO (a repeat leaves the line after the
+ * delay it was read with, and plugins differ in when they read it). The model is therefore measured the way the
+ * original was, and its LFO start is moved by the difference – in phase, and in lead where it grows with the rate.
+ */
+function calibrateLfo(model: DelayTables & { variants?: DelayVariant[] }, observations: DelayObservation[], measured: Map<string, MeasuredModulation>, input: DelayInput): void {
+  if (!input.clicks) return;
+  const items: { omega: number; r: number; w: number }[] = [];
+  for (const o of observations) {
+    const original = measured.get(o.renderId);
+    if (!original || o.purpose !== "train") continue;
+    const predicted = predictDelayModel(model, new Map(o.params.map((p) => [p.index, p.value])));
+    const answer = modelClicks(predicted.params, predicted.structure, input)!;
+    const own = measureModulation({ h: answer, period: input.clicks.period }, input.sampleRate);
+    if (!own || Math.abs(Math.log(own.rate / original.rate)) > 0.01) continue;
+    const error = original.residual / Math.max(original.depth * input.sampleRate, 1e-9);
+    items.push({ omega: (2 * Math.PI * original.rate) / input.sampleRate, r: wrapPhase(original.phase - own.phase), w: 1 / (0.01 + error * error) });
+  }
+  if (items.length === 0) return;
+  const shift = phaseAndLead(items, -Math.round(0.1 * input.sampleRate), Math.round(0.1 * input.sampleRate));
+  for (const tables of [model, ...(model.variants ?? [])]) {
+    tables.base = { ...tables.base, modPhase: wrapPhase((tables.base.modPhase ?? 0) + shift.phase) };
+    for (const table of tables.tables) for (const point of table.points) if (point.packed.length > 10) point.packed[10]! += shift.phase;
+    tables.structure = { ...tables.structure, modLead: (tables.structure.modLead ?? 0) + shift.lead };
+  }
+}
 
 /**
  * Fits the delay model: base render in full, then every single-parameter sweep (a table of model values per
@@ -508,9 +656,47 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
   const condition = (o: DelayObservation) => renderCondition(o.params, swept(o)!.index, baseValues);
   let done = 0;
 
+  // LFO (modulation measurements): read off every render's clicks; the phase at the LFO's start is the same for
+  // all of them, but when that start lies before the pre-roll (the plugin's set-up) the phase at the input depends
+  // on the rate – the lead is found as the one that lines all renders up
+  const measured = new Map<string, MeasuredModulation>();
+  for (const o of observations) {
+    const m = o.clicks && input.clicks ? measureModulation({ h: o.clicks, period: input.clicks.period }, input.sampleRate) : undefined;
+    if (m) measured.set(o.renderId, m);
+  }
+  // A repeat later than the spacing of the clicks lands after the next click: the clicks show the time modulo the
+  // spacing. The impulse response shows the whole time; the clicks' centre is moved by whole spacings to lie
+  // nearest to it, and the phase with it (the repeat seen after click k + w belongs to click k).
+  const periodSeconds = (input.clicks?.period ?? 1) / input.sampleRate;
+  const unwrapped = (m: MeasuredModulation | undefined, analysis: DelayAnalysis): MeasuredModulation | undefined => {
+    if (!m || analysis.echoes === 0) return m;
+    const wraps = Math.max(0, Math.round((analysis.params.delaySeconds - m.centre) / periodSeconds));
+    if (wraps === 0) return m;
+    return { ...m, centre: m.centre + wraps * periodSeconds, phase: m.phase + 2 * Math.PI * m.rate * wraps * periodSeconds };
+  };
+  for (const o of observations) {
+    const m = measured.get(o.renderId);
+    if (m) measured.set(o.renderId, unwrapped(m, analyseResponse(o.response, input.sampleRate))!);
+  }
+  const lfo = measured.size ? lfoStart([...measured.values()], input) : undefined;
+  /** the impulse response's analysis, with the LFO of the render where it has one */
+  const analyse = (o: DelayObservation, fallback?: DelayParams): DelayAnalysis => {
+    const analysis = analyseResponse(o.response, input.sampleRate, fallback);
+    if (!lfo) return analysis;
+    const m = measured.get(o.renderId);
+    // a repeat that falls on the dry signal at the moment of the impulse (a flanger near zero) is not seen in the
+    // impulse response: its level is then that of the clicks' repeats
+    const wet = m && analysis.echoes === 0 && Math.abs(m.gain) > 1e-4 ? { wetDb: 20 * Math.log10(Math.abs(m.gain)) } : {};
+    const structure = m && analysis.echoes === 0 && m.gain < 0 ? { ...analysis.structure, wetSign: -1 } : analysis.structure;
+    const params: DelayParams = m
+      ? { ...analysis.params, ...wet, delaySeconds: m.centre, modDepthSeconds: m.depth, modRate: m.rate, modPhase: lfo.phase }
+      : { ...analysis.params, modDepthSeconds: MOD_OFF, modRate: fallback?.modRate ?? 1, modPhase: lfo.phase };
+    return { ...analysis, params, structure: { ...structure, modLead: lfo.lead }, echoes: m ? Math.max(1, analysis.echoes) : analysis.echoes };
+  };
+
   /** tables from the sweeps around one base render */
   const fitTables = (baseObservation: DelayObservation, sweeps: DelayObservation[], fallback?: DelayParams): DelayTables & { echoes: number } => {
-    const baseFit = analyseResponse(baseObservation.response, input.sampleRate, fallback);
+    const baseFit = analyse(baseObservation, fallback);
     const tables = new Map<number, ParamTable>();
     /** per table: plugin values whose render shows a repeat */
     const visible = new Map<number, Set<number>>();
@@ -518,7 +704,7 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
       onProgress?.(done++, train.length, o.label);
       const p = swept(o)!;
       const info = parameters.find((x) => x.index === p.index)!;
-      const fit = analyseResponse(o.response, input.sampleRate, baseFit.params);
+      const fit = analyse(o, baseFit.params);
       const table = tables.get(p.index)
         ?? { index: p.index, name: info.name, discrete: stepped.has(p.index), points: [{ value: baseValues.get(p.index)!, packed: packDelay(baseFit.params) }] };
       table.points.push({ value: p.value, packed: packDelay(fit.params) });
@@ -557,7 +743,7 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
   };
   const errorOf = (tables: DelayTables, o: DelayObservation) => {
     const predicted = predictDelayModel(tables, new Map(o.params.map((p) => [p.index, p.value])));
-    return compareResponses(modelResponse(predicted.params, predicted.structure, input), o.response, input.sampleRate);
+    return compareDelay(predicted.params, predicted.structure, input, o);
   };
 
   const { echoes, ...fitted } = fitTables(base, train.filter((o) => !condition(o)));
@@ -628,6 +814,7 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
     ...(variants.length ? { variants } : {}),
     report: { echoes, renders: [] },
   };
+  if (lfo) calibrateLfo(model, observations, measured, input);
   model.report.renders = observations.map((o) => {
     const e = errorOf(model, o);
     return { renderId: o.renderId, label: o.label, purpose: o.purpose, rmsDb: e.rmsDb, maxDb: e.maxDb };

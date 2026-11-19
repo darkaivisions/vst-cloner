@@ -5,7 +5,7 @@ import { readProfile } from "@vst-cloner/profile";
 import { installPlugins, slugify, type BuildResult, type Logger } from "./build.ts";
 import { classifyPlugin, type EffectClass } from "./batch.ts";
 import { bestClone, compareClones, formatComparison, type CloneCandidate, type CloneComparison } from "./compare.ts";
-import { delayPlanner } from "./delay/plan.ts";
+import { delayPlanner, modulationPlanner } from "./delay/plan.ts";
 import { cloneDelayProfile } from "./delay/workflow.ts";
 import { distortionPlanner } from "./distortion/plan.ts";
 import { cloneDistortionProfile } from "./distortion/workflow.ts";
@@ -23,6 +23,7 @@ const CLASS_PATHS: Partial<Record<EffectClass, { planner: CapturePlanner; clone:
   dynamics: { planner: dynamicsPlanner, clone: cloneDynamicsProfile },
   distortion: { planner: distortionPlanner, clone: cloneDistortionProfile },
   delay: { planner: delayPlanner, clone: cloneDelayProfile },
+  modulation: { planner: modulationPlanner, clone: cloneDelayProfile },
   reverb: { planner: reverbPlanner, clone: cloneReverbProfile },
 };
 

@@ -11,13 +11,13 @@ import { cloneDynamicsProfile, dynamicsVerdict } from "./dynamics/workflow.ts";
 import { measuredCompression } from "./dynamics/fit.ts";
 import { detectDistortion, distortionPlanner } from "./distortion/plan.ts";
 import { cloneDistortionProfile, distortionVerdict } from "./distortion/workflow.ts";
-import { delayPlanner, detectDelay } from "./delay/plan.ts";
+import { delayPlanner, detectDelay, detectModulation, modulationPlanner } from "./delay/plan.ts";
 import { cloneDelayProfile, delayVerdict } from "./delay/workflow.ts";
 import { detectReverb, reverbPlanner } from "./reverb/plan.ts";
 import { cloneReverbProfile, reverbVerdict } from "./reverb/workflow.ts";
 
-export type EffectClass = "eq" | "dynamics" | "distortion" | "delay" | "reverb";
-export const EFFECT_CLASSES: EffectClass[] = ["eq", "dynamics", "distortion", "delay", "reverb"];
+export type EffectClass = "eq" | "dynamics" | "distortion" | "delay" | "modulation" | "reverb";
+export const EFFECT_CLASSES: EffectClass[] = ["eq", "dynamics", "distortion", "delay", "modulation", "reverb"];
 
 /**
  * Effect class of a plugin – the same order as the app uses: EQ (band parameters), compressor
@@ -34,6 +34,12 @@ export function classifyPlugin(info: Pick<HostInfo, "parameters" | "plugin"> & P
     return { effectClass: "delay", reason: "Delay detected" };
   } catch {
     // not a delay: the other classes follow
+  }
+  try {
+    detectModulation(info.parameters, info.plugin.category, info.plugin.name);
+    return { effectClass: "modulation", reason: "Chorus, flanger or vibrato detected" };
+  } catch {
+    // not a modulated delay
   }
   try {
     detectReverb(info.parameters, info.plugin.category, info.plugin.name);
@@ -232,7 +238,7 @@ async function runOne(entry: Pick<PluginEntry, "path" | "name" | "format">, opti
 
     row.stage = "capture";
     const profilePath = join(options.outputDir, "profiles", `${slug}.vcprofile`);
-    const planner = { eq: eqPlanner, dynamics: dynamicsPlanner, distortion: distortionPlanner, delay: delayPlanner, reverb: reverbPlanner }[options.effectClass];
+    const planner = { eq: eqPlanner, dynamics: dynamicsPlanner, distortion: distortionPlanner, delay: delayPlanner, modulation: modulationPlanner, reverb: reverbPlanner }[options.effectClass];
     await capture({
       plugin: entry.path,
       output: profilePath,
@@ -275,7 +281,7 @@ async function runOne(entry: Pick<PluginEntry, "path" | "name" | "format">, opti
         };
       }
       if (result.gui) row.gui = { controls: result.gui.controls, ...(result.gui.comparison ? { similarity: result.gui.comparison.similarity } : {}) };
-    } else if (options.effectClass === "delay") {
+    } else if (options.effectClass === "delay" || options.effectClass === "modulation") {
       const result = await cloneDelayProfile(common);
       const v = result.verify;
       if (v) {

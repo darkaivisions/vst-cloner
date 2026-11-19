@@ -12,9 +12,9 @@ interface SegmentSpec {
   params?: Record<string, number>;
 }
 
-export type SignalPreset = "full" | "eq" | "dynamics" | "distortion" | "delay" | "reverb" | "neural";
+export type SignalPreset = "full" | "eq" | "dynamics" | "distortion" | "delay" | "modulation" | "reverb" | "neural";
 
-export const SIGNAL_PRESETS: SignalPreset[] = ["full", "eq", "dynamics", "distortion", "delay", "reverb", "neural"];
+export const SIGNAL_PRESETS: SignalPreset[] = ["full", "eq", "dynamics", "distortion", "delay", "modulation", "reverb", "neural"];
 
 /** Short sequence for linear, time-invariant effects (EQs, filters): impulse response + sweep as cross-check. */
 export function eqSegmentSpecs(sampleRate: number): SegmentSpec[] {
@@ -109,6 +109,24 @@ export function delaySegmentSpecs(seed = 1): SegmentSpec[] {
   ];
 }
 
+/** spacing of the clicks for modulated delays: longer than the longest chorus delay, short enough to follow an LFO */
+export const CLICK_PERIOD_SECONDS = 0.04;
+
+/**
+ * Sequence for chorus, flanger, vibrato (a delay whose time an LFO moves): the delay sequence – impulse with its
+ * silence (level, colour, feedback), noise – and a train of clicks, one every 40 ms for 5 s: the time of each
+ * click's repeat traces the LFO (rate, depth, phase).
+ */
+export function modulationSegmentSpecs(seed = 1): SegmentSpec[] {
+  return [
+    { id: "lead", kind: "silence", seconds: 0.1 },
+    { id: "impulse", kind: "impulse", seconds: 1.5, params: { amplitude: 0.5 } },
+    { id: "clicks", kind: "clicks", seconds: 5, params: { periodSeconds: CLICK_PERIOD_SECONDS, amplitude: 0.5 } },
+    { id: "noise", kind: "noise", seconds: 0.25, params: { seed, rmsDb: -18 } },
+    { id: "gap-1", kind: "silence", seconds: 0.5 },
+  ];
+}
+
 /**
  * Sequence for reverbs: one impulse and its tail. Nothing else – a tail is noise, which no compression makes
  * smaller, so every further second costs its full size in the profile.
@@ -148,6 +166,7 @@ export function segmentSpecs(preset: SignalPreset, sampleRate: number, seed = 1)
   if (preset === "eq") return eqSegmentSpecs(sampleRate);
   if (preset === "reverb") return reverbSegmentSpecs();
   if (preset === "delay") return delaySegmentSpecs(seed);
+  if (preset === "modulation") return modulationSegmentSpecs(seed);
   if (preset === "distortion") return distortionSegmentSpecs(sampleRate, seed);
   if (preset === "dynamics") return dynamicsSegmentSpecs(sampleRate, seed);
   return defaultSegmentSpecs(sampleRate, seed);
@@ -200,6 +219,14 @@ function renderSegment(segment: Segment, sampleRate: number, out: Float32Array):
     case "impulse":
       out[o] = param(segment, "amplitude");
       return;
+
+    case "clicks": {
+      // an impulse every `periodSeconds`, starting at the segment's start
+      const period = Math.max(1, Math.round(param(segment, "periodSeconds") * sampleRate));
+      const amplitude = param(segment, "amplitude");
+      for (let i = 0; i < n; i += period) out[o + i] = amplitude;
+      return;
+    }
 
     case "logSweep": {
       const f1 = param(segment, "f1");

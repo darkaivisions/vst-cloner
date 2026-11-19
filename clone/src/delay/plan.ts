@@ -46,6 +46,29 @@ export function detectDelay(parameters: Parameter[], category = "", name = ""): 
   return { roles, other };
 }
 
+const MODULATION_NAME = /chorus|flang|vibrat|ensemble|dimension|doubler/i;
+/** modulation effects the model (one delay line moved by one LFO) cannot represent */
+const NOT_A_MODULATED_DELAY = /phas|trem|rotar|leslie|ring|pitch|reverb/i;
+
+/**
+ * Recognises a chorus, flanger or vibrato (one delay line whose time an LFO moves) by its category or name. The
+ * roles are those of a delay; a time control is not required (many have only rate and depth).
+ */
+export function detectModulation(parameters: Parameter[], category = "", name = ""): DelayMapping {
+  if (!MODULATION_NAME.test(category) && !MODULATION_NAME.test(name)) throw new NotDelayError("Neither category nor name point to a chorus, flanger or vibrato");
+  if (NOT_A_MODULATED_DELAY.test(name)) throw new NotDelayError(`"${name}" is no modulated delay (phaser, tremolo, rotary …)`);
+  const roles: DelayMapping["roles"] = {};
+  const other: number[] = [];
+  for (const p of parameters) {
+    if (!p.automatable || p.meta || IGNORED.test(p.name)) continue;
+    const role = ROLE_PATTERNS.find(([r, pattern]) => roles[r] === undefined && pattern.test(p.name))?.[0];
+    if (role) roles[role] = p.index;
+    else other.push(p.index);
+  }
+  if (roles.time === undefined && other.length === 0) throw new NotDelayError("No controls to measure");
+  return { roles, other };
+}
+
 /** combinations measured for the fit: how several time controls work together (see fitDelay) */
 export const DELAY_COMBINATIONS = 12;
 
@@ -74,10 +97,10 @@ const ENOUGH_ECHO_DB = -30;
  * Working point: a delay that starts fully dry (or with its level at zero) shows nothing of its time, feedback
  * and filter controls. The probe opens the mix control until echoes are heard.
  */
-export function delayProbe(parameters: Parameter[], category = "", name = ""): CaptureProbe | undefined {
+export function delayProbe(parameters: Parameter[], category = "", name = "", detect = detectDelay): CaptureProbe | undefined {
   let mapping: DelayMapping;
   try {
-    mapping = detectDelay(parameters, category, name);
+    mapping = detect(parameters, category, name);
   } catch {
     return undefined;
   }
@@ -106,7 +129,7 @@ const MAX_POSITIONS = 24;
  * Model values (packed, see packDelay) that differ by less are the same position: 0.1 % in time, 0.05 dB, 0.5 % in
  * frequency. Tight, because a position repeats its effect exactly while a slow control only nearly does.
  */
-const SAME = [0.001, 0.05, 0.05, 0.05, 0.005, 0.005, 0.005, 0.005];
+const SAME = [0.001, 0.05, 0.05, 0.05, 0.005, 0.005, 0.005, 0.005, 0.01, 0.005, 0.05];
 
 /**
  * Positions of a control from what it does at evenly spaced values: runs of values with the same effect. A
@@ -178,6 +201,17 @@ export function delaySurvey(parameters: Parameter[], options: PlanOptions, categ
     },
   };
 }
+
+/** Chorus, flanger, vibrato: the delay's measurement plus a train of clicks for the LFO (see modulationSegmentSpecs). */
+export const modulationPlanner: CapturePlanner = {
+  name: "modulation",
+  signalPreset: "modulation",
+  plan: (info: HostInfo, options: PlanOptions) => {
+    const mapping = detectModulation(info.parameters, info.plugin.category, info.plugin.name);
+    return { ...planSweeps(info.parameters, { ...DEFAULT_PLAN, ...options }, IGNORED, { switches: true, combinations: DELAY_COMBINATIONS, plateaus: true }), mapping };
+  },
+  probe: (info: HostInfo) => delayProbe(info.parameters, info.plugin.category, info.plugin.name, detectModulation),
+};
 
 export const delayPlanner: CapturePlanner = {
   name: "delay",

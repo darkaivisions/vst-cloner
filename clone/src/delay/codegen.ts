@@ -3,7 +3,7 @@ import { cppNumber, cppString, parameterLines } from "../eq/codegen.ts";
 import type { CloneParam } from "../eq/params.ts";
 import { dynamicsCloneParameters } from "../dynamics/params.ts";
 import type { DelayModel, DelayTables } from "./fit.ts";
-import { packDelay } from "./model.ts";
+import { NUM_DELAY_PACKED, packDelay } from "./model.ts";
 
 /** Generates CloneModel.h for plugin-template/delay. */
 export function generateDelayHeader(
@@ -38,10 +38,13 @@ export function generateDelayHeader(
   ];
   models.forEach((m, k) => {
     const baseValue = new Map(m.tables.baseValues.map((v) => [v.index, v.value]));
+    // tables of models fitted before the LFO have fewer values: the missing ones do not move
+    const basePacked = packDelay(m.tables.base);
+    const full = (packed: number[]) => (packed.length >= NUM_DELAY_PACKED ? packed : [...packed, ...basePacked.slice(packed.length)]);
     lines.push(`// model ${k}: ${m.comment}`, `inline constexpr double basePacked${k}[vch::numPacked] = { ${list(packDelay(m.tables.base))} };`);
     m.tables.tables.forEach((t, i) => {
       lines.push(`inline const double tableValues${k}_${i}[] = { ${list(t.points.map((p) => p.value))} };`);
-      lines.push(`inline const double tablePacked${k}_${i}[] = { ${list(t.points.flatMap((p) => p.packed))} };`);
+      lines.push(`inline const double tablePacked${k}_${i}[] = { ${list(t.points.flatMap((p) => full(p.packed)))} };`);
     });
     if (m.tables.tables.length === 0) lines.push(`inline const vch::ParamTable* const tables${k} = nullptr;`);
     else {
@@ -56,7 +59,7 @@ export function generateDelayHeader(
   lines.push("inline const vch::DelayModelData models[] =", "{");
   models.forEach((m, k) => {
     const s = m.tables.structure;
-    lines.push(`    { ${m.condition}, basePacked${k}, tables${k}, ${m.tables.tables.length}, { ${cppNumber(s.drySign)}, ${cppNumber(s.wetSign)}, ${cppNumber(s.feedbackSign)} }, ${m.tables.timeRule === "sum"} }, // ${m.comment}`);
+    lines.push(`    { ${m.condition}, basePacked${k}, tables${k}, ${m.tables.tables.length}, { ${cppNumber(s.drySign)}, ${cppNumber(s.wetSign)}, ${cppNumber(s.feedbackSign)}, ${cppNumber(s.modLead ?? 0)} }, ${m.tables.timeRule === "sum"} }, // ${m.comment}`);
   });
   lines.push("};", `inline constexpr int numModels = ${models.length};`, "} // namespace clonemodel", "");
   return { header: lines.join("\n"), params };

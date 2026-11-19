@@ -237,7 +237,13 @@ vst-cloner/
      - Open for EQs: high/low-pass of x42-eq (1.7 dB – the shape depends on the frequency), 24 dB slopes of
        MultiEQ (0.3 dB), ZamEQ2 (NaN in the capture host), EQs with controls without a dB display (Luftikus, EQinox) and
        crossover EQs (3 Band EQ) get no class
-   - **6b Modulation** – chorus, flanger, phaser, tremolo
+   - **6b Modulation** ← in progress – chorus, flanger, vibrato as the delay engine with an LFO on the delay time
+     (`--class modulation`): a train of clicks (one every 40 ms) traces the LFO; centre, depth, rate per setting,
+     delays beyond the click spacing unfolded with the impulse response, the LFO's start (phase, lead before the
+     pre-roll) across all renders, then calibrated by measuring the model like the original. GxChorus: 4.0 dB
+     clone vs. original (15 before the calibration), single controls 2.8 dB; the comparison aligns the LFO phase.
+     Open: very fast and deep settings (9 Hz, 25 ms) let the repeats overtake each other – the clicks cannot follow
+     them; phaser (allpass chain) and tremolo (the network already reaches 1 %) are not covered
 7. **Universal clone (path B)** ← in progress – first version in CLI and app ✔
    - Capture plan `neural`, training (`dsp/neural/train.py`, PyTorch, CUDA), C++ template with the same network
      (~5 % of a core per channel), sample-rate adapter (other host rates, anti-alias filters, latency reported),
@@ -279,6 +285,14 @@ vst-cloner/
      800 settings (50 per control), the network stays at 64 units
    - Training no longer aborts on divergence: a batch with a non-finite gradient is skipped (ZamGate, gx_compressor
      had failed after 8 resets), and should it still keep diverging the best state so far is kept
+   - Outliers of the typical-good clones share a cause: ZynDistortion at high drive + level + little high-pass (hard,
+     loud clipping), ZamGate in "shut" mode with deep attenuation (hard switching). Drawing such settings more
+     often in training (--focus 0.5) made both worse (median 2.2 → 4.2 %, 4.2 → 7.9 %) – removed again
+   - Class engine or network ✔ – `vch compare` renders several clones with the settings of one profile and measures
+     them alike, `vch best` clones a plugin both ways and keeps the better. The measure is the spectral deviation
+     (third-octave levels in 85 ms frames, phase-blind, 40 dB floor: gxts9 at 0.65 % ESR shows 0.9 dB); the ESR
+     prefers a network that leaves out the echoes. ZamDelay: delay engine 6.6 dB vs. network 13.2 dB, MVerb:
+     reverb engine 3.3 vs. 9.7 dB, GxChorus: modulation engine 1.8 vs. 2.2 dB
    - Open: Tal-Filter-2 (its modulation follows a drawn curve stored in the plugin state – flat in the
      initial state, not a parameter), ZamComp (attack/release of a compressor, 21 %), wow/flutter/hiss of gxtape cannot match
      sample by sample

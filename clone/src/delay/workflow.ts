@@ -1,3 +1,4 @@
+import { modActive } from "./model.ts";
 import { join } from "node:path";
 import { readProfile, writeProfile, type Profile } from "@vst-cloner/profile";
 import { strFromU8, strToU8 } from "fflate";
@@ -13,7 +14,7 @@ export const DELAY_MODEL_FILE = "model/delay.json";
 export const DELAY_FIT_REVISION = 2; // 2: models per switch position
 
 export function isDelayProfile(profile: Profile): boolean {
-  return profile.manifest.capture.plan?.planner === "delay" || profile.files.has(DELAY_MODEL_FILE);
+  return profile.manifest.capture.plan?.planner === "delay" || profile.manifest.capture.plan?.planner === "modulation" || profile.files.has(DELAY_MODEL_FILE);
 }
 
 export function storedDelayModel(profile: Profile): DelayModel | undefined {
@@ -36,6 +37,7 @@ export function formatDelayModel(model: DelayModel): string[] {
   const lines = [
     `Delay: ${(p.delaySeconds * 1000).toFixed(1)} ms, Feedback ${level(p.feedbackDb)}, dry ${level(p.dryDb)}, echo ${level(p.wetDb)} (${model.report.echoes} repeats measured)`,
     `Tone: echo – ${filter(p.wetLp, p.wetHp)}; feedback loop – ${filter(p.loopLp, p.loopHp)}`,
+    ...(modActive(p) ? [`LFO: delay moves by ±${(p.modDepthSeconds! * 1000).toFixed(2)} ms at ${p.modRate!.toFixed(2)} Hz`] : []),
     `Parameter: ${model.tables.map((t) => t.name).join(", ")}`,
   ];
   if (model.variants?.length) lines.push(`Separate model for switch positions: ${model.variants.map((v) => v.name).join(", ")}`);

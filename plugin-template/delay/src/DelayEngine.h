@@ -13,21 +13,24 @@ namespace vch
 {
 
 /** packed model values: ln delay (s), dry, wet, feedback (dB), ln of loop low-pass, loop high-pass, wet low-pass,
-    wet high-pass (Hz) – see packDelay() in clone/src/delay/model.ts */
-constexpr int numPacked = 8;
+    wet high-pass (Hz), ln LFO depth (s), ln LFO rate (Hz), LFO phase (rad) – see packDelay() in
+    clone/src/delay/model.ts */
+constexpr int numPacked = 11;
 
 constexpr double offDb = -80.0, lpOff = 20000.0, hpOff = 20.0, maxDelaySeconds = 10.0, maxFeedbackDb = -0.1;
+constexpr double modOff = 1e-6, maxModDepthSeconds = 0.05;
 
 struct DelayParams
 {
     double delaySeconds = 0.25, dryDb = 0, wetDb = offDb, feedbackDb = offDb;
     double loopLp = lpOff, loopHp = hpOff, wetLp = lpOff, wetHp = hpOff;
+    double modDepthSeconds = modOff, modRate = 1, modPhase = 0;
 };
 
-/** polarities (±1) */
+/** polarities (±1); modLead: samples the LFO ran before its reset point (DelayStructure in model.ts) */
 struct DelayStructure
 {
-    double drySign = 1, wetSign = 1, feedbackSign = 1;
+    double drySign = 1, wetSign = 1, feedbackSign = 1, modLead = 0;
 };
 
 /** One model: the main one (switchParam −1) or the model for one position of a switch (see DelayVariant in
@@ -56,6 +59,9 @@ inline DelayParams unpack (const double* x)
     p.loopHp = std::clamp (std::exp (x[5]), hpOff, 20000.0);
     p.wetLp = std::clamp (std::exp (x[6]), 20.0, lpOff);
     p.wetHp = std::clamp (std::exp (x[7]), hpOff, 20000.0);
+    p.modDepthSeconds = std::clamp (std::exp (x[8]), modOff, maxModDepthSeconds);
+    p.modRate = std::clamp (std::exp (x[9]), 0.01, 50.0);
+    p.modPhase = x[10];
     return p;
 }
 
@@ -65,15 +71,18 @@ inline double delayGain (double db) { return db <= offDb + 0.5 ? 0.0 : std::pow 
 /** Coefficients of processDelay() in model.ts for one set of model values. */
 struct DelayCoeffs
 {
-    int whole = 1;
-    double frac = 0, dry = 1, wet = 0, feedback = 0;
+    double centre = 1, depth = 0, omega = 0, phase = 0; // delay (samples) = centre + depth · sin(phase + ω · n)
+    double dry = 1, wet = 0, feedback = 0;
     double loopLp = -1, loopHp = -1, wetLp = -1, wetHp = -1; // one-pole coefficients, −1 = bypassed
 
     void design (const DelayParams& p, const DelayStructure& s, double sampleRate)
     {
-        const double delay = std::clamp (p.delaySeconds * sampleRate, 1.0, maxDelaySeconds * sampleRate);
-        whole = (int) std::floor (delay);
-        frac = delay - whole;
+        constexpr double twoPi = 2.0 * 3.14159265358979323846;
+        centre = std::clamp (p.delaySeconds * sampleRate, 1.0, maxDelaySeconds * sampleRate);
+        depth = p.modDepthSeconds > modOff * 1.01 ? std::min (p.modDepthSeconds, maxModDepthSeconds) * sampleRate : 0.0;
+        omega = twoPi * p.modRate / sampleRate;
+        // the phase the LFO has at the reset point (it ran modLead samples before it)
+        phase = p.modPhase + omega * s.modLead;
         dry = s.drySign * delayGain (p.dryDb);
         wet = s.wetSign * delayGain (p.wetDb);
         feedback = s.feedbackSign * delayGain (p.feedbackDb);
@@ -91,7 +100,7 @@ class DelayLine
 public:
     void prepare (double sampleRate)
     {
-        line.assign ((size_t) std::ceil (maxDelaySeconds * sampleRate) + 4, 0.0);
+        line.assign ((size_t) std::ceil ((maxDelaySeconds + maxModDepthSeconds) * sampleRate) + 4, 0.0);
         reset();
     }
 
@@ -100,16 +109,23 @@ public:
         std::fill (line.begin(), line.end(), 0.0);
         loopLow = loopHigh = wetLow = wetHigh = 0.0;
         write = 0;
+        lfo = 0.0;
     }
 
     double process (double x, const DelayCoeffs& c)
     {
         const int size = (int) line.size();
-        int read = write - c.whole;
+        // the LFO moves the delay time; `lfo` is ω · (samples since the reset), so a changed rate does not jump
+        const double delay = c.depth > 0 ? std::max (1.0, c.centre + c.depth * std::sin (c.phase + lfo)) : c.centre;
+        lfo += c.omega;
+        if (lfo > 1e6) lfo = std::fmod (lfo, 2.0 * 3.14159265358979323846);
+        const int whole = (int) std::floor (delay);
+        const double frac = delay - whole;
+        int read = write - whole;
         if (read < 0) read += size;
         const int before = read == 0 ? size - 1 : read - 1;
         // linear interpolation between the samples `whole` and `whole + 1` steps back
-        const double tap = line[(size_t) read] * (1.0 - c.frac) + line[(size_t) before] * c.frac;
+        const double tap = line[(size_t) read] * (1.0 - frac) + line[(size_t) before] * frac;
         double f = tap;
         if (c.loopLp >= 0) { loopLow += (1.0 - c.loopLp) * (f - loopLow); f = loopLow; }
         if (c.loopHp >= 0) { loopHigh += (1.0 - c.loopHp) * (f - loopHigh); f -= loopHigh; }
@@ -123,7 +139,7 @@ public:
 
 private:
     std::vector<double> line;
-    double loopLow = 0, loopHigh = 0, wetLow = 0, wetHigh = 0;
+    double loopLow = 0, loopHigh = 0, wetLow = 0, wetHigh = 0, lfo = 0;
     int write = 0;
 };
 

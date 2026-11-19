@@ -6,7 +6,7 @@ import { decodeWav, encodeWav, type Profile } from "@vst-cloner/profile";
 import type { Logger } from "../build.ts";
 import type { Errors } from "../dynamics/fit.ts";
 import { cloneValue, dynamicsCloneParameters, modelValue } from "../dynamics/params.ts";
-import { compareResponses, delayInput, delayObservations, delayResponse, modelResponse, predictDelayModel, type DelayModel } from "./fit.ts";
+import { clicksResponse, compareAnswers, delayInput, delayObservations, delayResponse, modelAnswer, predictDelayModel, type DelayModel } from "./fit.ts";
 
 export interface DelayVerifyReport {
   clone: string;
@@ -55,7 +55,8 @@ export async function verifyDelayClone(
     sampleRate,
     blockSize: profile.manifest.capture.blockSize,
     channels: 1,
-    prerollSeconds: 0.1,
+    // the pre-roll of the capture: an LFO is then in the same phase as the original's when the input begins
+    prerollSeconds: profile.manifest.capture.prerollSeconds,
     tailSeconds: profile.manifest.capture.tailSeconds,
     input: "input.wav",
     renders: renders.map((r) => ({
@@ -80,11 +81,13 @@ export async function verifyDelayClone(
       const output = decodeWav(await readFile(join(workDir, "out", `${o.renderId}.wav`))).channels[0]!;
       const response = delayResponse(output, input);
       if (response.some((v) => !Number.isFinite(v))) throw new Error(`The clone gives no valid signal (NaN/inf) at "${o.label}"`);
-      rows.push({ label: o.label, purpose: o.purpose, errors: compareResponses(response, o.response, sampleRate) });
+      const clicks = clicksResponse(output, input);
+      const answer = { response, ...(clicks ? { clicks } : {}) };
+      rows.push({ label: o.label, purpose: o.purpose, errors: compareAnswers(answer, o, input) });
 
       // reference: the TypeScript model (exactly what the plugin must do)
       const predicted = predictDelayModel(model, new Map(o.params.map((p) => [p.index, asModel.get(p.index)?.(p.value) ?? p.value])));
-      const engine = compareResponses(response, modelResponse(predicted.params, predicted.structure, input), sampleRate);
+      const engine = compareAnswers(answer, modelAnswer(predicted.params, predicted.structure, input), input);
       if (engine.maxDb > engineMaxDb) {
         engineMaxDb = engine.maxDb;
         engineWorst = o.label;

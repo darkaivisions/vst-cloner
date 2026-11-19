@@ -193,7 +193,8 @@ error-to-signal ratio over all settings: the energy of the difference against th
 
 In the app, **Universal** is the measurement mode for every plugin without a known effect class; the training
 environment can be set up from there. Known limits: effects with a long memory (reverb tails, delays above a few
-hundred milliseconds) and time-variant effects (LFO modulation) are beyond a network of this size; stereo effects
+hundred milliseconds) and modulated delays (chorus, flanger) are beyond a network of this size – for those the
+class engines are better, and `vch best` picks between them (below); stereo effects
 that treat the channels differently are cloned as mono (one network for both channels); at most 24 controls are
 followed, the rest stay at their default.
 
@@ -221,8 +222,29 @@ npm run vch -- clone my-delay.vcprofile -o ./my-delay-clone
   a pre-delay that reproduces the decay as it sounds: level and decay time in three bands,
   dry level, onset of the decay. The comparison uses the decay curves per band.
 
+- **Chorus, flanger, vibrato** (`--class modulation`): the delay measurement plus a train of clicks, one every
+  40 ms for 5 s. The time of each click's repeat traces the LFO that moves the delay time: centre, depth, rate and
+  phase are fitted per setting (delays longer than the click spacing are unfolded with the impulse response), and
+  the LFO's start is found across all renders. The clone is the delay engine with that LFO. The comparison
+  aligns the LFO's phase – where an LFO stands when the music starts is inaudible.
+
 Switches with up to four positions get a model of their own per position when that matches the cross-check
 clearly better (dynamics and delay).
+
+### Class engine or network: `vch best`
+
+```bash
+npm run vch -- best /usr/lib/lv2/SomeChorus.lv2 -o ./some-chorus [--minutes 20] [--install]
+npm run vch -- compare reference.vcprofile a.vcprofile "A Clone.lv2" b.vcprofile "B Clone.lv2"
+```
+
+`vch best` recognises the class of a plugin, clones it with that class's engine and as a universal clone, renders
+both with the same settings (those of the network's measurement: all controls at random) and keeps the one that
+sounds closer to the original. The measure is the **spectral deviation**: level differences of third-octave bands
+in frames of 85 ms, in dB, which ignores the phase – a reverb whose tail differs sample by sample but sounds the
+same is not counted as wrong. The error-to-signal ratio is shown next to it. On ZamDelay the delay engine wins
+(6.6 against 13.2 dB: the network hardly makes echoes), on MVerb the reverb engine (3.3 against 9.7 dB), on
+GxChorus the modulation engine (1.8 against 2.2 dB). `vch compare` does the comparison for clones that exist already.
 
 ### All plugins of a class (batch)
 
@@ -230,7 +252,7 @@ clearly better (dynamics and delay).
 npm run vch -- batch --class dynamics -o ./batch-dynamics [--match <regex>] [--limit <n>] [--gui]
 ```
 
-Measures and clones every installed plugin of the class (`eq`, `dynamics`, `distortion`, `delay`, `reverb`)
+Measures and clones every installed plugin of the class (`eq`, `dynamics`, `distortion`, `delay`, `modulation`, `reverb`)
 without installing anything: 60 s time limit for loading, 15 min per plugin, one log per plugin,
 `report.md`/`report.json` after every plugin. A new run continues where the last one stopped. The report also names which
 plugins were assigned to another class or to none, and which could not be loaded.

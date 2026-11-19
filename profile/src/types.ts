@@ -65,7 +65,7 @@ export interface ParameterSet {
   parameters: Parameter[];
 }
 
-export type SegmentKind = "silence" | "impulse" | "logSweep" | "noise" | "levelSteps" | "toneBurst";
+export type SegmentKind = "silence" | "impulse" | "logSweep" | "noise" | "levelSteps" | "toneBurst" | "clicks";
 
 export interface Segment {
   id: string;

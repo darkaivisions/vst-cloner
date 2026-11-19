@@ -19,7 +19,7 @@
         "required": ["id", "kind", "start", "length"],
         "properties": {
           "id": { "type": "string" },
-          "kind": { "enum": ["silence", "impulse", "logSweep", "noise", "levelSteps", "toneBurst"] },
+          "kind": { "enum": ["silence", "impulse", "logSweep", "noise", "levelSteps", "toneBurst", "clicks"] },
           "start": { "type": "integer", "minimum": 0 },
           "length": { "type": "integer", "minimum": 1 },
           "params": { "type": "object" }

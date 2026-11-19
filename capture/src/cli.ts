@@ -216,9 +216,10 @@ async function loadPlanner(name: string | undefined): Promise<CapturePlanner | u
   if (name === "dynamics") return (await import("@vst-cloner/clone")).dynamicsPlanner;
   if (name === "distortion") return (await import("@vst-cloner/clone")).distortionPlanner;
   if (name === "delay") return (await import("@vst-cloner/clone")).delayPlanner;
+  if (name === "modulation") return (await import("@vst-cloner/clone")).modulationPlanner;
   if (name === "reverb") return (await import("@vst-cloner/clone")).reverbPlanner;
   if (name === "neural") return (await import("@vst-cloner/clone")).neuralPlanner;
-  throw new UsageError(`unknown --class '${name}' (available: eq, dynamics, distortion, delay, reverb, neural)`);
+  throw new UsageError(`unknown --class '${name}' (available: eq, dynamics, distortion, delay, modulation, reverb, neural)`);
 }
 
 async function commandCapture(positionals: string[], values: Values): Promise<void> {
