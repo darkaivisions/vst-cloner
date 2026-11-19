@@ -173,15 +173,22 @@ export interface Display {
   dbLabelRight?: number;
   needle?: Needle;
   bar?: LevelBar;
+  /** what a generic display shows, where it is known: a compressor's transfer curve, an analyzer or time graph */
+  role?: "curve" | "analyzer";
 }
 
 /** Vertical level bar: filled from the bottom of the display box (`fromDb`) to the level, the top is `toDb`. */
 export interface LevelBar {
-  /** what the bar shows: input peak level (dBFS) */
-  source: "input";
+  /** what the bar shows: input or output peak level (dBFS), or gain reduction (dB) */
+  source: "input" | "output" | "reduction";
+  /** value at the origin and at the far end */
   fromDb: number;
   toDb: number;
   color: string;
+  /** where the bar starts and grows from (missing: a vertical bar from the bottom) */
+  origin?: "bottom" | "top" | "left" | "right";
+  /** LED chain: number of segments over the whole length */
+  segments?: number;
 }
 
 export interface GuiModel {

@@ -36,8 +36,11 @@ export interface GuiProbe {
   base2: string;
   visible: ProbedParameter[];
   invisible: number[];
-  /** editor while a 1 kHz sine of the given level runs through the plugin (level meters) */
-  meter?: { levelDb: number; file: string }[];
+  /**
+   * editor while a 1 kHz sine of the given level runs through the plugin (level meters); entries with `params` were
+   * taken with those parameter values (threshold turned down, so that a gain reduction meter moves)
+   */
+  meter?: { levelDb: number; file: string; params?: { index: number; value: number }[] }[];
 }
 
 const MAX_CANDIDATES = 200;
@@ -223,7 +226,13 @@ export async function probeGui(options: ProbeOptions): Promise<GuiProbe> {
     // level meters only move with audio: fresh instance, rising levels
     let meter: GuiProbe["meter"];
     if (options.meterLevels?.length) {
-      const steps: GuiStep[] = options.meterLevels.map((levelDb, k) => ({ id: `meter${k}`, params: [], audio: { frequency: 1000, levelDb } }));
+      // a compressor at its initial threshold may not compress a sine at all: the levels again with the threshold
+      // turned down, so that its gain reduction meter moves
+      // (every threshold: an editor may hold several compressors)
+      const thresholds = options.parameters.filter((p) => p.automatable && /thresh/i.test(p.name) && !/hyster|zone|boost|release/i.test(p.name) && baseValue(p) > 0.2).slice(0, 8);
+      const turnedDown = thresholds.map((p) => ({ index: p.index, value: 0.15 }));
+      const series = [{ id: "meter", params: [] as { index: number; value: number }[] }, ...(turnedDown.length ? [{ id: "meterT", params: turnedDown }] : [])];
+      const steps: GuiStep[] = series.flatMap((s) => options.meterLevels!.map((levelDb, k) => ({ id: `${s.id}${k}`, params: s.params, audio: { frequency: 1000, levelDb } })));
       const third = await runGuiSnapshot({
         plugin: options.plugin,
         ...(options.identifier ? { identifier: options.identifier } : {}),
@@ -234,7 +243,7 @@ export async function probeGui(options: ProbeOptions): Promise<GuiProbe> {
         onShot: (_, done) => options.onProgress?.(done, steps.length, "Pegelanzeige aufzeichnen"),
       });
       if (third.width === width && third.height === height) {
-        meter = options.meterLevels.map((levelDb, k) => ({ levelDb, file: third.shots.get(`meter${k}`)!.file }));
+        meter = series.flatMap((s) => options.meterLevels!.map((levelDb, k) => ({ levelDb, file: third.shots.get(`${s.id}${k}`)!.file, ...(s.params.length ? { params: s.params } : {}) })));
       }
     }
 

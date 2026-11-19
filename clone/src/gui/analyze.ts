@@ -17,7 +17,7 @@ import {
   type Image,
   type Rgb,
 } from "./image.ts";
-import type { Circle, Control, Display, Fill, GuiModel, Line, Needle, Panel, Readout, RotaryStyle, TextItem } from "./model.ts";
+import type { Circle, Control, Display, Fill, GuiModel, LevelBar, Line, Needle, Panel, Readout, RotaryStyle, TextItem } from "./model.ts";
 import type { GuiProbe, ProbedParameter } from "./probe.ts";
 import { findTesseract, plausibleText, recognizeBlocks } from "./ocr.ts";
 
@@ -1436,19 +1436,20 @@ function principalAxis(points: [number, number][]): { cx: number; cy: number; dx
  */
 async function analyzeMeter(probe: GuiProbe, noise: Uint8Array, reduction: (levelDb: number) => number): Promise<Display | undefined> {
   const { width, height } = probe;
-  if (!probe.meter || probe.meter.length < 3) return undefined;
-  const shots = await Promise.all(probe.meter.map((m) => loadRaw(m.file, width, height)));
+  const series = probe.meter?.filter((m) => !m.params);
+  if (!series || series.length < 3) return undefined;
+  const shots = await Promise.all(series.map((m) => loadRaw(m.file, width, height)));
   const rest = shots[0]!;
   const changes = shots.slice(1).map((s) => diffMask(s, rest, 40, noise));
   const restMask = new Uint8Array(width * height);
   for (let p = 0; p < restMask.length; p++) restMask[p] = changes.every((c) => c[p]) ? 1 : 0;
   const all = (m: Uint8Array) => maskPoints(m, width, { x: 0, y: 0, w: width, h: height });
 
-  const positions: { levelDb: number; points: [number, number][] }[] = [{ levelDb: probe.meter[0]!.levelDb, points: all(restMask) }];
+  const positions: { levelDb: number; points: [number, number][] }[] = [{ levelDb: series[0]!.levelDb, points: all(restMask) }];
   changes.forEach((c, k) => {
     const m = new Uint8Array(c.length);
     for (let p = 0; p < m.length; p++) m[p] = c[p] && !restMask[p] ? 1 : 0;
-    positions.push({ levelDb: probe.meter![k + 1]!.levelDb, points: all(m) });
+    positions.push({ levelDb: series[k + 1]!.levelDb, points: all(m) });
   });
   const lines = positions.filter((p) => p.points.length >= 20).map((p) => ({ ...p, axis: principalAxis(p.points) })).filter((p) => p.axis.elongation > 4);
   if (lines.length < 2) return undefined;
@@ -1467,6 +1468,8 @@ async function analyzeMeter(probe: GuiProbe, noise: Uint8Array, reduction: (leve
   if (pivotX < -width || pivotX > 2 * width || pivotY < -height || pivotY > 2 * height) return undefined;
 
   const angles = lines.map((l) => ({ levelDb: l.levelDb, angle: angleOf(l.axis.cx - pivotX, l.axis.cy - pivotY), points: l.points }));
+  // a needle turns: parallel strokes (rows of LEDs lighting up) meet nowhere near and barely change their angle
+  if (Math.max(...angles.map((a) => a.angle)) - Math.min(...angles.map((a) => a.angle)) < 0.15) return undefined;
   const distances = angles.flatMap((a) => a.points.map((p) => Math.hypot(p[0] - pivotX, p[1] - pivotY)));
   const length = percentile(distances, 0.97);
   const inner = percentile(distances, 0.03);
@@ -1482,6 +1485,8 @@ async function analyzeMeter(probe: GuiProbe, noise: Uint8Array, reduction: (leve
     const xs = a.points.map((p) => p[0]), ys = a.points.map((p) => p[1]);
     return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs) + 1, h: Math.max(...ys) - Math.min(...ys) + 1 };
   })), 4), probe);
+  // a needle sweeps part of an instrument: changes all over the editor are several meters and graphs, not one needle
+  if (area(box) > width * height * 0.25) return undefined;
   const color = hex(dominantAt(shots[shots.length - 1]!, deflected.points));
   const background = ringMedian(rest, pivotX, pivotY, length * 0.6);
 
@@ -1548,52 +1553,154 @@ async function analyzeMeter(probe: GuiProbe, noise: Uint8Array, reduction: (leve
 }
 
 /**
- * Level bars from editor shots with audio of rising levels: tall narrow areas that light up from a fixed bottom
- * edge, higher with every level. The top of the lit area is calibrated linearly in dB of the input peak level.
+ * Level meters from editor shots with audio of rising levels (first shot: silence): areas that light up, go dark
+ * or move with the level and are long and narrow are meters – bars or LED chains, vertical or horizontal, growing
+ * from the end that stays put. One that is lit already at the quietest level shows the input; one that only
+ * moves once the compressor works (or goes dark as a gate opens) shows gain reduction. Large areas that move with
+ * the signal without that shape are analyzers or time graphs.
  */
-async function analyzeBars(probe: GuiProbe, noise: Uint8Array, exclude: Box[]): Promise<Display[]> {
+async function analyzeLevelMeters(probe: GuiProbe, noise: Uint8Array, exclude: Box[], reduction?: (levelDb: number) => number): Promise<Display[]> {
+  const found: Display[] = [];
+  // the plain series first; the one with the threshold turned down adds gain reduction meters that stayed dark
+  const plain = probe.meter?.filter((m) => !m.params) ?? [];
+  const turned = probe.meter?.filter((m) => m.params) ?? [];
+  for (const [series, calibrated] of [[plain, true], [turned, false]] as const) {
+    if (series.length < 3) continue;
+    const shared = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+    for (const d of await levelMetersOf(probe, series, noise, [...exclude, ...found], calibrated ? reduction : undefined)) {
+      if (!found.some((f) => shared(f, d) > Math.min(area(f), area(d)) * 0.3)) found.push(d);
+    }
+  }
+  const displays = found;
+  // a bar that changes colour along its length (green, yellow, red) may fall into pieces: pieces in line join up
+  for (let i = 0; i < displays.length; i++) {
+    for (let j = displays.length - 1; j > i; j--) {
+      const a = displays[i]!, b = displays[j]!;
+      if (!a.bar || !b.bar || a.bar.source !== b.bar.source) continue;
+      const horizontal = a.w > a.h && b.w > b.h, vertical = a.h > a.w && b.h > b.w;
+      const inRow = horizontal && Math.abs(a.y - b.y) <= 3 && Math.abs(a.h - b.h) <= 4 && (b.x <= a.x + a.w + 6 && a.x <= b.x + b.w + 6);
+      const inColumn = vertical && Math.abs(a.x - b.x) <= 3 && Math.abs(a.w - b.w) <= 4 && (b.y <= a.y + a.h + 6 && a.y <= b.y + b.h + 6);
+      if (!inRow && !inColumn) continue;
+      Object.assign(a, union([a, b]));
+      displays.splice(j, 1);
+    }
+  }
+  // flat pieces of a graph's curves along its time axis are no meters
+  const graphs = displays.filter((d) => d.role === "analyzer");
+  return displays.filter((d) => !(d.bar && d.w > d.h && graphs.some((g) => overlaps(g, d, 8))));
+}
+
+/** analyzeLevelMeters for one series of shots (first: silence). */
+async function levelMetersOf(probe: GuiProbe, series: NonNullable<GuiProbe["meter"]>, noise: Uint8Array, exclude: Box[], reduction?: (levelDb: number) => number): Promise<Display[]> {
   const { width, height } = probe;
-  if (!probe.meter || probe.meter.length < 3) return [];
-  const shots = await Promise.all(probe.meter.map((m) => loadRaw(m.file, width, height)));
+  const shots = await Promise.all(series.map((m) => loadRaw(m.file, width, height)));
   const rest = shots[0]!;
-  const changes = shots.slice(1).map((s) => diffMask(s, rest, 40, noise));
-  const all = new Uint8Array(width * height);
-  for (const c of changes) for (let p = 0; p < all.length; p++) if (c[p]) all[p] = 1;
-  // LED segments: close the gaps between them
-  const joined = dilate(all, width, height, 0, 3);
-  const bars: Display[] = [];
-  for (const comp of components(joined, width, height, 30)) {
-    if (comp.h < 15 || comp.w < 2 || comp.h < comp.w * 3) continue;
-    if (exclude.some((b) => overlaps(b, comp))) continue;
-    // top of the lit area per level, the bottom edge is shared
-    const points: [number, number][] = [];
-    let bottom = 0;
-    changes.forEach((c, k) => {
-      let top = height, count = 0;
-      for (let y = comp.y; y < comp.y + comp.h; y++) for (let x = comp.x; x < comp.x + comp.w; x++) {
+  const levels = series.slice(1).map((m) => m.levelDb);
+  const changes = shots.slice(1).map((s) => diffMask(s, rest, 30, noise));
+  const any = new Uint8Array(width * height);
+  for (const c of changes) for (let p = 0; p < any.length; p++) if (c[p]) any[p] = 1;
+  for (const b of exclude) {
+    const c = clampBox(grow(b, 2), rest);
+    for (let y = c.y; y < c.y + c.h; y++) any.fill(0, y * width + c.x, y * width + c.x + c.w);
+  }
+  const displays: Display[] = [];
+  /** thin, sparse changes (curves of a time graph or analyzer): gathered into zones afterwards */
+  const sparse: Box[] = [];
+  // LED segments and the two channels of a stereo meter close up; separate meters stay apart
+  for (const comp of components(dilate(any, width, height, 3, 3), width, height, 20)) {
+    const box = { x: comp.x, y: comp.y, w: comp.w, h: comp.h };
+    let lit = 0;
+    for (let y = box.y; y < box.y + box.h; y++) for (let x = box.x; x < box.x + box.w; x++) lit += any[y * width + x]!;
+    if (lit < 30) continue;
+    if (process.env.VCH_GUI_DEBUG) console.error(`level component ${box.x},${box.y} ${box.w}x${box.h} lit ${lit}`);
+    const vertical = box.h >= box.w;
+    const long = Math.max(box.w, box.h), short = Math.min(box.w, box.h);
+    // extent of the changed pixels along the component, per level
+    const extents = changes.map((c) => {
+      let lo = Infinity, hi = -Infinity, count = 0;
+      for (let y = box.y; y < box.y + box.h; y++) for (let x = box.x; x < box.x + box.w; x++) {
         if (!c[y * width + x]) continue;
-        count++;
-        if (y < top) top = y;
-        if (y > bottom) bottom = y;
+        const t = vertical ? y : x;
+        lo = Math.min(lo, t); hi = Math.max(hi, t); count++;
       }
-      if (count >= comp.w * 2) points.push([probe.meter![k + 1]!.levelDb, top]);
+      return count >= short ? { lo, hi, length: hi - lo + 1, count } : undefined;
     });
-    if (points.length < 2) continue;
-    // rising level must raise the bar
-    if (points.some((p, i) => i > 0 && p[1] > points[i - 1]![1])) continue;
-    const fit = linearFit(points);
-    if (!fit || fit.b > -0.2) continue;
-    const top = Math.max(0, Math.round(fit.a));
-    const fromDb = (bottom + 1 - fit.a) / fit.b;
-    const lit = maskPoints(changes[changes.length - 1]!, width, comp);
-    const color = hex(dominantAt(shots[shots.length - 1]!, lit));
-    bars.push({
-      kind: "bar", x: comp.x, y: top, w: comp.w, h: bottom + 1 - top,
-      background: hex(dominantColor(rest, comp)), grid: color, curve: color, text: color,
-      bar: { source: "input", fromDb, toDb: (top - fit.a) / fit.b, color },
+    const seen = extents.map((e, k) => ({ e, k })).filter((x): x is { e: NonNullable<typeof x.e>; k: number } => x.e !== undefined);
+    // a bar or LED chain fills its lit stretch; the lines of a graph do not
+    const densest = Math.max(0, ...seen.map((s) => s.e.count / (s.e.length * short)));
+    if (long < short * 2.5 || densest < 0.25 || seen.length === 0) {
+      sparse.push(box);
+      continue;
+    }
+    const lengths = seen.map((s) => s.e.length);
+    const rising = lengths.every((l, i) => i === 0 || l >= lengths[i - 1]! - 2);
+    const falling = lengths.every((l, i) => i === 0 || l <= lengths[i - 1]! + 2);
+    if (!rising && !falling) {
+      sparse.push(box);
+      continue;
+    }
+    // the end that stays put is where the bar starts
+    const first = seen[0]!.e, last = seen[seen.length - 1]!.e;
+    const anchoredLow = Math.abs(first.lo - last.lo) <= Math.abs(first.hi - last.hi);
+    const origin: NonNullable<LevelBar["origin"]> = vertical ? (anchoredLow ? "top" : "bottom") : (anchoredLow ? "left" : "right");
+    // lit at the quietest level: it follows the input; otherwise it shows what the compressor or gate does
+    const source: LevelBar["source"] = seen[0]!.k === 0 && rising && !series[0]!.params ? "input" : "reduction";
+    // LED chain: the lit stretch falls into evenly spaced runs
+    const runs: number[] = [];
+    {
+      const c = changes[seen[seen.length - 1]!.k]!;
+      let open = false;
+      for (let t = vertical ? box.y : box.x; t < (vertical ? box.y + box.h : box.x + box.w); t++) {
+        let on = false;
+        for (let u = vertical ? box.x : box.y; u < (vertical ? box.x + box.w : box.y + box.h) && !on; u++) on = c[(vertical ? t * width + u : u * width + t)]! === 1;
+        if (on && !open) runs.push(t);
+        open = on;
+      }
+    }
+    const pitches = runs.slice(1).map((r, i) => r - runs[i]!);
+    const pitch = pitches.length >= 3 ? percentile(pitches, 0.5) : 0;
+    const segments = pitch >= 4 && pitches.every((p) => Math.abs(p - pitch) <= Math.max(2, pitch * 0.25)) ? Math.round(long / pitch) : undefined;
+    // calibration: where the lit stretch ends against the level (input) or the expected gain reduction
+    const ends = seen.map((s) => {
+      const end = origin === "bottom" || origin === "right" ? s.e.lo : s.e.hi;
+      const x = source === "input" ? levels[s.k]! : reduction ? reduction(levels[s.k]!) : NaN;
+      return [x, end] as [number, number];
+    }).filter(([x]) => Number.isFinite(x));
+    const fit = ends.length >= 2 ? linearFit(ends) : undefined;
+    const startPos = origin === "bottom" ? box.y + box.h : origin === "top" ? box.y : origin === "left" ? box.x : box.x + box.w;
+    const endPos = origin === "bottom" ? box.y : origin === "top" ? box.y + box.h : origin === "left" ? box.x + box.w : box.x;
+    const valueAt = (pos: number) => (fit && Math.abs(fit.b) > 1e-6 ? (pos - fit.a) / fit.b : NaN);
+    const fromDb = valueAt(startPos), toDb = valueAt(endPos);
+    const plausible = Number.isFinite(fromDb) && Number.isFinite(toDb) && Math.abs(toDb - fromDb) >= 6 && Math.abs(toDb - fromDb) <= 200;
+    const litPoints = maskPoints(changes[seen[seen.length - 1]!.k]!, width, box);
+    const color = hex(dominantAt(shots[seen[seen.length - 1]!.k + 1]!, litPoints));
+    displays.push({
+      kind: "bar", ...box,
+      background: hex(dominantColor(rest, box)), grid: color, curve: color, text: color,
+      bar: {
+        source,
+        fromDb: plausible ? fromDb : source === "input" ? -60 : 0,
+        toDb: plausible ? toDb : source === "input" ? 0 : 20,
+        color, origin, ...(segments ? { segments } : {}),
+      },
     });
   }
-  return bars;
+  // analyzer and time graph zones: sparse changes that lie close together and cover a large area
+  const zones: Box[] = [];
+  for (const b of sparse) {
+    const near = zones.find((z) => overlaps(z, b, 6));
+    if (near) Object.assign(near, union([near, b]));
+    else zones.push({ ...b });
+  }
+  for (const zone of zones) {
+    if (process.env.VCH_GUI_DEBUG) console.error(`analyzer zone? ${zone.x},${zone.y} ${zone.w}x${zone.h}`);
+    if (area(zone) < width * height * 0.02 || Math.min(zone.w, zone.h) < 40 || displays.some((d) => overlaps(d, zone) && area(d) > area(zone) * 0.5)) continue;
+    const bg = dominantColor(rest, zone);
+    const moving = maskPoints(changes[changes.length - 1]!, width, zone);
+    const curve = hex(moving.length ? dominantAt(shots[shots.length - 1]!, moving) : bg);
+    displays.push({ kind: "generic", role: "analyzer", ...zone, background: hex(bg), grid: hex(bg), curve, text: curve });
+  }
+  return displays;
 }
 
 export interface AnalyzeOptions {
@@ -1606,6 +1713,8 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   const base = await loadRaw(probe.base, width, height);
   const base2 = await loadRaw(probe.base2, width, height);
   const noise = dilate(diffMask(base, base2), width, height, 2);
+  // (meters are found against the animation alone: pixels many controls change may be meters that react to them)
+  const animation = noise.slice();
 
   // Pixels that react to many different parameters are global indicators (e.g. "preset modified") – ignore them.
   const plain = probe.visible.filter((p) => !p.bandRole);
@@ -1658,8 +1767,19 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     // large parts belong to the display, compact parts outside of it to the control.
     const large = allParts.filter((p) => area(p) > width * height * 0.08);
     const displayBox = large.length ? union(large) : undefined;
-    if (displayBox && changedPixels > width * height * 0.01) {
-      displayRegions.push({ box: displayBox, eq: eqParams.has(param.index), params: [param], frames });
+    // (a switch outside an EQ shows or hides something rather than drawing a display)
+    if (displayBox && changedPixels > width * height * 0.01 && (!param.discrete || eqParams.has(param.index))) {
+      // one control may move two displays (a gate's curve and its threshold line in a time graph): each on its own
+      for (const part of large) {
+        // displays a few pixels apart (a graph, a meter, a curve side by side) only merge at the coarse dilation
+        const inside = new Uint8Array(width * height);
+        for (let y = part.y; y < part.y + part.h; y++) for (let x = part.x; x < part.x + part.w; x++) inside[y * width + x] = changed[y * width + x]!;
+        const pieces = components(dilate(inside, width, height, 1), width, height, 10).filter((q) => area(q) > width * height * 0.02);
+        for (const piece of pieces.length > 1 ? pieces : [part]) {
+          displayRegions.push({ box: { x: piece.x, y: piece.y, w: piece.w, h: piece.h }, eq: eqParams.has(param.index), params: [param], frames });
+          if (process.env.VCH_GUI_DEBUG) console.error(`display region of ${param.name}: ${piece.x},${piece.y} ${piece.w}x${piece.h} (${pieces.length} pieces)`);
+        }
+      }
     }
     const parts = allParts.filter((p) => !large.includes(p) && !(displayBox && contains(displayBox, p)));
     if (!parts.length) continue;
@@ -1713,7 +1833,9 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   }
 
   valueAnchors.clear();
-  const controls = footprints.map((fp) => analyzeControl(fp, noise)).filter((c): c is Control => Boolean(c));
+  // a control is small and inside the editor: a "knob" fitted to a whole display or reaching out of the editor is a misreading
+  const controls = footprints.map((fp) => analyzeControl(fp, noise)).filter((c): c is Control => Boolean(c))
+    .filter((c) => c.x >= -2 && c.y >= -2 && c.x + c.w <= width + 2 && c.y + c.h <= height + 2 && c.w * c.h <= width * height * 0.08);
   splitSharedValues(controls);
   const eqDisplay = bandFootprints.length ? analyzeEqDisplay(base, bandFootprints, parameters, noise) : undefined;
 
@@ -1722,7 +1844,9 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   const merged: typeof displayRegions = [];
   for (const d of displayRegions) {
     if (eqDisplay && overlaps(eqDisplay, d.box)) continue;
-    const target = merged.find((m) => overlaps(m.box, d.box));
+    // the same display: they overlap substantially (two displays may touch along an edge)
+    const shared = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+    const target = merged.find((m) => shared(m.box, d.box) > Math.min(area(m.box), area(d.box)) * 0.3);
     if (target) {
       target.box = union([target.box, d.box]);
       target.eq ||= d.eq;
@@ -1741,13 +1865,26 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     const curvePoints = d.frames.flatMap((f) => maskPoints(diffMask(f, base, 40, noise), width, box)).slice(0, 20000);
     const curve = dominantAt(d.frames[0]!, curvePoints);
     const grid = dominantColor(base, box, subtle);
-    displays.push({ kind: d.eq ? "eq" : "generic", ...box, background: hex(bg), grid: hex(grid), curve: hex(curve), text: hex(luminance(bg) > 128 ? [40, 40, 40] : [170, 170, 170]) });
+    // a display that the threshold, ratio or knee of a compressor or gate bend is its transfer curve
+    const curveLike = !d.eq && d.params.some((p) => /thresh|ratio|knee|reduction|range/i.test(p.name));
+    displays.push({
+      kind: d.eq ? "eq" : "generic", ...(curveLike ? { role: "curve" as const } : {}), ...box,
+      background: hex(bg), grid: hex(grid), curve: hex(curve), text: hex(luminance(bg) > 128 ? [40, 40, 40] : [170, 170, 170]),
+    });
   }
 
-  if (options.meterReduction) {
-    const meter = await analyzeMeter(probe, noise, options.meterReduction);
+  if (probe.meter) {
+    const meter = options.meterReduction ? await analyzeMeter(probe, animation, options.meterReduction) : undefined;
     if (meter) displays.push(meter);
-    displays.push(...(await analyzeBars(probe, noise, [...displays, ...controls])));
+    const meters = await analyzeLevelMeters(probe, animation, [...displays.filter((d) => d.kind === "meter"), ...controls], options.meterReduction);
+    // a display that moves with the signal is an analyzer or a meter, whatever control also changes it
+    const inside = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+    for (let i = displays.length - 1; i >= 0; i--) {
+      const d = displays[i]!;
+      if (d.kind !== "generic") continue;
+      if (meters.some((m) => inside(m, d) > area(d) * 0.5)) displays.splice(i, 1);
+    }
+    displays.push(...meters);
   }
 
   // exclusion mask for static analysis

@@ -46,7 +46,7 @@ export async function captureBenchProbe(name: string, plugin: string, identifier
 export function benchKind(display: Display): BenchDisplayKind {
   if (display.kind === "meter" || display.kind === "bar") return "meter";
   if (display.kind === "eq") return "eq";
-  return (display as { bench?: BenchDisplayKind }).bench ?? "other";
+  return display.role ?? "other";
 }
 
 /**
@@ -117,6 +117,10 @@ export async function runGuiBench(only?: string): Promise<{ scores: BenchScore[]
     const { probe, parameters } = await loadProbe(workDir);
     // without a fitted compressor the meters are found with a typical curve (threshold −20 dB, ratio 4)
     const model = await analyzeGui(probe, parameters, name, { meterReduction: (levelDb) => Math.max(0, (levelDb + 20) * 0.75) });
+    if (process.env.VCH_BENCH_VERBOSE) {
+      for (const c of model.controls) console.error(`  ${name}: control ${c.name} ${c.kind} ${c.x},${c.y} ${c.w}x${c.h}`);
+      for (const d of model.displays) console.error(`  ${name}: ${d.kind}${d.role ? `/${d.role}` : ""} ${d.x},${d.y} ${d.w}x${d.h}${d.bar ? ` ${d.bar.source} from ${d.bar.origin ?? "bottom"} ${d.bar.fromDb.toFixed(1)}…${d.bar.toDb.toFixed(1)} dB${d.bar.segments ? ` ${d.bar.segments} LEDs` : ""}` : ""}`);
+    }
     scores.push(scoreGui(name, labels, model));
   }
   return { scores, missing };
