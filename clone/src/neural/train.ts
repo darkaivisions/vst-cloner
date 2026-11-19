@@ -105,7 +105,7 @@ export async function trainNeural(profile: Profile, options: NeuralTrainOptions)
   const work = await mkdtemp(join(tmpdir(), "vch-neural-"));
   try {
     await extractForTraining(profile, join(work, "data"));
-    const minutes = options.minutes ?? 10;
+    const minutes = options.minutes ?? 20;
     const args = [TRAIN_SCRIPT, "--data", join(work, "data"), "--out", join(work, "out"), "--minutes", String(minutes), "--hidden", String(options.hidden ?? 64)];
     const result = await new Promise<NeuralTrainResult & { modelPath: string }>((resolve, reject) => {
       const child = spawn(python, args, { stdio: ["ignore", "pipe", "pipe"] });

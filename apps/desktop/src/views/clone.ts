@@ -35,7 +35,7 @@ export class CloneView {
   private readonly refitGuiBox = h("input", { type: "checkbox" });
   private readonly refitBox = h("input", { type: "checkbox" });
   private readonly minutesSelect = h("select", { title: "Longer training is usually more exact; the graphics card does the work" },
-    h("option", { value: "5" }, "5 minutes"), h("option", { value: "10", selected: true }, "10 minutes"), h("option", { value: "20" }, "20 minutes"), h("option", { value: "40" }, "40 minutes"));
+    h("option", { value: "5" }, "5 minutes"), h("option", { value: "10" }, "10 minutes"), h("option", { value: "20", selected: true }, "20 minutes"), h("option", { value: "40" }, "40 minutes"));
   private readonly neuralBox = h("div.neural-options");
   private readonly cloneButton = h("button.primary", {}, "Build clone");
   private readonly cloneProgress = new Progress();

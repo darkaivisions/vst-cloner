@@ -66,7 +66,7 @@ export interface NeuralCloneOptions {
   install?: boolean;
   refit?: boolean;
   skipVerify?: boolean;
-  /** training time budget in minutes (default 10) */
+  /** training time budget in minutes (default 20: ZamComp with 400 settings 17 % after 6 min, 4 % after 20) */
   minutes?: number;
   log: Logger;
   signal?: AbortSignal;
@@ -98,7 +98,7 @@ export async function cloneNeuralProfile(options: NeuralCloneOptions): Promise<N
   let model = options.refit ? undefined : storedNeuralModel(profile);
   if (model) log("info", "Using the network stored in the profile");
   else {
-    log("info", `Training the network on ${profile.captures.renders.length} measurements of ${profile.manifest.plugin.name} (${options.minutes ?? 10} min) …`);
+    log("info", `Training the network on ${profile.captures.renders.length} measurements of ${profile.manifest.plugin.name} (${options.minutes ?? 20} min) …`);
     const trained = await trainNeural(profile, {
       log,
       ...(options.signal ? { signal: options.signal } : {}),

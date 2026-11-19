@@ -19,7 +19,7 @@ export const USAGE = `Cloning:
                                         Analyse, build the clone (VST3 + LV2) and compare it with the original;
                                         --gui also rebuilds the editor of the original (Linux: needs Xvfb);
                                         profiles captured with --class neural (or --neural) become a universal
-                                        clone: a network trained on the GPU for --minutes (default 10)
+                                        clone: a network trained on the GPU for --minutes (default 20)
   vch neural-setup                      Create the Python environment for training (PyTorch, ~3 GB)
   vch analyze <profile> [--save] [--json]
                                         Fit the model and show how well it matches

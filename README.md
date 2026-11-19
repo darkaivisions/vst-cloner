@@ -175,7 +175,7 @@ plugin (`plugin-template/distortion`) computes sample-exactly like the TypeScrip
 ```bash
 npm run vch -- neural-setup                      # once: Python environment with PyTorch (~3 GB)
 npm run vch -- capture ~/.vst3/Anything.vst3 --class neural --tail 0.5 -o anything.vcprofile
-npm run vch -- clone anything.vcprofile -o ./anything-clone --minutes 10
+npm run vch -- clone anything.vcprofile -o ./anything-clone --minutes 20
 ```
 
 The universal clone does not need to know what the plugin is. The measurement sets **all controls at random**
