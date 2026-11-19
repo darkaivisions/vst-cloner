@@ -1,6 +1,6 @@
 # vst-cloner
 
-![vst-cloner: choose a plugin, detected as a compressor, compressor measurement](docs/images/app.png)
+![vst-cloner: a chorus cloned with its modulation engine and as a network, both compared on the same settings](docs/images/app.png)
 
 Use the effect plugins you bought on Linux: plugins are measured as a black box,
 saved as an open profile (`.vcprofile`) and rebuilt from it as a free clone (LV2/VST3/CLAP).
@@ -8,12 +8,15 @@ No decompiled code, no extracted samples – only measured sound behaviour.
 
 Overall plan and milestones: [PLAN.md](PLAN.md) · Profile format: [docs/profile-format.md](docs/profile-format.md)
 
-**Status: milestone 6 in progress** – desktop app, capture host, profile format and LLM integration work.
+**Status: milestones 6 and 7 in progress** – desktop app, capture host, profile format and LLM integration work.
 Clones (VST3/LV2) exist for **parametric EQs**, **compressors/limiters**, **gates/expanders** and
 **distortions** (overdrive/distortion), each with a rebuilt editor of the original.
-**Delays** and **reverbs** can be cloned in a first version (no rebuilt editor yet).
+**Delays**, **reverbs** and **chorus/flanger/vibrato** (a delay moved by an LFO) can be cloned in a first version
+(no rebuilt editor yet).
 **Any other plugin** becomes a **universal clone**: a neural network, conditioned on all of its controls, is trained
-on the GPU from the measurements (see below). Modulation effects, long reverb tails and long delays are its weak spots.
+on the GPU from the measurements (see below). Long reverb tails, long delays and modulated delays are its weak spots –
+for a plugin with a class of its own, **Engine vs. network** builds both clones, compares them on the same settings
+and keeps the one that sounds closer (shown above).
 Tested on Linux with native VST3/LV2 plugins and Windows plugins via yabridge.
 
 | Clone | Original | Deviation | Editor |
@@ -32,6 +35,18 @@ Batch runs over all installed plugins of a class (without editor, as of 16 Nov; 
 | Reverbs | 19 | 1.48–6.97 dB: 12 good or better, 7 usable (e.g. ZamVerb 1.48 · Dragonfly Hall 1.67 · Tal-Reverb-III 1.68 · FdnReverb 4.08) |
 | Distortions | 73 | 0.06–18.4 dB: 46 good or better, 14 usable, 13 inaccurate (e.g. GxMicroAmp 0.06 · Wolf Shaper 0.44 · GxBoss DS1 1.15 · GxTubeScreamer 1.93) |
 | EQs | 5 | 0.04–0.83 dB: IEM MultiEQ 0.04 · x42-eq 0.50 · ZamGEQ31 0.66 · GxBarkGraphicEQ 0.62 · GxGraphicEQ 0.83 |
+
+Universal clone, 16 plugins of different classes (clone vs. original: error-to-signal ratio, mean over all
+settings; 6 minutes of training, those marked * 20 minutes):
+
+| Result | Plugins |
+|---|---|
+| very good (< 3 %) | ZamAutoSat 0.00 % · GxTubeScreamer 0.67 % · GxTremolo 1.0 % · ZaMaximX2 1.8 % |
+| usable (3–15 %) | cheapdist 8.1 % · GxBoss DS1 8.2 % · GxTiltTone 9.7 % · ZamGEQ31* 14 % · GxPhaser 14.5 % |
+| inaccurate | ZynDistortion* 16 % and ZamGate* 17 % (typical setting 2.2 % and 4.2 % – a few hard settings are far off) · GxChorus 19 % · GxCompressor* 28 % · SwankyAmp* 29 % · ZamDelay 40 % · MVerb 41 % |
+
+For chorus, reverb and delay the class engines sound closer: spectral deviation GxChorus 1.8 against 2.2 dB,
+MVerb 3.3 against 9.7 dB, ZamDelay 6.6 against 13.2 dB (engine against network).
 
 For reverbs and most delays, control combinations that were not measured on their own still deviate much more
 (delays: 0.8–10 dB for seven plugins, otherwise 15–26 dB; reverbs: 2–16 dB).
