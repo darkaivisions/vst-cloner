@@ -1,0 +1,121 @@
+{
+ "plugin": "/usr/lib/vst3/DirectionalCompressor.vst3",
+ "width": 550,
+ "height": 445,
+ "displays": [
+  {
+   "kind": "meter",
+   "box": [
+    32,
+    255,
+    14,
+    160
+   ],
+   "note": "compressor 1 input"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    237,
+    255,
+    13,
+    160
+   ],
+   "note": "compressor 1 gain reduction (not lit)"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    300,
+    255,
+    15,
+    160
+   ],
+   "note": "compressor 2 input"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    503,
+    255,
+    14,
+    160
+   ],
+   "note": "compressor 2 gain reduction (not lit)"
+  }
+ ],
+ "controls": [
+  {
+   "param": "Threshold 1",
+   "kind": "rotary"
+  },
+  {
+   "param": "Knee 1",
+   "kind": "rotary"
+  },
+  {
+   "param": "MakeUp Gain 1",
+   "kind": "rotary"
+  },
+  {
+   "param": "Ratio 1",
+   "kind": "rotary"
+  },
+  {
+   "param": "Attack Time 1",
+   "kind": "rotary"
+  },
+  {
+   "param": "Release Time 1",
+   "kind": "rotary"
+  },
+  {
+   "param": "Threshold 2",
+   "kind": "rotary"
+  },
+  {
+   "param": "Knee 2",
+   "kind": "rotary"
+  },
+  {
+   "param": "MakeUp Gain 2",
+   "kind": "rotary"
+  },
+  {
+   "param": "Ratio 2",
+   "kind": "rotary"
+  },
+  {
+   "param": "Attack Time 2",
+   "kind": "rotary"
+  },
+  {
+   "param": "Release Time 2",
+   "kind": "rotary"
+  },
+  {
+   "param": "Azimuth of mask",
+   "kind": "rotary"
+  },
+  {
+   "param": "Elevation of mask",
+   "kind": "rotary"
+  },
+  {
+   "param": "Width of mask",
+   "kind": "rotary"
+  },
+  {
+   "param": "Input Gain",
+   "kind": "rotary"
+  },
+  {
+   "param": "Enable Compressor 1",
+   "kind": "toggle"
+  },
+  {
+   "param": "Enable Compressor 2",
+   "kind": "toggle"
+  }
+ ]
+}

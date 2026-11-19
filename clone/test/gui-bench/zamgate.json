@@ -1,0 +1,57 @@
+{
+ "plugin": "/usr/lib/vst3/ZamGate.vst3",
+ "width": 644,
+ "height": 107,
+ "displays": [
+  {
+   "kind": "meter",
+   "box": [
+    345,
+    12,
+    295,
+    18
+   ],
+   "note": "level, LED row"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    345,
+    42,
+    180,
+    18
+   ],
+   "note": "gain reduction, LED row"
+  }
+ ],
+ "controls": [
+  {
+   "param": "Attack",
+   "kind": "rotary"
+  },
+  {
+   "param": "Release",
+   "kind": "rotary"
+  },
+  {
+   "param": "Threshold",
+   "kind": "rotary"
+  },
+  {
+   "param": "Makeup",
+   "kind": "rotary"
+  },
+  {
+   "param": "Max gate close",
+   "kind": "rotary"
+  },
+  {
+   "param": "Sidechain",
+   "kind": "toggle"
+  },
+  {
+   "param": "Mode open/shut",
+   "kind": "toggle"
+  }
+ ]
+}

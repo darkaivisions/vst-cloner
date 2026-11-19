@@ -1,0 +1,75 @@
+{
+ "plugin": "/usr/lib/vst3/OmniCompressor.vst3",
+ "width": 330,
+ "height": 500,
+ "displays": [
+  {
+   "kind": "curve",
+   "box": [
+    40,
+    80,
+    240,
+    165
+   ],
+   "note": "transfer curve"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    30,
+    290,
+    18,
+    180
+   ],
+   "note": "input, LED bar"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    283,
+    290,
+    17,
+    180
+   ],
+   "note": "gain reduction, grows down"
+  }
+ ],
+ "controls": [
+  {
+   "param": "Threshold",
+   "kind": "rotary"
+  },
+  {
+   "param": "Knee",
+   "kind": "rotary"
+  },
+  {
+   "param": "MakeUp Gain",
+   "kind": "rotary"
+  },
+  {
+   "param": "Ratio",
+   "kind": "rotary"
+  },
+  {
+   "param": "Attack Time",
+   "kind": "rotary"
+  },
+  {
+   "param": "Release Time",
+   "kind": "rotary"
+  },
+  {
+   "param": "LookAhead",
+   "kind": "toggle"
+  },
+  {
+   "param": "Ambisonics Order",
+   "kind": "choice"
+  },
+  {
+   "param": "Normalization",
+   "kind": "choice"
+  }
+ ]
+}

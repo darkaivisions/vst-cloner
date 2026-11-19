@@ -1,0 +1,41 @@
+{
+ "plugin": "/usr/lib/vst3/ZaMaximX2.vst3",
+ "width": 561,
+ "height": 107,
+ "displays": [
+  {
+   "kind": "meter",
+   "box": [
+    255,
+    12,
+    290,
+    18
+   ],
+   "note": "level, LED row"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    255,
+    40,
+    180,
+    18
+   ],
+   "note": "gain reduction, LED row"
+  }
+ ],
+ "controls": [
+  {
+   "param": "Release",
+   "kind": "rotary"
+  },
+  {
+   "param": "Input Gain",
+   "kind": "rotary"
+  },
+  {
+   "param": "Threshold",
+   "kind": "rotary"
+  }
+ ]
+}

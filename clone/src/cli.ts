@@ -14,6 +14,7 @@ import { cloneNeuralProfile, isNeuralProfile } from "./neural/workflow.ts";
 import { setupNeuralEnvironment } from "./neural/train.ts";
 import { compareClones, formatComparison } from "./compare.ts";
 import { cloneBest } from "./best.ts";
+import { captureBenchProbe, formatBench, runGuiBench } from "./gui/bench.ts";
 
 export const USAGE = `Cloning:
   vch clone   <profile> [-o <dir>] [--name <text>] [--install] [--refit] [--no-verify]
@@ -25,6 +26,10 @@ export const USAGE = `Cloning:
   vch best    <plugin> -o <dir> [--minutes <n>] [--install]
                                         Clone a plugin with the engine of its class and as a network, compare
                                         both on the same settings and keep the one closest in sound
+  vch gui-bench [<name>]                Analyse the saved editor probes again and score them against their labels
+                                        (clone/test/gui-bench/*.json)
+  vch gui-bench probe <name> <plugin> [--id <identifier>]
+                                        Open a plugin's editor and save a probe for the bench
   vch neural-setup                      Create the Python environment for training (PyTorch, ~3 GB)
   vch analyze <profile> [--save] [--json]
                                         Fit the model and show how well it matches
@@ -39,6 +44,7 @@ export const USAGE = `Cloning:
 `;
 
 const OPTIONS = {
+  id: { type: "string" },
   output: { type: "string", short: "o" },
   name: { type: "string" },
   install: { type: "boolean" },
@@ -82,6 +88,23 @@ export async function main(command: string, argv: string[]): Promise<number> {
   const { values, positionals } = parsed;
   const log = logger(values.verbose ?? false);
   if (command === "batch") return batchCommand(values, positionals, log);
+  if (command === "gui-bench") {
+    try {
+      if (positionals[0] === "probe") {
+        const [, name, plugin] = positionals;
+        if (!name || !plugin) throw new Error("gui-bench probe needs <name> <plugin>");
+        console.log(`Probe saved in ${await captureBenchProbe(name, resolve(plugin), typeof values.id === "string" ? values.id : undefined, log)}`);
+        return 0;
+      }
+      const { scores, missing } = await runGuiBench(positionals[0]);
+      for (const line of formatBench(scores)) console.log(line);
+      if (missing.length) console.log(`Without a probe (vch gui-bench probe …): ${missing.join(", ")}`);
+      return 0;
+    } catch (error) {
+      console.error(`Error: ${(error as Error).message}`);
+      return 1;
+    }
+  }
   if (command === "best") {
     if (!positionals[0] || typeof values.output !== "string") {
       console.error(`Error: best needs <plugin> and -o <dir>\n\n${USAGE}`);

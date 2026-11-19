@@ -1,0 +1,61 @@
+{
+ "plugin": "/usr/lib/vst3/ZamComp.vst3",
+ "width": 800,
+ "height": 107,
+ "displays": [
+  {
+   "kind": "meter",
+   "box": [
+    495,
+    10,
+    295,
+    18
+   ],
+   "note": "level, LED row"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    495,
+    40,
+    175,
+    18
+   ],
+   "note": "gain reduction, LED row"
+  }
+ ],
+ "controls": [
+  {
+   "param": "Attack",
+   "kind": "rotary"
+  },
+  {
+   "param": "Release",
+   "kind": "rotary"
+  },
+  {
+   "param": "Threshold",
+   "kind": "rotary"
+  },
+  {
+   "param": "Ratio",
+   "kind": "rotary"
+  },
+  {
+   "param": "Knee",
+   "kind": "rotary"
+  },
+  {
+   "param": "Slew",
+   "kind": "rotary"
+  },
+  {
+   "param": "Makeup",
+   "kind": "rotary"
+  },
+  {
+   "param": "Sidechain",
+   "kind": "toggle"
+  }
+ ]
+}

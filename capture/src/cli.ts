@@ -340,7 +340,7 @@ export async function main(argv: string[]): Promise<number> {
     const llm = await import("@vst-cloner/agent/cli");
     return llm.main(argv.slice(1));
   }
-  if (argv[0] === "clone" || argv[0] === "analyze" || argv[0] === "verify" || argv[0] === "compare" || argv[0] === "best" || argv[0] === "batch" || argv[0] === "neural-setup") {
+  if (argv[0] === "clone" || argv[0] === "analyze" || argv[0] === "verify" || argv[0] === "compare" || argv[0] === "best" || argv[0] === "gui-bench" || argv[0] === "batch" || argv[0] === "neural-setup") {
     const cloning = await import("@vst-cloner/clone/cli");
     return cloning.main(argv[0], argv.slice(1));
   }

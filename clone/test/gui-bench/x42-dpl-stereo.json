@@ -1,0 +1,36 @@
+{
+ "plugin": "/usr/lib/lv2/dpl.lv2",
+ "identifier": "LV2-x42-dpl - Digital Peak Limiter Stereo-dd577d9e-5d577d9f",
+ "width": 538,
+ "height": 80,
+ "displays": [
+  {
+   "kind": "meter",
+   "box": [
+    222,
+    58,
+    312,
+    20
+   ],
+   "note": "gain reduction, horizontal bar"
+  }
+ ],
+ "controls": [
+  {
+   "param": "Input Gain",
+   "kind": "rotary"
+  },
+  {
+   "param": "Threshold",
+   "kind": "rotary"
+  },
+  {
+   "param": "Release Time",
+   "kind": "rotary"
+  },
+  {
+   "param": "True Peak",
+   "kind": "toggle"
+  }
+ ]
+}

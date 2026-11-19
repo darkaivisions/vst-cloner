@@ -1,0 +1,128 @@
+{
+ "plugin": "/usr/lib/vst3/lsp-plugins.vst3",
+ "identifier": "VST3-Compressor Stereo-2a11242d-53989e43",
+ "width": 944,
+ "height": 548,
+ "displays": [
+  {
+   "kind": "analyzer",
+   "box": [
+    5,
+    67,
+    495,
+    265
+   ],
+   "note": "time graph"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    507,
+    70,
+    28,
+    260
+   ],
+   "note": "sidechain"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    542,
+    70,
+    28,
+    260
+   ],
+   "note": "envelope"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    578,
+    70,
+    28,
+    260
+   ],
+   "note": "gain reduction"
+  },
+  {
+   "kind": "curve",
+   "box": [
+    612,
+    67,
+    258,
+    260
+   ],
+   "note": "transfer curve"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    877,
+    70,
+    30,
+    260
+   ],
+   "note": "input"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    913,
+    70,
+    30,
+    260
+   ],
+   "note": "output"
+  }
+ ],
+ "controls": [
+  {
+   "param": "Ratio",
+   "kind": "rotary"
+  },
+  {
+   "param": "Knee",
+   "kind": "rotary"
+  },
+  {
+   "param": "Makeup gain",
+   "kind": "rotary"
+  },
+  {
+   "param": "Attack threshold",
+   "kind": "rotary"
+  },
+  {
+   "param": "Attack time",
+   "kind": "rotary"
+  },
+  {
+   "param": "Release threshold",
+   "kind": "rotary"
+  },
+  {
+   "param": "Release time",
+   "kind": "rotary"
+  },
+  {
+   "param": "Hold time",
+   "kind": "rotary"
+  },
+  {
+   "param": "Input gain",
+   "kind": "rotary"
+  },
+  {
+   "param": "Output gain",
+   "kind": "rotary"
+  },
+  {
+   "param": "Boost threshold",
+   "kind": "rotary"
+  },
+  {
+   "param": "Compression mode",
+   "kind": "choice"
+  }
+ ]
+}

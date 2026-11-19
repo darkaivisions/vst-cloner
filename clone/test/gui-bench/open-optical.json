@@ -1,0 +1,35 @@
+{
+ "plugin": "~/.vst3/Open Optical.vst3",
+ "width": 820,
+ "height": 360,
+ "displays": [
+  {
+   "kind": "meter",
+   "box": [
+    445,
+    97,
+    328,
+    190
+   ],
+   "note": "gain reduction needle"
+  }
+ ],
+ "controls": [
+  {
+   "param": "Peak Reduction",
+   "kind": "rotary"
+  },
+  {
+   "param": "Gain",
+   "kind": "rotary"
+  },
+  {
+   "param": "Saturation",
+   "kind": "rotary"
+  },
+  {
+   "param": "Limit",
+   "kind": "toggle"
+  }
+ ]
+}

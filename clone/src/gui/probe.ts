@@ -1,4 +1,4 @@
-import { rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Parameter } from "@vst-cloner/profile";
 import type { Logger } from "../build.ts";
@@ -239,7 +239,7 @@ export async function probeGui(options: ProbeOptions): Promise<GuiProbe> {
     }
 
     const baseShot = (second ?? first).shots.get("base")!;
-    return {
+    const probe: GuiProbe = {
       width,
       height,
       base: baseShot.file,
@@ -249,5 +249,15 @@ export async function probeGui(options: ProbeOptions): Promise<GuiProbe> {
       invisible,
       ...(meter ? { meter } : {}),
     };
+    // the probe with its pictures can be analysed again without the plugin (editor recognition bench)
+    await writeFile(join(options.workDir, PROBE_FILE), JSON.stringify({ probe, parameters: options.parameters }));
+    return probe;
   }, options.signal);
+}
+
+export const PROBE_FILE = "probe.json";
+
+/** A probe saved by probeGui, with the parameters it was made with. */
+export async function loadProbe(workDir: string): Promise<{ probe: GuiProbe; parameters: Parameter[] }> {
+  return JSON.parse(await readFile(join(workDir, PROBE_FILE), "utf8"));
 }

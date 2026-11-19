@@ -1,0 +1,124 @@
+{
+ "plugin": "/usr/lib/vst3/lsp-plugins.vst3",
+ "identifier": "VST3-Gate Stereo-2a11242d-51915f4f",
+ "width": 944,
+ "height": 535,
+ "displays": [
+  {
+   "kind": "analyzer",
+   "box": [
+    5,
+    67,
+    495,
+    265
+   ],
+   "note": "time graph"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    507,
+    70,
+    28,
+    260
+   ],
+   "note": "sidechain"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    542,
+    70,
+    28,
+    260
+   ],
+   "note": "envelope"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    578,
+    70,
+    28,
+    260
+   ],
+   "note": "gain reduction"
+  },
+  {
+   "kind": "curve",
+   "box": [
+    612,
+    67,
+    258,
+    260
+   ],
+   "note": "gate curve"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    877,
+    70,
+    30,
+    260
+   ],
+   "note": "input"
+  },
+  {
+   "kind": "meter",
+   "box": [
+    913,
+    70,
+    30,
+    260
+   ],
+   "note": "output"
+  }
+ ],
+ "controls": [
+  {
+   "param": "Reduction",
+   "kind": "rotary"
+  },
+  {
+   "param": "Makeup gain",
+   "kind": "rotary"
+  },
+  {
+   "param": "Attack",
+   "kind": "rotary"
+  },
+  {
+   "param": "Release",
+   "kind": "rotary"
+  },
+  {
+   "param": "Curve threshold",
+   "kind": "rotary"
+  },
+  {
+   "param": "Curve zone size",
+   "kind": "rotary"
+  },
+  {
+   "param": "Hysteresis threshold",
+   "kind": "rotary"
+  },
+  {
+   "param": "Hysteresis zone size",
+   "kind": "rotary"
+  },
+  {
+   "param": "Hold time",
+   "kind": "rotary"
+  },
+  {
+   "param": "Input gain",
+   "kind": "rotary"
+  },
+  {
+   "param": "Output gain",
+   "kind": "rotary"
+  }
+ ]
+}
