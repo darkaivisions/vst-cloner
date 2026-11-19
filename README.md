@@ -67,8 +67,12 @@ test). At the bottom, the **log** shows every step, grouped by phase; "Details" 
 output of the compiler and the host.
 
 In the Clone section the app picks the measurement mode that fits the plugin: **EQ**, **Dynamics**,
-**Distortion**, **Delay**, **Reverb** or **General**. Plugins whose category names another effect class
-(delay, reverb, modulation …) are not classified as a compressor or distortion. While measuring, the
+**Distortion**, **Delay**, **Modulation** (chorus, flanger, vibrato), **Reverb** or **Universal** (the network,
+for everything else). Plugins whose category names another effect class are not classified as a compressor or
+distortion. For a plugin with a class of its own, **Engine vs. network** measures and builds both clones in one go,
+plays the same random settings through both and keeps the one that sounds closer; the result names the winner,
+says why in a sentence and lists both with their sound deviation (phase-blind, dB) and waveform error (%). The
+universal clone's result also shows the sound deviation next to the waveform error. While measuring, the
 progress bar also names the preliminary steps (repeatability, working point, switch search); below it the app shows
 whether the plugin is measured with a fresh instance per setting and which controls were detected as hidden switches. For EQs
 the result also shows the deviation with several bands at once. When cloning, the app can also **rebuild the original's editor** (the original

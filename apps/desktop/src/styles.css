@@ -300,3 +300,9 @@ input:focus, select:focus { border-color: var(--accent); }
 .neural-options:empty { display: none; }
 .neural-options select { margin-left: 8px; width: auto; }
 .neural-options .note button { margin-left: 6px; }
+.best-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.best-options:empty { display: none; }
+.best-options select { margin-left: 8px; width: auto; }
+.best-options .note button { margin-left: 6px; }
+.compare-table { margin-top: 10px; }
+.compare-table tr.chosen td { background: var(--panel-2); }

@@ -40,8 +40,12 @@ export interface PluginInfo {
   /** delay/echo recognised by its category, name or controls */
   /** survey: renders of the search for hidden switches before the plan (0 = no search) */
   delay?: { roles: string[]; renders: number; signalSeconds: number; survey: number };
+  /** chorus, flanger, vibrato (a delay moved by an LFO) recognised by its category or name */
+  modulation?: { renders: number; signalSeconds: number };
   /** reverb recognised by its category or name */
   reverb?: { renders: number; signalSeconds: number };
+  /** the class has an engine of its own ("delay engine" …): engine and network can be compared */
+  engine?: string;
   /** universal clone (any plugin): controls the network follows, controls left out (too many), settings measured */
   neural: { controls: number; skipped: number; renders: number; signalSeconds: number };
   genericRenders: number;
@@ -79,7 +83,7 @@ export interface ProfileSummary {
 }
 
 export interface CloneResult {
-  kind: "eq" | "dynamics" | "distortion" | "delay" | "reverb" | "neural";
+  kind: "eq" | "dynamics" | "distortion" | "delay" | "modulation" | "reverb" | "neural" | "best";
   pluginName: string;
   vst3: string;
   lv2: string;
@@ -117,10 +121,19 @@ export interface CloneResult {
     esr: number;
     median?: number;
     outliers?: number;
+    /** phase-blind deviation of the sound: third-octave levels over time (dB) */
+    spectralDb?: { mean: number; median: number };
     validate?: number;
     worst: { label: string; esr: number }[];
     verdict: string;
     renders: number;
+  };
+  /** engine and network compared on the same settings; the chosen one was built */
+  best?: {
+    chosen: string;
+    explanation: string;
+    profiles: string[];
+    candidates: { name: string; spectralDb: { mean: number; median: number }; esr: { mean: number; median: number }; missing: string[]; chosen: boolean }[];
   };
   /** rebuilt editor: number of controls, similarity with the original editor (0…1) */
   gui?: { controls: number; similarity?: number; colorSimilarity?: number; comparePng?: string; preview?: string };

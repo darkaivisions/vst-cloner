@@ -25,6 +25,9 @@ import {
   neuralReportVerdict,
   neuralVerdict,
   setupNeuralEnvironment,
+  cloneBest,
+  ENGINE_NAMES,
+  modulationPlanner,
   cloneDelayProfile,
   cloneDistortionProfile,
   cloneDynamicsProfile,
@@ -198,22 +201,23 @@ async function guiResult(gui: { controls: number; comparison?: { similarity: num
 }
 
 const PLANNER_NAMES: Record<string, string> = {
-  eq: "EQ measurement", dynamics: "Dynamics measurement", distortion: "Distortion measurement", delay: "Delay measurement", reverb: "Reverb measurement", neural: "Universal measurement", generic: "General measurement",
+  eq: "EQ measurement", dynamics: "Dynamics measurement", distortion: "Distortion measurement", delay: "Delay measurement", modulation: "Modulation measurement", reverb: "Reverb measurement", neural: "Universal measurement", generic: "General measurement",
 };
 /** Rating of the main number in a report, by the measurement the profile was captured with. */
-const VERDICTS: Record<string, (value: number) => string> = { dynamics: dynamicsVerdict, distortion: distortionVerdict, delay: delayVerdict, reverb: reverbVerdict, neural: neuralVerdict };
+const VERDICTS: Record<string, (value: number) => string> = { dynamics: dynamicsVerdict, distortion: distortionVerdict, delay: delayVerdict, modulation: delayVerdict, reverb: reverbVerdict, neural: neuralVerdict };
 /** The main number of a report as text: dB for the class models, the error share for the universal clone. */
 const deviationText = (planner: unknown, value: number) => (planner === "neural" ? `${(value * 100).toFixed(value < 0.1 ? 2 : 1)} % error (${esrToDb(value).toFixed(1)} dB)` : `${value.toFixed(2)} dB`);
 const verdictFor = (planner: unknown) => VERDICTS[planner as string] ?? verdict;
 const MODEL_FILES = ["model/eq.json", "model/dynamics.json", "model/distortion.json", "model/delay.json", "model/reverb.json", "model/neural.json"];
-const MODES = ["eq", "dynamics", "distortion", "delay", "reverb", "neural", "generic"] as const;
+const MODES = ["eq", "dynamics", "distortion", "delay", "modulation", "reverb", "neural", "generic"] as const;
 type Mode = (typeof MODES)[number];
-const PLANNERS = { eq: eqPlanner, dynamics: dynamicsPlanner, distortion: distortionPlanner, delay: delayPlanner, reverb: reverbPlanner, neural: neuralPlanner };
+const PLANNERS = { eq: eqPlanner, dynamics: dynamicsPlanner, distortion: distortionPlanner, delay: delayPlanner, modulation: modulationPlanner, reverb: reverbPlanner, neural: neuralPlanner };
 const PLAN_NOTES: Record<Mode, string> = {
   eq: "EQ plan: every filter shape at several frequencies, gains and Q values",
   dynamics: "Compressor plan: every control on its own (dense near the ends) + random combinations as a cross-check, test signal with level staircase, bursts and long pauses",
   distortion: "Distortion plan: every control on its own + random combinations as a cross-check, test signal with sine level staircases at several frequencies, noise and a quiet sweep",
   delay: "Delay plan: every control on its own + random combinations as a cross-check, test signal with an impulse, long silence and a noise burst",
+  modulation: "Modulation plan: every control on its own + random combinations as a cross-check, test signal with an impulse, a train of clicks (the LFO) and a noise burst",
   reverb: "Reverb plan: every control on its own + random combinations as a cross-check, test signal with an impulse and its decay",
   neural: "Universal plan: all controls at random in every setting (the network learns how they act together), test signal with noise, sweeps, level steps, a tone burst and an impulse",
   generic: "General plan: every parameter on its own + random combinations",
@@ -466,7 +470,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
         distortion = undefined;
       }
     }
-    const signalSeconds = (preset: "delay" | "reverb") => Math.round(generateTestSignal({ sampleRate: 1000, channels: 1, preset }).set.length / 1000);
+    const signalSeconds = (preset: "delay" | "modulation" | "reverb") => Math.round(generateTestSignal({ sampleRate: 1000, channels: 1, preset }).set.length / 1000);
     let delay: { roles: string[]; renders: number; signalSeconds: number; survey: number } | undefined;
     if (effectClass === "delay") {
       try {
@@ -476,6 +480,15 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
         delay = { roles: Object.keys(plan.mapping.roles), renders: plan.renders.length, signalSeconds: signalSeconds("delay"), survey };
       } catch {
         delay = undefined;
+      }
+    }
+    let modulation: { renders: number; signalSeconds: number } | undefined;
+    if (effectClass === "modulation") {
+      try {
+        const plan = modulationPlanner.plan(info, { ...DEFAULT_PLAN });
+        modulation = { renders: plan.renders.length, signalSeconds: signalSeconds("modulation") };
+      } catch {
+        modulation = undefined;
       }
     }
     let reverb: { renders: number; signalSeconds: number } | undefined;
@@ -517,9 +530,12 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
       dynamics,
       distortion,
       delay,
+      modulation,
       reverb,
       neural,
       genericRenders,
+      // a class with an engine of its own: the app can build both clones and keep the better one
+      ...(effectClass && ENGINE_NAMES[effectClass] ? { engine: ENGINE_NAMES[effectClass] } : {}),
     };
   },
 
@@ -650,6 +666,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
                 esr: v.esr,
                 median: v.median,
                 outliers: v.outliers,
+                ...(v.spectralDb ? { spectralDb: v.spectralDb } : {}),
                 ...(v.validate !== undefined ? { validate: v.validate } : {}),
                 worst: v.worst,
                 verdict: neuralReportVerdict(v),
@@ -697,7 +714,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
           gui: await guiResult(result.gui),
         };
       }
-      if (summary.planner === "delay" || summary.planner === "reverb") {
+      if (summary.planner === "delay" || summary.planner === "modulation" || summary.planner === "reverb") {
         // same shape of result as a compressor: level deviation in dB, overall and on unknown combinations
         const kind = summary.planner;
         const options = {
@@ -713,7 +730,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
         };
         let v, modelSummary: string[], measured: boolean;
         let build;
-        if (kind === "delay") {
+        if (kind === "delay" || kind === "modulation") {
           const result = await cloneDelayProfile(options);
           ({ verify: v, build } = result);
           modelSummary = formatDelayModel(result.model);
@@ -725,7 +742,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
           measured = Boolean(result.model.report.tail);
         }
         // nothing to hear in the base render: the small error says nothing about the effect
-        const judged = !v ? "" : measured ? VERDICTS[kind]!(v.overall.rmsDb) : kind === "delay" ? "no echo measured" : "no reverb tail measured";
+        const judged = !v ? "" : measured ? VERDICTS[kind]!(v.overall.rmsDb) : kind === "reverb" ? "no reverb tail measured" : "no echo measured";
         if (v) ctx.log(measured ? "success" : "warn", `Clone ready – deviation from the original ${v.overall.rmsDb.toFixed(2)} dB (${judged})`);
         return {
           kind,
@@ -845,6 +862,44 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
   },
 
   // ---- language models ----
+
+  /** Clones a plugin with the engine of its class and as a network, compares both and keeps the better one. */
+  "best.start"(params) {
+    const plugin = str(params, "path");
+    const install = params.install === true;
+    const minutes = typeof params.minutes === "number" ? params.minutes : undefined;
+    return startJob("best", async (ctx) => {
+      const info = await pluginInfo(plugin, { signal: ctx.signal });
+      const pluginName = `${info.plugin.name} Clone`;
+      const result = await cloneBest({
+        plugin,
+        outputDir: join(clonesDir(), slugify(pluginName)),
+        profileDir: profilesDir(),
+        profileSuffix: `-${timestamp()}`,
+        ...(minutes ? { minutes } : {}),
+        install,
+        signal: ctx.signal,
+        log: (level, message) => ctx.log(level, message),
+        onStep: (step, title) => ctx.stage(step, title),
+        onProgress: (done, total, label) => ctx.progress(done, total, label),
+      });
+      ctx.log("success", `Clone ready – ${result.best.name} chosen`);
+      return {
+        kind: "best",
+        pluginName,
+        vst3: result.vst3,
+        lv2: result.lv2,
+        installed: result.installed,
+        shapes: [],
+        best: {
+          chosen: result.best.name,
+          explanation: result.explanation,
+          profiles: result.profiles,
+          candidates: result.results.map((r) => ({ name: r.name, spectralDb: r.spectralDb, esr: r.esr, missing: r.missing, chosen: r === result.best })),
+        },
+      };
+    });
+  },
 
   async "llm.status"() {
     const config = await loadConfig();

@@ -49,7 +49,7 @@ export class LibraryView {
             h("div.profile-meta", {},
               h("span", {}, formatDate(p.createdAt)),
               h("span", {}, `${p.renders} measurements`),
-              h("span", {}, { eq: "EQ measurement", dynamics: "Dynamics measurement", distortion: "Distortion measurement", delay: "Delay measurement", reverb: "Reverb measurement", neural: "Universal measurement" }[p.planner] ?? "general"),
+              h("span", {}, { eq: "EQ measurement", dynamics: "Dynamics measurement", distortion: "Distortion measurement", delay: "Delay measurement", modulation: "Modulation measurement", reverb: "Reverb measurement", neural: "Universal measurement" }[p.planner] ?? "general"),
               h("span", {}, formatBytes(p.bytes)))),
           p.verdict
             ? h("span.pill", { class: verdictClass(p.verdict), title: `Deviation ${p.deviation ?? formatDb(p.rmsDb ?? 0)}` }, `Clone: ${p.verdict}`)

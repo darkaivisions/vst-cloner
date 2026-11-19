@@ -5,7 +5,7 @@ import { Progress } from "../progress.ts";
 import type { CaptureResult, CloneResult, PluginEntry, PluginInfo, ProfileSummary } from "../types.ts";
 
 /** Main workflow: 1 choose plugin → 2 capture → 3 build the clone. */
-type Mode = "eq" | "dynamics" | "distortion" | "delay" | "reverb" | "neural";
+type Mode = "eq" | "dynamics" | "distortion" | "delay" | "modulation" | "reverb" | "neural" | "best";
 
 export class CloneView {
   readonly element: HTMLElement;
@@ -20,6 +20,7 @@ export class CloneView {
   private mode: Mode = "eq";
   private captureJob?: JobHandle<CaptureResult>;
   private cloneJob?: JobHandle<CloneResult>;
+  private bestJob?: JobHandle<CloneResult>;
 
   private readonly search = h("input.search", { type: "search", placeholder: "Search plugins …" });
   private readonly list = h("div.plugin-list");
@@ -37,14 +38,21 @@ export class CloneView {
   private readonly minutesSelect = h("select", { title: "Longer training is usually more exact; the graphics card does the work" },
     h("option", { value: "5" }, "5 minutes"), h("option", { value: "10" }, "10 minutes"), h("option", { value: "20", selected: true }, "20 minutes"), h("option", { value: "40" }, "40 minutes"));
   private readonly neuralBox = h("div.neural-options");
+  /** step 2 in "compare" mode: the whole way in one go (training time, install) */
+  private readonly bestBox = h("div.best-options");
+  private readonly bestMinutes = h("select", { title: "Training time of the network; the class engine is ready in minutes" },
+    h("option", { value: "5" }, "5 minutes"), h("option", { value: "10" }, "10 minutes"), h("option", { value: "20", selected: true }, "20 minutes"), h("option", { value: "40" }, "40 minutes"));
+  private readonly bestInstall = h("input", { type: "checkbox", checked: true });
   private readonly cloneButton = h("button.primary", {}, "Build clone");
   private readonly cloneProgress = new Progress();
   private readonly result = h("div.result");
+  /** step 2 in "compare" mode: the comparison and the chosen clone */
+  private readonly bestResult = h("div.result");
   private readonly steps: HTMLElement[];
 
   constructor(private readonly onLibraryChanged: () => void) {
     this.search.addEventListener("input", () => this.renderList());
-    this.captureButton.addEventListener("click", () => (this.captureJob ? this.captureJob.cancel() : this.capture()));
+    this.captureButton.addEventListener("click", () => (this.captureJob ? this.captureJob.cancel() : this.bestJob ? this.bestJob.cancel() : this.mode === "best" ? this.runBest() : this.capture()));
     this.cloneButton.addEventListener("click", () => (this.cloneJob ? this.cloneJob.cancel() : this.buildClone()));
     this.guiBox.addEventListener("change", () => this.update());
 
@@ -57,8 +65,8 @@ export class CloneView {
 
     const step2 = h("section.card.step", {},
       h("header.step-header", {}, h("span.step-number", {}, "2"), h("h2", {}, "Measure")),
-      this.modeBox, this.captureHint,
-      h("div.actions", {}, this.captureButton), this.captureProgress.element, this.captureNote);
+      this.modeBox, this.captureHint, this.bestBox,
+      h("div.actions", {}, this.captureButton), this.captureProgress.element, this.captureNote, this.bestResult);
 
     const step3 = h("section.card.step", {},
       h("header.step-header", {}, h("span.step-number", {}, "3"), h("h2", {}, "Build the clone")),
@@ -119,6 +127,55 @@ export class CloneView {
     this.neuralBox.append(h("label.check", {}, "Training time", this.minutesSelect));
   }
 
+  /** Step 2 in "compare" mode: training time and install, or setting up the training first. */
+  private renderBestOptions(busy: boolean) {
+    clear(this.bestBox);
+    if (this.mode !== "best") return;
+    if (!this.neuralReady) {
+      this.bestBox.append(h("div.note.warn", {},
+        h("strong", {}, "Training environment missing"),
+        " – the network half of the comparison trains with PyTorch (about 3 GB, downloaded once). ",
+        h("button.ghost.small", { disabled: busy || Boolean(this.setupJob), onclick: () => this.setupTraining() }, this.setupJob ? "Setting up …" : "Set up training")));
+      return;
+    }
+    this.bestMinutes.disabled = busy;
+    this.bestInstall.disabled = busy;
+    this.bestBox.append(
+      h("label.check", {}, "Training time of the network", this.bestMinutes),
+      h("label.check", {}, this.bestInstall, "Install the chosen clone (visible to the DAW)"));
+  }
+
+  /** Engine and network: both measured and built, compared on the same settings, the closer one kept. */
+  private async runBest() {
+    if (!this.info) return;
+    clear(this.bestResult);
+    clear(this.captureNote);
+    this.captureProgress.busy("Loading plugin …");
+    let title = "";
+    try {
+      this.bestJob = await startJob<CloneResult>("best.start", { path: this.info.path, minutes: Number(this.bestMinutes.value), install: this.bestInstall.checked }, (event) => {
+        if (event.kind === "stage") {
+          title = event.title;
+          this.captureProgress.busy(`${title} …`);
+        } else if (event.kind === "progress") {
+          this.captureProgress.set(event.done, event.total, `${title} – ${event.label && !/^r\d+$/.test(event.label) ? event.label : `${event.done} / ${event.total}`}`);
+        }
+      });
+      this.update();
+      const result = await this.bestJob.result;
+      this.captureProgress.set(1, 1, `Done – ${result.best?.chosen ?? "clone"} chosen`);
+      this.renderResult(result, this.bestResult);
+      this.bestResult.scrollIntoView({ behavior: "smooth" });
+      this.onLibraryChanged();
+    } catch (error) {
+      this.captureProgress.hide();
+      if (!(error as { cancelled?: boolean }).cancelled) this.bestResult.appendChild(h("div.error-box", {}, (error as Error).message));
+    } finally {
+      this.bestJob = undefined;
+      this.update();
+    }
+  }
+
   private async setupTraining() {
     this.cloneProgress.busy("Setting up the training environment (PyTorch) – this takes a few minutes …");
     try {
@@ -171,6 +228,7 @@ export class CloneView {
     // progress and findings belong to the plugin measured before
     this.captureProgress.hide();
     clear(this.captureNote);
+    clear(this.bestResult);
     this.renderList();
     clear(this.details);
     this.details.appendChild(h("div.loading", {}, `Loading ${plugin.name} …`));
@@ -178,7 +236,7 @@ export class CloneView {
     try {
       this.info = await call<PluginInfo>("plugins.info", { path: plugin.path });
       // a known effect class has its own exact model; everything else gets the universal clone
-      this.mode = this.info.eq ? "eq" : this.info.dynamics ? "dynamics" : this.info.distortion ? "distortion" : this.info.delay ? "delay" : this.info.reverb ? "reverb" : "neural";
+      this.mode = this.info.eq ? "eq" : this.info.dynamics ? "dynamics" : this.info.distortion ? "distortion" : this.info.delay ? "delay" : this.info.modulation ? "modulation" : this.info.reverb ? "reverb" : "neural";
     } catch (error) {
       clear(this.details);
       this.details.appendChild(h("div.error-box", {}, `Plugin could not be loaded: ${(error as Error).message}`));
@@ -207,6 +265,8 @@ export class CloneView {
               ? h("span.badge.good", {}, "Distortion detected")
               : info.delay
                 ? h("span.badge.good", {}, "Delay detected")
+                : info.modulation
+                  ? h("span.badge.good", {}, "Chorus/flanger detected")
                 : info.reverb
                   ? h("span.badge.good", {}, "Reverb detected")
                   : h("span.badge.accent", { title: "A network learns the plugin from the measurements – works for any plugin" }, "no known effect class – universal clone")),
@@ -215,7 +275,7 @@ export class CloneView {
 
   private update() {
     const info = this.info;
-    const busy = Boolean(this.captureJob || this.cloneJob);
+    const busy = Boolean(this.captureJob || this.cloneJob || this.bestJob);
 
     // step 2
     clear(this.modeBox);
@@ -226,9 +286,12 @@ export class CloneView {
       option("dynamics", "Dynamics", Boolean(info?.dynamics)),
       option("distortion", "Distortion", Boolean(info?.distortion)),
       option("delay", "Delay", Boolean(info?.delay)),
+      option("modulation", "Modulation", Boolean(info?.modulation)),
       option("reverb", "Reverb", Boolean(info?.reverb)),
       option("neural", "Universal", Boolean(info)),
+      option("best", "Engine vs. network", Boolean(info?.engine)),
     );
+    this.renderBestOptions(busy);
     this.captureHint.textContent = !info
       ? "Choose a plugin first."
       : this.mode === "eq" && info.eq
@@ -242,15 +305,21 @@ export class CloneView {
                 (info.delay.survey > 0
                   ? ` First ${info.delay.survey} short renders look for hidden switches; every switch found adds further settings. Takes one to a few minutes.`
                   : " Usually takes less than a minute.")
+              : this.mode === "modulation" && info.modulation
+                ? `${info.modulation.renders} settings of ~${info.modulation.signalSeconds} s test signal each (an impulse, then a click every 40 ms whose echoes trace the LFO, a noise burst) – ` +
+                  "every control on its own and in random combinations. The clone is a delay line moved by an LFO: delay, depth, rate and level are read off every setting. Usually takes less than a minute."
+              : this.mode === "best" && info.engine
+                ? `Measures and builds the clone twice – with the ${info.engine} for this kind of effect and as a universal network – then plays the same ${info.neural.renders} random settings through both ` +
+                  "and keeps the one that sounds closer to the original. The engine is ready in a few minutes, the network trains on the graphics card for the time chosen below."
               : this.mode === "reverb" && info.reverb
                 ? `${info.reverb.renders} settings of ~${info.reverb.signalSeconds} s test signal each (an impulse and its decay) – every control on its own and in random combinations. Usually takes less than a minute.`
                 : `${info.neural.renders} settings of ~${info.neural.signalSeconds} s test signal each (noise, sweeps, level steps, a tone burst, an impulse) with all controls at random – ` +
                   "a network then learns how the plugin sounds at every setting (when building the clone, about 10 minutes on the graphics card). Works for any plugin; " +
                   "long reverb tails, long delays and modulation (LFO) are its weak spots." +
                   (info.neural.skipped > 0 ? ` ${info.neural.skipped} controls beyond the first ${info.neural.controls} stay at their default.` : "");
-    this.captureButton.disabled = !info || Boolean(this.cloneJob);
-    this.captureButton.textContent = this.captureJob ? "Cancel" : "Start measuring";
-    this.captureButton.classList.toggle("danger", Boolean(this.captureJob));
+    this.captureButton.disabled = !info || Boolean(this.cloneJob) || (this.mode === "best" && !this.bestJob && !this.neuralReady);
+    this.captureButton.textContent = this.captureJob || this.bestJob ? "Cancel" : this.mode === "best" ? "Measure, build both and compare" : "Start measuring";
+    this.captureButton.classList.toggle("danger", Boolean(this.captureJob || this.bestJob));
     this.steps[1]!.classList.toggle("disabled", !info);
 
     // step 3
@@ -262,7 +331,7 @@ export class CloneView {
       this.profileLine.append(h("span.muted", {}, "After measuring, continue here – or choose a profile from the library."));
     }
     this.renderNeuralOptions(busy);
-    this.cloneButton.disabled = !this.profile || Boolean(this.captureJob) || Boolean(this.setupJob) || (this.profile.planner === "neural" && !this.neuralReady);
+    this.cloneButton.disabled = !this.profile || Boolean(this.captureJob) || Boolean(this.bestJob) || Boolean(this.setupJob) || (this.profile.planner === "neural" && !this.neuralReady);
     this.cloneButton.textContent = this.cloneJob ? "Cancel" : "Build clone";
     this.cloneButton.classList.toggle("danger", Boolean(this.cloneJob));
     this.installBox.disabled = busy;
@@ -366,13 +435,15 @@ export class CloneView {
     }
   }
 
-  private renderResult(result: CloneResult) {
-    clear(this.result);
+  private renderResult(result: CloneResult, target: HTMLElement = this.result) {
+    clear(target);
     // compressors, delays and reverbs report the same numbers; only what was compared differs
-    const d = result.kind === "dynamics" ? result.dynamics : result.kind === "delay" || result.kind === "reverb" ? result.levels : undefined;
+    const d = result.kind === "dynamics" ? result.dynamics : result.kind === "delay" || result.kind === "modulation" || result.kind === "reverb" ? result.levels : undefined;
     if (d) {
-      const compared = result.kind === "delay" ? "Echo level over time and frequency band deviates" : result.kind === "reverb" ? "Decay (level and decay per band) deviates" : "Level curve deviates";
-      this.result.append(
+      const compared = result.kind === "delay" ? "Echo level over time and frequency band deviates"
+        : result.kind === "modulation" ? "Echo level and the LFO's movement of the delay deviate"
+        : result.kind === "reverb" ? "Decay (level and decay per band) deviates" : "Level curve deviates";
+      target.append(
         h("div.verdict", { class: verdictClass(d.verdict) },
           h("div.verdict-main", {}, d.verdict),
           h("div.verdict-sub", {}, `${compared} from the original by ${formatDb(d.overall.rmsDb)} on average · ${d.renders} settings checked` +
@@ -384,32 +455,60 @@ export class CloneView {
         const body = h("tbody");
         for (const w of d.worst) body.appendChild(h("tr", {}, h("td", {}, w.label), h("td.num", {}, formatDb(w.rmsDb)), h("td.num", {}, formatDb(w.maxDb))));
         table.appendChild(body);
-        this.result.appendChild(table);
+        target.appendChild(table);
       }
     }
     const nn = result.neural;
     if (result.kind === "neural" && nn) {
       const pct = (e: number) => `${(e * 100).toFixed(e < 0.1 ? 2 : 1)} %`;
-      this.result.append(
+      target.append(
         h("div.verdict", { class: verdictClass(nn.verdict) },
           h("div.verdict-main", {}, nn.verdict),
           h("div.verdict-sub", {}, `The clone's output differs from the original by ${pct(nn.median ?? nn.esr)} of the signal energy in a typical setting` +
             (nn.median !== undefined ? ` (mean ${pct(nn.esr)})` : "") + ` · ${nn.renders} settings checked` +
             (nn.validate !== undefined ? ` · unseen combinations ${pct(nn.validate)}` : "") +
             (nn.outliers ? ` · ${nn.outliers} setting${nn.outliers === 1 ? "" : "s"} off by half the signal or more` : ""))),
-        h("ul.model-summary", {}, ...(result.summary ?? []).map((line) => h("li", {}, line))),
+        h("ul.model-summary", {}, ...(result.summary ?? []).map((line) => h("li", {}, line)),
+          nn.spectralDb && h("li", { title: "Level of third-octave bands in 85 ms frames, compared with the original – ignores the phase, so it judges the sound rather than the waveform" },
+            `Sound: the spectrum deviates by ${formatDb(nn.spectralDb.median)} in a typical setting (mean ${formatDb(nn.spectralDb.mean)}) – below about 1 dB the difference is hard to hear`)),
       );
       if (nn.worst.length) {
         const table = h("table.shape-table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Largest deviations"), h("th", {}, "Error"))));
         const body = h("tbody");
         for (const w of nn.worst) body.appendChild(h("tr", {}, h("td", {}, w.label), h("td.num", {}, pct(w.esr))));
         table.appendChild(body);
-        this.result.appendChild(table);
+        target.appendChild(table);
       }
+    }
+    const b = result.best;
+    if (result.kind === "best" && b) {
+      const pct = (e: number) => `${(e * 100).toFixed(e < 0.1 ? 1 : 0)} %`;
+      const table = h("table.shape-table.compare-table", {},
+        h("thead", {}, h("tr", {}, h("th", {}, "Clone"),
+          h("th", { title: "Level of third-octave bands over time against the original (typical setting) – what the ear judges" }, "Sound deviation"),
+          h("th", { title: "Error-to-signal ratio, sample by sample (typical setting) – what a waveform comparison sees" }, "Waveform error"),
+          h("th", {}, ""))));
+      const body = h("tbody");
+      for (const c of b.candidates) {
+        body.appendChild(h("tr", { class: c.chosen ? "chosen" : "" },
+          h("td", {}, c.chosen ? h("strong", {}, `★ ${c.name}`) : c.name),
+          h("td.num", {}, formatDb(c.spectralDb.median)),
+          h("td.num", {}, pct(c.esr.median)),
+          h("td", { class: "muted" }, c.missing.length ? `lacks ${c.missing.join(", ")}` : "")));
+      }
+      table.appendChild(body);
+      target.append(
+        h("div.verdict", { class: "neutral" },
+          h("div.verdict-main", {}, `${b.chosen[0]!.toUpperCase()}${b.chosen.slice(1)} chosen`),
+          h("div.verdict-sub", {}, b.explanation)),
+        table,
+        h("p.hint", {}, "Both clones were played the same random settings of every control. The sound deviation decides: it ignores the phase, so a reverb or chorus that sounds the same but differs sample by sample is not counted as wrong. " +
+          "Both measurements are in the library; building from either one shows its own detailed report."),
+      );
     }
     const x = result.distortion;
     if (result.kind === "distortion" && x) {
-      this.result.append(
+      target.append(
         h("div.verdict", { class: verdictClass(x.verdict) },
           h("div.verdict-main", {}, x.verdict),
           h("div.verdict-sub", {}, `Mean deviation: fundamental ${formatDb(x.overall.gainDb)}, harmonics ${formatDb(x.overall.harmonicsDb)}, small signal ${formatDb(x.overall.smallDb)} · ` +
@@ -422,12 +521,12 @@ export class CloneView {
         const body = h("tbody");
         for (const w of x.worst) body.appendChild(h("tr", {}, h("td", {}, w.label), h("td.num", {}, w.total.toFixed(2)), h("td.num", {}, `${w.esrDb.toFixed(1)} dB`)));
         table.appendChild(body);
-        this.result.appendChild(table);
+        target.appendChild(table);
       }
     }
     const v = result.verify;
     if (v) {
-      this.result.append(
+      target.append(
         h("div.verdict", { class: verdictClass(v.verdict) },
           h("div.verdict-main", {}, v.verdict),
           h("div.verdict-sub", {}, `Mean deviation from the original ${formatDb(v.overall.rmsDb)} · ${v.overall.renders} settings checked`)),
@@ -441,18 +540,18 @@ export class CloneView {
         body.appendChild(h("tr.muted", {}, h("td", {}, s.label), h("td.num", {}, "–"), h("td", {}, h("span.pill.neutral", {}, "not supported"))));
       }
       table.appendChild(body);
-      this.result.appendChild(table);
+      target.appendChild(table);
       if (v.combined) {
         body.appendChild(h("tr", {}, h("td", {}, `Several bands at once (${v.combined.renders} settings)`), h("td.num", {}, formatDb(v.combined.rmsDb)),
           h("td", {}, h("span.pill", { class: verdictClass(v.combined.verdict) }, v.combined.verdict))));
       }
       if (v.limited) {
-        this.result.appendChild(h("p.hint", {}, `Not reproduced exactly: ${v.limited.labels.join(", ")} (${v.limited.renders} settings, ${formatDb(v.limited.rmsDb)}).`));
+        target.appendChild(h("p.hint", {}, `Not reproduced exactly: ${v.limited.labels.join(", ")} (${v.limited.renders} settings, ${formatDb(v.limited.rmsDb)}).`));
       }
     }
     if (result.gui) {
       const g = result.gui;
-      this.result.append(
+      target.append(
         h("div.result-gui", {},
           h("strong", {}, "Editor rebuilt"),
           h("span.muted", {}, ` · ${g.controls} controls${g.similarity !== undefined ? ` · ${Math.round(g.similarity * 100)} % structural, ${Math.round((g.colorSimilarity ?? 0) * 100)} % colour similarity` : ""}`),
@@ -466,12 +565,14 @@ export class CloneView {
       );
     }
     const folder = result.vst3.replace(/[\\/][^\\/]+$/, "");
-    this.result.append(
+    target.append(
       h("div.result-files", {},
         h("div", {}, h("strong", {}, result.pluginName), h("span.muted", {}, " · VST3 + LV2")),
         result.installed.length > 0
           ? h("div.muted", {}, `Installed: ${result.installed.join(", ")}`)
-          : h("div.muted", {}, "Not installed – tick \"Install after building\" and build again to install."),
+          : h("div.muted", {}, result.kind === "best"
+            ? "Not installed – tick \"Install the chosen clone\" and run the comparison again, or open the folder."
+            : "Not installed – tick \"Install after building\" and build again to install."),
         h("div.actions", {}, h("button.ghost", { onclick: () => openInSystem(folder) }, "Open folder"))),
     );
   }

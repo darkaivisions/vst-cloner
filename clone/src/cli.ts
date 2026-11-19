@@ -95,7 +95,7 @@ export async function main(command: string, argv: string[]): Promise<number> {
         install: values.install ?? false,
         log,
       });
-      console.log(`Chosen: ${result.best.name}\nVST3: ${result.vst3}\nLV2:  ${result.lv2}`);
+      console.log(`Chosen: ${result.best.name}\n${result.explanation}\nVST3: ${result.vst3}\nLV2:  ${result.lv2}`);
       return 0;
     } catch (error) {
       console.error(`Error: ${(error as Error).message}`);

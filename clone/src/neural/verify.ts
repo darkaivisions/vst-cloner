@@ -6,6 +6,7 @@ import { decodeWav, readCapture, encodeWav, type Profile } from "@vst-cloner/pro
 import type { Logger } from "../build.ts";
 import { cloneValue, dynamicsCloneParameters } from "../dynamics/params.ts";
 import type { NeuralModel } from "./codegen.ts";
+import { spectralDeviationDb } from "../dsp/spectral.ts";
 
 export interface NeuralVerifyReport {
   clone: string;
@@ -16,6 +17,8 @@ export interface NeuralVerifyReport {
   median: number;
   /** settings whose error is at least half the signal energy */
   outliers: number;
+  /** how far the sound is off, phase-blind (spectralDeviationDb: third-octave levels over time, dB) */
+  spectralDb?: { mean: number; median: number };
   train?: number;
   validate?: number;
   worst: { label: string; esr: number }[];
@@ -102,12 +105,14 @@ export async function verifyNeuralClone(
     await runHost(["render", join(workDir, "job.json")], host);
 
     const rows: { id: string; label: string; purpose: string; esr: number }[] = [];
+    const spectral: number[] = [];
     for (const r of renders) {
       const clone = decodeWav(await readFile(join(workDir, "out", `${r.id}.wav`))).channels[0]!;
       const original = readCapture(profile, r).channels;
       // the clone is mono (one network per channel, the same for both): compared with every channel of the original
       const value = mean(original.map((channel) => esr(channel, clone)))!;
       if (!Number.isFinite(value)) throw new Error(`The clone gives no valid signal (NaN/inf) at "${r.label ?? r.id}"`);
+      spectral.push(mean(original.map((channel) => spectralDeviationDb(channel, clone, sampleRate)))!);
       rows.push({ id: r.id, label: r.label ?? r.id, purpose: r.purpose ?? "train", esr: value });
     }
     const train = mean(rows.filter((r) => r.purpose === "train").map((r) => r.esr));
@@ -118,6 +123,7 @@ export async function verifyNeuralClone(
       esr: mean(rows.map((r) => r.esr))!,
       median: median(rows.map((r) => r.esr)),
       outliers: rows.filter((r) => r.esr >= NEURAL_OUTLIER_ESR).length,
+      spectralDb: { mean: mean(spectral)!, median: median(spectral) },
       ...(train !== undefined ? { train } : {}),
       ...(validate !== undefined ? { validate } : {}),
       worst: [...rows].sort((a, b) => b.esr - a.esr).slice(0, 5).map((r) => ({ label: r.label, esr: r.esr })),

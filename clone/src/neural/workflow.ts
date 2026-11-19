@@ -61,6 +61,7 @@ export const neuralReportVerdict = (report: { esr: number; median?: number }): s
 export function formatNeuralVerify(report: NeuralVerifyReport): string[] {
   const lines = [`Clone vs. original (${report.renders} settings): typical setting ${percent(report.median)} – ${neuralReportVerdict(report)}`];
   lines.push(`  mean ${percent(report.esr)}` + (report.outliers ? `; ${report.outliers} setting${report.outliers === 1 ? "" : "s"} off by half the signal or more` : ""));
+  if (report.spectralDb) lines.push(`  sound (spectrum over time, phase-blind): typical setting ${report.spectralDb.median.toFixed(2)} dB, mean ${report.spectralDb.mean.toFixed(2)} dB`);
   if (report.validate !== undefined) lines.push(`  of which unseen combinations: error ${percent(report.validate)}`);
   lines.push("Largest deviations:", ...report.worst.map((w) => `  ${w.label}: ${percent(w.esr)}`));
   return lines;
