@@ -194,9 +194,18 @@ vst-cloner/
      74–82 % structural, 95–98 % colour similarity on four plugins
      - Knobs ✔ – rim and coloured outline, tick marks on mixed backgrounds, centre cap, direction of travel
        (anticlockwise, full turns), value arcs starting from a centre position
-     - Open: XY points, knobs with a gradient and a small pointer (DS1), meter scales, font weights within a
-       title, logos, frames/decoration; check operating bands directly in the curve in the clone editor; check
-       editors in the batch run as well
+     - Bench ✔ – `vch gui-bench`: saved probes of 10 compressor/limiter/gate editors with hand-made labels, scored
+       per element type; displays 19 % → 97 % right (0 extra), controls 84 % right
+     - Meters ✔ – the editor is filmed while a sine rises from digital silence (and again with every threshold
+       turned down): bars and LED chains in any direction, input or gain reduction, needles, LED rows a control
+       switches; analyzers and time graphs (they keep moving at a held level), transfer curves (bent by
+       threshold/ratio/knee)
+     - App ✔ – replay of the recognition in the library details (controls moved, meter films, recognised
+       elements over them) and a live preview while the original's editor is captured
+     - Open: the clone editor draws only needles and vertical bars – LED chains, horizontal and top-down bars and
+       a live transfer curve are recognised but not drawn yet; controls (45 extra detections, mostly LSP buttons);
+       gain reduction of LSP Gate; XY points, knobs with a gradient and a small pointer (DS1), meter scales, font
+       weights within a title, logos, frames/decoration; more editors in the bench
 5. **Dynamics + distortion**
    - **5a Dynamics** ✔ – compressor, limiter, gate, expander, ducker; working point probe, interactions,
      models per switch position

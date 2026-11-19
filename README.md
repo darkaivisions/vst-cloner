@@ -81,6 +81,11 @@ rebuild a clone without the original, export, import) and **AI models** (provide
 test). At the bottom, the **log** shows every step, grouped by phase; "Details" also shows the
 output of the compiler and the host.
 
+The library's profile details replay the **editor recognition**: the original's editor as it opens, every control
+moved through its range and the level meters filmed while a sine rises from silence – with the recognised controls
+and displays drawn over the pictures. While a clone rebuilds the editor, a **live preview** under the progress bar
+shows the invisible capture as it happens.
+
 The plugin list and the library show what kind of effect each plugin is (EQ, Dynamics, Distortion, Delay,
 Modulation, Reverb, Filter, Phaser … – highlighted where vst-cloner has an engine of its own for it) and filter by it;
 the plugin list also by format and without the own clones. Every plugin is loaded once for this in the background
