@@ -208,16 +208,25 @@ function chunk(type: string, data: Uint8Array): Uint8Array {
   return out;
 }
 
-export function encodePng(img: Image): Uint8Array {
+/** PNG of an image; `opaque` drops the alpha channel (screen captures), `level` trades size for speed (1–9). */
+export function encodePng(img: Image, options: { opaque?: boolean; level?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 } = {}): Uint8Array {
   const header = new Uint8Array(13);
   const view = new DataView(header.buffer);
   view.setUint32(0, img.width);
   view.setUint32(4, img.height);
   header[8] = 8;
-  header[9] = 6;
-  const raw = new Uint8Array((img.width * 4 + 1) * img.height);
-  for (let y = 0; y < img.height; y++) raw.set(img.data.subarray(y * img.width * 4, (y + 1) * img.width * 4), y * (img.width * 4 + 1) + 1);
-  const parts = [new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", header), chunk("IDAT", deflateSync(raw)), chunk("IEND", new Uint8Array())];
+  header[9] = options.opaque ? 2 : 6;
+  const channels = options.opaque ? 3 : 4;
+  const raw = new Uint8Array((img.width * channels + 1) * img.height);
+  for (let y = 0; y < img.height; y++) {
+    const row = y * (img.width * channels + 1) + 1;
+    if (!options.opaque) raw.set(img.data.subarray(y * img.width * 4, (y + 1) * img.width * 4), row);
+    else for (let x = 0; x < img.width; x++) {
+      const from = (y * img.width + x) * 4, to = row + x * 3;
+      raw[to] = img.data[from]!; raw[to + 1] = img.data[from + 1]!; raw[to + 2] = img.data[from + 2]!;
+    }
+  }
+  const parts = [new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", header), chunk("IDAT", deflateSync(raw, { level: options.level ?? 6 })), chunk("IEND", new Uint8Array())];
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let offset = 0;
   for (const p of parts) {

@@ -65,6 +65,7 @@ import {
   slugify,
   verdict,
   type CloneStage,
+  type GuiModel,
   type LogLevel,
 } from "@vst-cloner/clone";
 import {
@@ -91,6 +92,7 @@ import {
 } from "@vst-cloner/agent";
 import { clonesDir, dataDir, fileSize, profilesDir, scanPlugins } from "./paths.ts";
 import { pluginKinds, profileKind } from "./kinds.ts";
+import { replayFrame, replayInfo } from "./replay.ts";
 
 // ---- protocol -----------------------------------------------------------------------------------
 
@@ -183,6 +185,15 @@ interface ProfileSummary {
   /** rmsDb as text in the unit of the measurement */
   deviation?: string;
   pluginName?: string;
+}
+
+/** Where the editor probe of a profile lies, and the editor model stored in it. */
+async function replaySource(path: string): Promise<{ dir: string; model?: GuiModel }> {
+  const entries = unzipSync(await readFile(path), { filter: (f) => f.name === "manifest.json" || f.name === "model/gui.json" });
+  const manifest = entries["manifest.json"] ? JSON.parse(strFromU8(entries["manifest.json"]!)) : undefined;
+  if (!manifest?.id) throw new Error("The profile has no id");
+  const model = entries["model/gui.json"] ? (JSON.parse(strFromU8(entries["model/gui.json"]!)) as GuiModel) : undefined;
+  return { dir: join(guiCacheRoot(), manifest.id), ...(model ? { model } : {}) };
 }
 
 /** PNG from the local cache as data URL (the app shows it without file access). */
@@ -613,6 +624,17 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
   "profiles.summary": (params) => summarizeProfile(str(params, "path")),
 
   "profiles.details": (params) => profileDetails(str(params, "path")),
+
+  /** Replay of the editor recognition of a profile: segments and recognised elements (frames: gui.frame). */
+  async "gui.replay"(params) {
+    const { dir, model } = await replaySource(str(params, "profile"));
+    return replayInfo(dir, model);
+  },
+
+  async "gui.frame"(params) {
+    const { dir } = await replaySource(str(params, "profile"));
+    return { src: await replayFrame(dir, Number(params.segment) || 0, Number(params.index) || 0) };
+  },
 
   async "profiles.import"(params) {
     const source = str(params, "path");

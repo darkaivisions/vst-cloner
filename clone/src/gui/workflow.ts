@@ -81,7 +81,8 @@ export async function captureGuiLayout(
 ): Promise<GuiCaptureResult> {
   const workDir = guiCacheDir(profile);
   const probe = await probeGui({
-    ...(options.meterReduction ? { meterLevels: [-80, -30, -18, -6] } : {}),
+    // meters are filmed for every plugin (distortions and delays have them too); the compressor model only calibrates needles
+    meterLevels: [-80, -30, -18, -6],
     plugin: pluginPath,
     identifier: profile.manifest.plugin.identifier,
     parameters: profile.parameters.parameters,

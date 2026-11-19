@@ -1,6 +1,7 @@
 import { call } from "../bridge.ts";
 import { clear, formatBytes, formatDate, h, openInSystem, toast, verdictClass, zoomImage } from "../dom.ts";
 import type { ProfileDetails } from "../types.ts";
+import { ReplayPlayer } from "../replay.ts";
 
 const seconds = (s: number) => (s >= 10 ? `${s.toFixed(0)} s` : `${s.toFixed(1)} s`);
 
@@ -9,6 +10,7 @@ export class ProfileDetailsDialog {
   private readonly overlay = h("div.overlay", { onclick: (e: Event) => e.target === this.overlay && this.close() });
   private readonly body = h("div.dialog-body");
   private readonly onKey = (e: KeyboardEvent) => e.key === "Escape" && this.close();
+  private player?: ReplayPlayer;
 
   constructor() {
     this.overlay.appendChild(h("div.dialog", {},
@@ -30,6 +32,8 @@ export class ProfileDetailsDialog {
   }
 
   close(): void {
+    this.player?.dispose();
+    this.player = undefined;
     this.overlay.remove();
     document.removeEventListener("keydown", this.onKey);
   }
@@ -66,6 +70,17 @@ export class ProfileDetailsDialog {
     } else {
       this.body.appendChild(section("Editor", h("p.hint", {}, "No rebuilt editor in the profile – choose \"Rebuild the original's editor\" when cloning.")));
     }
+
+    // replay of the editor recognition (the pictures stay in the local cache)
+    this.player?.dispose();
+    const player = new ReplayPlayer(d.path);
+    this.player = player;
+    const replay = section("Editor recognition – replay",
+      h("p.hint", {}, "What the recognition saw: the editor as it opens, every control moved through its range, and the level meters filmed while a sine rises from silence. Frames show what was recognised."),
+      player.element);
+    replay.classList.add("hidden");
+    this.body.appendChild(replay);
+    player.load().then((ok) => replay.classList.toggle("hidden", !ok)).catch(() => replay.remove());
 
     // capture
     const c = d.capture;

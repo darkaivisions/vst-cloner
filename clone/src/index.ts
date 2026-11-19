@@ -24,6 +24,8 @@ export * from "./dynamics/codegen.ts";
 export * from "./dynamics/verify.ts";
 export * from "./dynamics/workflow.ts";
 export * from "./gui/model.ts";
+export { encodePng, loadRaw, type Image } from "./gui/image.ts";
+export * from "./gui/film.ts";
 export * from "./gui/capture.ts";
 export * from "./gui/probe.ts";
 export * from "./gui/analyze.ts";
