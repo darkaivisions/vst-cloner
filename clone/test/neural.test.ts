@@ -101,7 +101,7 @@ test("universal clone rating: thresholds on the error share", () => {
 test("the verdict follows the typical setting, the mean and the outliers are reported", () => {
   assert.equal(median([0.3, 0.01, 0.02]), 0.02);
   assert.equal(median([0.01, 0.02, 0.03, 10]), 0.025);
-  const report = { clone: "x", renders: 4, esr: 2.5, median: 0.025, outliers: 1, worst: [{ label: "setting 3", esr: 10 }] };
+  const report = { clone: "x", renders: 4, esr: 2.5, median: 0.025, outliers: 1, worst: [{ label: "setting 3", esr: 10 }], settings: [] };
   assert.equal(neuralReportVerdict(report), "very good");
   assert.equal(neuralReportVerdict({ esr: 0.2 }), "inaccurate");
   const text = formatNeuralVerify(report).join("\n");

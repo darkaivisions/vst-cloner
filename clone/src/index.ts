@@ -48,3 +48,5 @@ export * from "./neural/codegen.ts";
 export * from "./neural/verify.ts";
 export * from "./neural/train.ts";
 export * from "./neural/workflow.ts";
+export * from "./compare.ts";
+export * from "./best.ts";

@@ -12,6 +12,8 @@ import { cloneDelayProfile, isDelayProfile } from "./delay/workflow.ts";
 import { cloneReverbProfile, isReverbProfile } from "./reverb/workflow.ts";
 import { cloneNeuralProfile, isNeuralProfile } from "./neural/workflow.ts";
 import { setupNeuralEnvironment } from "./neural/train.ts";
+import { compareClones, formatComparison } from "./compare.ts";
+import { cloneBest } from "./best.ts";
 
 export const USAGE = `Cloning:
   vch clone   <profile> [-o <dir>] [--name <text>] [--install] [--refit] [--no-verify]
@@ -20,10 +22,16 @@ export const USAGE = `Cloning:
                                         --gui also rebuilds the editor of the original (Linux: needs Xvfb);
                                         profiles captured with --class neural (or --neural) become a universal
                                         clone: a network trained on the GPU for --minutes (default 20)
+  vch best    <plugin> -o <dir> [--minutes <n>] [--install]
+                                        Clone a plugin with the engine of its class and as a network, compare
+                                        both on the same settings and keep the one closest in sound
   vch neural-setup                      Create the Python environment for training (PyTorch, ~3 GB)
   vch analyze <profile> [--save] [--json]
                                         Fit the model and show how well it matches
   vch verify  <profile> <clone.vst3>    Compare a built clone with the original measurements
+  vch compare <reference> <profile> <clone> [<profile> <clone> …]
+                                        Render several clones of one plugin (each with the profile it was built
+                                        from) with the settings of <reference> and name the one closest in sound
   vch batch   --class <eq|dynamics|distortion|delay|reverb> -o <dir> [--match <regex>] [--limit <n>] [--gui]
               [--force] [--yabridge] [--all-formats] [--timeout <s>] [plugin …]
                                         Capture and clone every installed plugin of one class (nothing is
@@ -74,6 +82,26 @@ export async function main(command: string, argv: string[]): Promise<number> {
   const { values, positionals } = parsed;
   const log = logger(values.verbose ?? false);
   if (command === "batch") return batchCommand(values, positionals, log);
+  if (command === "best") {
+    if (!positionals[0] || typeof values.output !== "string") {
+      console.error(`Error: best needs <plugin> and -o <dir>\n\n${USAGE}`);
+      return 2;
+    }
+    try {
+      const result = await cloneBest({
+        plugin: resolve(positionals[0]),
+        outputDir: resolve(values.output),
+        ...(typeof values.minutes === "string" ? { minutes: Number(values.minutes) } : {}),
+        install: values.install ?? false,
+        log,
+      });
+      console.log(`Chosen: ${result.best.name}\nVST3: ${result.vst3}\nLV2:  ${result.lv2}`);
+      return 0;
+    } catch (error) {
+      console.error(`Error: ${(error as Error).message}`);
+      return 1;
+    }
+  }
   if (command === "neural-setup") {
     try {
       console.log(`Python: ${await setupNeuralEnvironment(log)}`);
@@ -167,6 +195,22 @@ export async function main(command: string, argv: string[]): Promise<number> {
         const report = await verifyClone(profile, model, resolve(clonePath), { log });
         if (values.json) console.log(JSON.stringify(report, null, 2));
         else for (const line of formatVerifyReport(report)) console.log(line);
+        return 0;
+      }
+
+      case "compare": {
+        const pairs = positionals.slice(1);
+        if (pairs.length < 2 || pairs.length % 2) throw new Error("compare needs pairs of <profile> <clone plugin> after the reference profile");
+        const reference = await readProfile(profilePath);
+        const candidates = [];
+        for (let i = 0; i < pairs.length; i += 2) {
+          const profile = await readProfile(resolve(pairs[i]!));
+          const kind = [...profile.files.keys()].find((f) => /^model\/(neural|delay|reverb|dynamics|distortion)\.json$/.test(f))?.slice(6, -5) ?? "?";
+          candidates.push({ name: `${kind} (${pairs[i + 1]})`, clonePath: resolve(pairs[i + 1]!), profile });
+        }
+        const results = await compareClones(reference, candidates, { log });
+        if (values.json) console.log(JSON.stringify(results, null, 2));
+        else for (const line of formatComparison(results)) console.log(line);
         return 0;
       }
 

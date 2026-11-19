@@ -164,7 +164,7 @@ def esr(pred, target, power):
     a quiet setting counts as much as a loud one (down to SILENCE_POWER), and a window of silence does not divide by zero.
     """
     err = ((emphasis(pred) - emphasis(target)) ** 2).mean(dim=(1, 2))
-    return (err / power).mean()
+    return err / power
 
 
 def stft_loss(pred, target):
@@ -185,12 +185,16 @@ def stft_loss(pred, target):
 # ---- training ---------------------------------------------------------------------------------------------------
 
 
-def batches(renders, channels, window, warmup, batch, rng):
-    """Random windows from random training renders; the first `warmup` samples only settle the state."""
+def batches(renders, channels, window, warmup, batch, rng, weights=None):
+    """
+    Random windows from random training renders (drawn by `weights` when given); the first `warmup` samples only
+    settle the state. Returns the indices of the renders as well.
+    """
     length = window + warmup
     xs, ys, cs, ps = [], [], [], []
-    for _ in range(batch):
-        r = renders[rng.randrange(len(renders))]
+    picks = rng.choices(range(len(renders)), weights=weights, k=batch)
+    for i in picks:
+        r = renders[i]
         n = r["x"].shape[0]
         start = rng.randrange(0, max(1, n - length))
         ch = rng.randrange(channels)
@@ -198,7 +202,7 @@ def batches(renders, channels, window, warmup, batch, rng):
         ys.append(r["y"][start:start + length, ch])
         cs.append(r["cond"])
         ps.append(r["power"])
-    return (np.stack(xs)[:, :, None], np.stack(ys)[:, :, None], np.stack(cs), np.array(ps, dtype=np.float32))
+    return (np.stack(xs)[:, :, None], np.stack(ys)[:, :, None], np.stack(cs), np.array(ps, dtype=np.float32)), picks
 
 
 class Streams:
@@ -302,6 +306,7 @@ def main():
     parser.add_argument("--stft", type=float, default=0.0, help="weight of the multi-resolution STFT loss")
     parser.add_argument("--mode", default="windows", help="stream: whole renders in consecutive chunks (state carried); windows: random short windows")
     parser.add_argument("--film", type=int, default=1, help="0: knobs only as extra inputs (no FiLM)")
+    parser.add_argument("--focus", type=float, default=0.0, help="share of each batch drawn by the running error of the renders (hard settings more often)")
     parser.add_argument("--loss", default="render", help="render: ESR per render power; batch: ESR over the batch")
     args = parser.parse_args()
 
@@ -325,6 +330,7 @@ def main():
     # last state with a finite loss, and a factor on the learning rate that halves after every divergence
     good_state, lr_scale, resets = {k: v.detach().clone() for k, v in model.state_dict().items()}, 1.0, 0
     total = args.steps or None
+    hardness = np.ones(len(train))  # running error per training render (--focus)
     streams = Streams(train, channels, args.batch, args.window // 2, rng) if args.mode == "stream" else None
     state = None
     while True:
@@ -345,11 +351,20 @@ def main():
             pred, state = model(x, c, state)
             p, t = pred, y
         else:
-            x, y, c, power = batches(train, channels, args.window, args.warmup, args.batch, rng)
+            weights = None
+            if args.focus > 0:
+                # hard settings more often: part of the batch by the running error of each render
+                weights = (1 - args.focus) / len(train) + args.focus * hardness / hardness.sum()
+            (x, y, c, power), picks = batches(train, channels, args.window, args.warmup, args.batch, rng, weights)
             x, y, c, power = (torch.from_numpy(a).to(device) for a in (x, y, c, power))
             pred, _ = model(x, c)
             p, t = pred[:, args.warmup:], y[:, args.warmup:]
-        base = esr(p, t, power) if args.loss == "render" else ((emphasis(p) - emphasis(t)) ** 2).sum() / ((emphasis(t) ** 2).sum() + 1e-8)
+        per = esr(p, t, power)
+        if args.loss == "render" and streams is None and args.focus > 0:
+            for i, value in zip(picks, per.detach().cpu().numpy()):
+                if np.isfinite(value):
+                    hardness[i] = 0.8 * hardness[i] + 0.2 * min(float(value), 10.0)
+        base = per.mean() if args.loss == "render" else ((emphasis(p) - emphasis(t)) ** 2).sum() / ((emphasis(t) ** 2).sum() + 1e-8)
         loss = base + (args.stft * stft_loss(p[..., 0], t[..., 0]) if args.stft > 0 else 0.0)
         if not torch.isfinite(loss):
             # diverged: back to the last good state with half the learning rate (a fresh optimiser state too)

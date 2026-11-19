@@ -19,6 +19,8 @@ export interface NeuralVerifyReport {
   train?: number;
   validate?: number;
   worst: { label: string; esr: number }[];
+  /** error of every setting, in the order of the captures (render id → ESR) */
+  settings: { id: string; esr: number }[];
 }
 
 /** ESR in dB (−20 dB = 1 % of the signal energy) – the number the app shows */
@@ -99,14 +101,14 @@ export async function verifyNeuralClone(
     log("info", `Measuring the clone with ${renders.length} measured settings …`);
     await runHost(["render", join(workDir, "job.json")], host);
 
-    const rows: { label: string; purpose: string; esr: number }[] = [];
+    const rows: { id: string; label: string; purpose: string; esr: number }[] = [];
     for (const r of renders) {
       const clone = decodeWav(await readFile(join(workDir, "out", `${r.id}.wav`))).channels[0]!;
       const original = readCapture(profile, r).channels;
       // the clone is mono (one network per channel, the same for both): compared with every channel of the original
       const value = mean(original.map((channel) => esr(channel, clone)))!;
       if (!Number.isFinite(value)) throw new Error(`The clone gives no valid signal (NaN/inf) at "${r.label ?? r.id}"`);
-      rows.push({ label: r.label ?? r.id, purpose: r.purpose ?? "train", esr: value });
+      rows.push({ id: r.id, label: r.label ?? r.id, purpose: r.purpose ?? "train", esr: value });
     }
     const train = mean(rows.filter((r) => r.purpose === "train").map((r) => r.esr));
     const validate = mean(rows.filter((r) => r.purpose === "validate").map((r) => r.esr));
@@ -119,6 +121,7 @@ export async function verifyNeuralClone(
       ...(train !== undefined ? { train } : {}),
       ...(validate !== undefined ? { validate } : {}),
       worst: [...rows].sort((a, b) => b.esr - a.esr).slice(0, 5).map((r) => ({ label: r.label, esr: r.esr })),
+      settings: rows.map((r) => ({ id: r.id, esr: Math.round(r.esr * 1e5) / 1e5 })),
     };
   } finally {
     await rm(workDir, { recursive: true, force: true });

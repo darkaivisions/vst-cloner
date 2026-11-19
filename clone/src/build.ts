@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
+import { basename, delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CancelledError, throwIfCancelled } from "@vst-cloner/capture";
 import { generateGuiHeader } from "./gui/codegen.ts";
@@ -195,18 +195,21 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
   log("info", `Plugin written: ${vst3}`);
   log("info", `Plugin written: ${lv2}`);
 
-  const installed: string[] = [];
-  if (options.install) {
-    const dirs = userPluginDirs();
-    for (const [from, dir] of [[vst3, dirs.vst3], [lv2, dirs.lv2]] as const) {
-      const target = join(dir, from.slice(options.outputDir.length + 1));
-      await mkdir(dir, { recursive: true });
-      await rm(target, { recursive: true, force: true });
-      await cp(from, target, { recursive: true });
-      installed.push(target);
-      log("info", `Installiert: ${target}`);
-    }
-  }
-
+  const installed = options.install ? await installPlugins(vst3, lv2, log) : [];
   return { vst3, lv2, installed };
+}
+
+/** Copies a built VST3 and LV2 into the user's plugin folders; returns where they went. */
+export async function installPlugins(vst3: string, lv2: string, log: Logger): Promise<string[]> {
+  const dirs = userPluginDirs();
+  const installed: string[] = [];
+  for (const [from, dir] of [[vst3, dirs.vst3], [lv2, dirs.lv2]] as const) {
+    const target = join(dir, basename(from));
+    await mkdir(dir, { recursive: true });
+    await rm(target, { recursive: true, force: true });
+    await cp(from, target, { recursive: true });
+    installed.push(target);
+    log("info", `Installed: ${target}`);
+  }
+  return installed;
 }

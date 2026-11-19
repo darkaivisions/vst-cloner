@@ -25,6 +25,9 @@ Usage:
   vch analyze <profile> [--save] [--json]
                                         Fit the EQ model and show how well it matches
   vch verify  <profile> <clone.vst3>    Compare a built clone with the original measurements
+  vch compare <reference> <profile> <clone> …  Weigh several clones of one plugin against each other
+  vch best    <plugin> -o <dir> [--minutes <n>] [--install]
+                                        Class engine and network, the one closest in sound is kept
   vch batch   --class <eq|dynamics|distortion|delay|reverb> -o <dir>
                                         Capture and clone every installed plugin of one class
 
@@ -336,7 +339,7 @@ export async function main(argv: string[]): Promise<number> {
     const llm = await import("@vst-cloner/agent/cli");
     return llm.main(argv.slice(1));
   }
-  if (argv[0] === "clone" || argv[0] === "analyze" || argv[0] === "verify" || argv[0] === "batch" || argv[0] === "neural-setup") {
+  if (argv[0] === "clone" || argv[0] === "analyze" || argv[0] === "verify" || argv[0] === "compare" || argv[0] === "best" || argv[0] === "batch" || argv[0] === "neural-setup") {
     const cloning = await import("@vst-cloner/clone/cli");
     return cloning.main(argv[0], argv.slice(1));
   }
