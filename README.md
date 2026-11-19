@@ -1,6 +1,6 @@
 # vst-cloner
 
-![vst-cloner: a chorus cloned with its modulation engine and as a network, both compared on the same settings](docs/images/app.png)
+![vst-cloner: plugin list with effect types and filters, a delay detected and measured, ready to build the clone](docs/images/app.png)
 
 Use the effect plugins you bought on Linux: plugins are measured as a black box,
 saved as an open profile (`.vcprofile`) and rebuilt from it as a free clone (LV2/VST3/CLAP).
@@ -16,7 +16,7 @@ Clones (VST3/LV2) exist for **parametric EQs**, **compressors/limiters**, **gate
 **Any other plugin** becomes a **universal clone**: a neural network, conditioned on all of its controls, is trained
 on the GPU from the measurements (see below). Long reverb tails, long delays and modulated delays are its weak spots –
 for a plugin with a class of its own, **Engine vs. network** builds both clones, compares them on the same settings
-and keeps the one that sounds closer (shown above).
+and keeps the one that sounds closer (see below).
 Tested on Linux with native VST3/LV2 plugins and Windows plugins via yabridge.
 
 | Clone | Original | Deviation | Editor |
@@ -262,7 +262,9 @@ npm run vch -- best /usr/lib/lv2/SomeChorus.lv2 -o ./some-chorus [--minutes 20] 
 npm run vch -- compare reference.vcprofile a.vcprofile "A Clone.lv2" b.vcprofile "B Clone.lv2"
 ```
 
-`vch best` recognises the class of a plugin, clones it with that class's engine and as a universal clone, renders
+![Engine vs. network: a chorus cloned with its modulation engine and as a network, both compared on the same settings](docs/images/compare.png)
+
+`vch best` (in the app: **Engine vs. network**) recognises the class of a plugin, clones it with that class's engine and as a universal clone, renders
 both with the same settings (those of the network's measurement: all controls at random) and keeps the one that
 sounds closer to the original. The measure is the **spectral deviation**: level differences of third-octave bands
 in frames of 85 ms, in dB, which ignores the phase – a reverb whose tail differs sample by sample but sounds the
