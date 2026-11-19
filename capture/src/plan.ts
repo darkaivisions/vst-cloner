@@ -44,7 +44,7 @@ export const DEFAULT_PLAN: PlanOptions = {
   random: 16,
   seed: 1,
   exclude: /bypass/i,
-  maxRenders: 500,
+  maxRenders: 900, // the universal clone takes up to 800 + 32 settings
 };
 
 /** Discrete parameters up to this many steps are captured at every step. */

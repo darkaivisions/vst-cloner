@@ -23,11 +23,13 @@ export interface NeuralPlanOptions {
 /**
  * More controls need more settings to cover their combinations. With 12 per control the network learned the training
  * settings by heart and got worse on unseen ones (Tal-Filter-2: 112 settings for 6 controls); a render takes well
- * under a second, so the cap is set by the profile size (about 1 MB per render). The cross-check has 32 settings, so
- * one odd setting does not decide the rating.
+ * under a second, so the cap is set by the profile size (about 1 MB per render). 50 per control up to 800: with 22
+ * controls (SwankyAmp) 800 instead of 400 settings cut the error on unseen combinations from 58 % to 46 % at the same
+ * training time; a larger network (128 units) was worse in both cases. The cross-check has 32 settings, so one odd
+ * setting does not decide the rating.
  */
 export function neuralRenderCounts(controls: number): NeuralPlanOptions {
-  return { train: Math.min(400, Math.max(128, 50 * controls)), validate: 32 };
+  return { train: Math.min(800, Math.max(128, 50 * controls)), validate: 32 };
 }
 
 /** Controls the clone follows: automatable, not a meter or bypass, at most MAX_NEURAL_CONTROLS. */

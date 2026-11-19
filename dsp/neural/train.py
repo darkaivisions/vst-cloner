@@ -355,7 +355,11 @@ def main():
             # diverged: back to the last good state with half the learning rate (a fresh optimiser state too)
             resets += 1
             if resets > 8:
-                raise RuntimeError("training keeps diverging")
+                if best_state is None:
+                    raise RuntimeError("training keeps diverging")
+                # keeps diverging late in the run: stop and keep the best network so far instead of losing the run
+                emit("info", message=f"step {step}: training keeps diverging, stopping with the best state so far")
+                break
             model.load_state_dict(good_state)
             optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
             state = None
@@ -364,7 +368,10 @@ def main():
             continue
         optimiser.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        # a non-finite gradient would turn the weights into NaN even after clipping: skip that batch
+        if not torch.isfinite(torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)):
+            optimiser.zero_grad()
+            continue
         optimiser.step()
         step += 1
         if step % 200 == 0:
@@ -379,7 +386,7 @@ def main():
 
     if best_state is not None:
         final = float(np.mean([v["esr"] for v in evaluate(model, validate, device, channels)]))
-        if final > best:
+        if not final <= best:  # (also when the last state gives NaN)
             model.load_state_dict(best_state)
     train_results = evaluate(model, train, device, channels)
     validate_results = evaluate(model, validate, device, channels)

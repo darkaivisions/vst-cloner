@@ -33,7 +33,7 @@ test("universal plan: the number of controls is capped, more controls get more s
   const many = Array.from({ length: 40 }, (_, i) => parameter(i, `P${i}`));
   assert.equal(neuralControls(many).length, MAX_NEURAL_CONTROLS);
   assert.ok(neuralRenderCounts(8).train > neuralRenderCounts(1).train);
-  assert.ok(neuralRenderCounts(100).train <= 400);
+  assert.ok(neuralRenderCounts(100).train <= 800);
 });
 
 test("universal survey: a control reported as continuous that moves in steps is found, a continuous one is not", () => {

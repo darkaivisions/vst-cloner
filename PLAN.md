@@ -268,6 +268,17 @@ vst-cloner/
    - Tal-Filter-2 with the 24-bit capture and its 10 filter types: 89 / 84 %; the mean is set by a few settings with high
      resonance and the output turned down (one at 1077 %), the median render is at 22 %. Without snapping just as bad,
      so not caused by the positions; self-oscillation is hardly predictable sample by sample
+   - Verdict by the typical setting (median) ✔ – mean and number of settings off by half the signal or more are
+     reported next to it
+   - 20 instead of 6 minutes for the inaccurate ones (typical setting / mean / unseen): ZynDistortion 2.2 / 16 / 22 %,
+     ZamGate 4.2 / 17 / 20 %, ZamGEQ31 14 / 14 / 16 % (was 28 % mean), SwankyAmp 25 / 29 / 58 % (was 64 %),
+     gx_compressor 24 / 28 / 32 %, gx_chorus 18 / 19 / 19 %, ZamDelay 33 / 40 / 38 %, MVerb 30 / 41 / 38 % – modulation,
+     long delays and reverb tails do not gain from more time
+   - Many controls, 20 min each (training / unseen): SwankyAmp 400 settings 64 units 27 / 58 %, 800 settings 27 / 46 %,
+     128 units 67 / 70 % (800: 52 / 58 %); ZamGEQ31 15 / 17 %, 800 settings 15 / 16 %, 128 units 28 / 31 %. So up to
+     800 settings (50 per control), the network stays at 64 units
+   - Training no longer aborts on divergence: a batch with a non-finite gradient is skipped (ZamGate, gx_compressor
+     had failed after 8 resets), and should it still keep diverging the best state so far is kept
    - Open: Tal-Filter-2 (its modulation follows a drawn curve stored in the plugin state – flat in the
      initial state, not a parameter), ZamComp (attack/release of a compressor, 21 %), wow/flutter/hiss of gxtape cannot match
      sample by sample
