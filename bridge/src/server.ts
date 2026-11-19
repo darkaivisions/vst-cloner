@@ -93,6 +93,7 @@ import {
 import { clonesDir, dataDir, fileSize, profilesDir, scanPlugins } from "./paths.ts";
 import { pluginKinds, profileKind } from "./kinds.ts";
 import { replayFrame, replayInfo } from "./replay.ts";
+import { jobPreview } from "./preview.ts";
 
 // ---- protocol -----------------------------------------------------------------------------------
 
@@ -133,17 +134,19 @@ function startJob(kind: string, run: (ctx: JobContext) => Promise<unknown>): { j
     progress: (done, total, label) => event({ kind: "progress", done, total, ...(label ? { label } : {}) }),
   };
 
-  void (async () => {
+  // pictures of an editor capture inside this job reach the app as live previews
+  const preview = (src: string, label: string) => event({ kind: "preview", src, label });
+  void jobPreview.run(preview, async () => {
     try {
       const result = await run(ctx);
       event({ kind: "done", result: (result ?? null) as Json });
     } catch (error) {
       const cancelled = error instanceof CancelledError || controller.signal.aborted;
-      event({ kind: "failed", cancelled, error: cancelled ? "Abgebrochen" : (error as Error).message });
+      event({ kind: "failed", cancelled, error: cancelled ? "Cancelled" : (error as Error).message });
     } finally {
       jobs.delete(id);
     }
-  })();
+  });
 
   return { job: id };
 }

@@ -50,6 +50,21 @@ export interface GuiSnapshotResult {
   dialogs: string[];
 }
 
+/** A picture of the editor while it is being captured (raw RGBA file). */
+export interface GuiPreviewPicture {
+  file: string;
+  width: number;
+  height: number;
+  /** what is happening: the step id ("p3_2", "base") or "film" with the input level */
+  label: string;
+}
+
+/**
+ * Receives every picture the editor capture takes, for a live preview. One receiver for the process (the app's
+ * bridge, which tells the jobs apart); nothing happens without one.
+ */
+export const guiPreview: { listener?: (picture: GuiPreviewPicture) => void } = {};
+
 const onPath = (exe: string) => (process.env.PATH ?? "").split(delimiter).map((dir) => join(dir, exe)).find((p) => existsSync(p));
 
 /** Locates vch-gui: $VCH_GUI, the repository build directory, then PATH. */
@@ -167,6 +182,9 @@ export async function runGuiSnapshot(
           else if (message.type === "shot") {
             shots.set(message.id, message);
             options.onShot?.(message, shots.size);
+            guiPreview.listener?.({ file: message.file, width: message.width, height: message.height, label: message.id });
+          } else if (message.type === "live") {
+            guiPreview.listener?.({ file: message.file, width: message.width, height: message.height, label: `film ${Number(message.levelDb) <= -150 ? "silence" : `${Number(message.levelDb).toFixed(0)} dBFS`}` });
           } else if (message.type === "film") {
             films.set(message.id, message);
             options.onShot?.({ id: message.id, file: message.file, png: "", width: message.width, height: message.height }, shots.size + films.size);

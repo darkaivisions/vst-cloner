@@ -193,6 +193,14 @@ Each step starts from the plugin's initial parameter values. Results are JSON li
                 out.writeInt ((int) size);
                 out.write (compressed.getData(), compressed.getDataSize());
                 frames.add (vch::makeObject ({ { "t", (int) ms }, { "levelDb", db } }));
+                // a live picture for a preview now and then (written aside and renamed: never read half-written)
+                if (frames.size() % 4 == 1)
+                {
+                    auto live = file.getSiblingFile ("live.rgba"), next = file.getSiblingFile ("live.rgba.tmp");
+                    next.replaceWithData (previous.data(), previous.size());
+                    next.moveFileTo (live);
+                    vch::emit (vch::makeObject ({ { "type", "live" }, { "file", live.getFullPathName() }, { "width", area.getWidth() }, { "height", area.getHeight() }, { "levelDb", db } }));
+                }
                 nextFrame += frameMs;
             }
             if (now >= total)

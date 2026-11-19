@@ -7,6 +7,7 @@ export type JobEvent =
   | { kind: "log"; level: LogLevel; message: string; time: number; job: string }
   | { kind: "stage"; stage: string; title: string; time: number; job: string }
   | { kind: "progress"; done: number; total: number; label?: string; time: number; job: string }
+  | { kind: "preview"; src: string; label: string; time: number; job: string }
   | { kind: "done"; result: unknown; time: number; job: string }
   | { kind: "failed"; error: string; cancelled: boolean; time: number; job: string };
 

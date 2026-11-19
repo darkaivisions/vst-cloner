@@ -60,6 +60,9 @@ export class CloneView {
   private readonly bestInstall = h("input", { type: "checkbox", checked: true });
   private readonly cloneButton = h("button.primary", {}, "Build clone");
   private readonly cloneProgress = new Progress();
+  /** live pictures of the original's editor while it is captured (hidden on an invisible display otherwise) */
+  private readonly clonePreview = new LivePreview();
+  private readonly bestPreview = new LivePreview();
   private readonly result = h("div.result");
   /** step 2 in "compare" mode: the comparison and the chosen clone */
   private readonly bestResult = h("div.result");
@@ -82,7 +85,7 @@ export class CloneView {
     const step2 = h("section.card.step", {},
       h("header.step-header", {}, h("span.step-number", {}, "2"), h("h2", {}, "Measure")),
       this.modeBox, this.captureHint, this.bestBox,
-      h("div.actions", {}, this.captureButton), this.captureProgress.element, this.captureNote, this.bestResult);
+      h("div.actions", {}, this.captureButton), this.captureProgress.element, this.bestPreview.element, this.captureNote, this.bestResult);
 
     const step3 = h("section.card.step", {},
       h("header.step-header", {}, h("span.step-number", {}, "3"), h("h2", {}, "Build the clone")),
@@ -95,7 +98,7 @@ export class CloneView {
       h("label.check", { title: "Otherwise a model stored in the profile is reused. Fitting it again takes seconds to a few minutes depending on the effect type." },
         this.refitBox, "Fit the model again (instead of the one stored in the profile)"),
       this.neuralBox,
-      h("div.actions", {}, this.cloneButton), this.cloneProgress.element, this.result);
+      h("div.actions", {}, this.cloneButton), this.cloneProgress.element, this.clonePreview.element, this.result);
 
     this.steps = [step1, step2, step3];
     this.element = h("div.view.clone-view", {}, ...this.steps);
@@ -198,16 +201,18 @@ export class CloneView {
           this.captureProgress.busy(`${title} …`);
         } else if (event.kind === "progress") {
           this.captureProgress.set(event.done, event.total, `${title} – ${event.label && !/^r\d+$/.test(event.label) ? event.label : `${event.done} / ${event.total}`}`);
-        }
+        } else if (event.kind === "preview") this.bestPreview.show(event.src, event.label);
       });
       this.update();
       const result = await this.bestJob.result;
+      this.bestPreview.hide();
       this.captureProgress.set(1, 1, `Done – ${result.best?.chosen ?? "clone"} chosen`);
       this.renderResult(result, this.bestResult);
       this.bestResult.scrollIntoView({ behavior: "smooth" });
       this.onLibraryChanged();
     } catch (error) {
       this.captureProgress.hide();
+      this.bestPreview.hide();
       if (!(error as { cancelled?: boolean }).cancelled) this.bestResult.appendChild(h("div.error-box", {}, (error as Error).message));
     } finally {
       this.bestJob = undefined;
@@ -475,6 +480,8 @@ export class CloneView {
     };
     // the original plugin is known when the profile was measured in this session
     const plugin = this.info && this.profile.name === this.info.name ? this.info.path : undefined;
+    // previews only while the original's editor is captured (the clone's own editor is filmed when comparing)
+    let capturingOriginal = false;
     try {
       this.cloneJob = await startJob<CloneResult>("clone.start",
         {
@@ -484,16 +491,23 @@ export class CloneView {
           ...(this.refitBox.checked ? { refit: true } : {}),
           ...(plugin ? { plugin } : {}),
         }, (event) => {
-          if (event.kind === "stage") this.cloneProgress.busy(titles[event.stage] ?? event.title);
-          else if (event.kind === "progress") this.cloneProgress.set(event.done, event.total, event.label ?? `${event.done} / ${event.total}`);
+          if (event.kind === "stage") {
+            this.cloneProgress.busy(titles[event.stage] ?? event.title);
+            // the preview belongs to capturing the editor: away once the next stage begins
+            capturingOriginal = event.stage === "gui";
+            if (!capturingOriginal) this.clonePreview.hide();
+          } else if (event.kind === "progress") this.cloneProgress.set(event.done, event.total, event.label ?? `${event.done} / ${event.total}`);
+          else if (event.kind === "preview" && capturingOriginal) this.clonePreview.show(event.src, event.label);
         });
       this.update();
       const result = await this.cloneJob.result;
       this.cloneProgress.hide();
+      this.clonePreview.hide();
       this.renderResult(result);
       this.onLibraryChanged();
     } catch (error) {
       this.cloneProgress.hide();
+      this.clonePreview.hide();
       if (!(error as { cancelled?: boolean }).cancelled) {
         this.result.appendChild(h("div.error-box", {}, (error as Error).message));
       }
@@ -654,4 +668,36 @@ function eqBadge(eq: NonNullable<PluginInfo["eq"]>): string {
   if (eq.fixedBands > 0) parts.push(eq.fixedBands === eq.bands ? "fixed shapes" : `${eq.fixedBands} with a fixed shape`);
   if (eq.groups > 1) parts.push(`${eq.groups} band groups`);
   return `EQ detected: ${parts.join(", ")}`;
+}
+
+/** Small live picture with a caption ("what the capture is doing right now"). */
+class LivePreview {
+  readonly element: HTMLElement;
+  private readonly image = h("img.live-image", { alt: "Editor of the original, live" });
+  private readonly caption = h("figcaption.live-caption");
+
+  constructor() {
+    this.element = h("figure.live-preview.hidden", {}, this.image, this.caption);
+  }
+
+  show(src: string, label: string): void {
+    const appearing = this.element.classList.contains("hidden");
+    this.image.src = src;
+    this.caption.textContent = `Live · the original's editor, captured invisibly · ${describeStep(label)}`;
+    this.element.classList.remove("hidden");
+    // bring it into view once when it appears (later the user may have scrolled elsewhere on purpose)
+    if (appearing) this.image.addEventListener("load", () => this.element.scrollIntoView({ block: "nearest", behavior: "smooth" }), { once: true });
+  }
+
+  hide(): void {
+    this.element.classList.add("hidden");
+  }
+}
+
+/** "p3_2" → "moving control 3", "film -20 dBFS" → "filming the meters at −20 dBFS". */
+function describeStep(label: string): string {
+  if (label.startsWith("film")) return `filming the meters (${label.slice(5)})`;
+  if (label === "base" || label === "base2") return "initial state";
+  const moving = /^p(\d+)/.exec(label);
+  return moving ? `moving parameter ${moving[1]}` : label;
 }

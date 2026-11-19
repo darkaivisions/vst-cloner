@@ -350,3 +350,8 @@ input:focus, select:focus { border-color: var(--accent); }
 .ov-label { font: 600 10px system-ui, sans-serif; fill: #4fffb0; paint-order: stroke; stroke: #000; stroke-width: 3px; }
 .ov-label.display { fill: #ffc850; }
 .ov-label.active { font-size: 11px; }
+
+/* ---- live preview of the editor capture ---- */
+.live-preview { margin: 8px 0 0; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.live-image { max-width: 100%; max-height: 260px; border: 1px solid var(--line); border-radius: 6px; background: #000; }
+.live-caption { font-size: 11px; color: var(--muted); }
