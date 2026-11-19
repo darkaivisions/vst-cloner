@@ -24,8 +24,13 @@ Usage:
 Job: { "plugin", "identifier"?, "state"?, "output", "settleMs", "stepMs", "audioMs"? (default 1500), "dismissKeys"? (e.g. ["Escape"], default none),
        "process"? (default true: silent audio runs through the plugin in every step),
        "clicks"? [ { "dx", "dy" } ] (left clicks relative to the editor centre, e.g. to close a trial notice),
-       "steps": [ { "id", "params": [ { "index", "value" } ], "png"?, "audio"? { "frequency", "levelDb" } } ] }
+       "steps": [ { "id", "params": [ { "index", "value" } ], "png"?, "audio"? { "frequency", "levelDb" },
+                    "film"? { "frameMs", "frequency"?, "segments": [ { "ms", "fromDb"?, "toDb"? } ] } } ] }
 A step with "audio" feeds a sine through the plugin while waiting, so that level meters move.
+A step with "film" plays an audio programme in real time – segments without levels are digital silence, the others
+a sine ramping from fromDb to toDb – and records the editor every frameMs into <id>.film: per frame a little-endian
+header (uint32 time in ms, float32 input level in dBFS, −200 for silence, uint32 compressed size) and the frame XOR
+the previous one (RGBA), zlib-compressed. The first frame is XORed with zeros.
 Each step starts from the plugin's initial parameter values. Results are JSON lines on stdout.
 )";
 
@@ -88,6 +93,114 @@ Each step starts from the plugin's initial parameter values. Results are JSON li
             }
         }
     };
+
+    /** The editor's area on the screen (physical pixels). */
+    juce::Rectangle<int> screenArea (juce::Component& holder)
+    {
+        const auto bounds = holder.getScreenBounds();
+        const auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (bounds);
+        const double scale = display != nullptr ? display->scale : 1.0;
+        return { juce::roundToInt (bounds.getX() * scale), juce::roundToInt (bounds.getY() * scale),
+                 juce::roundToInt (bounds.getWidth() * scale), juce::roundToInt (bounds.getHeight() * scale) };
+    }
+
+    /**
+     * Plays an audio programme through the plugin in real time and records the editor while it runs (see usage).
+     * Returns the frame times and input levels.
+     */
+    juce::Array<juce::var> recordFilm (juce::AudioPluginInstance& plugin, juce::Component& holder, const juce::var& film, const juce::File& file)
+    {
+        const double sampleRate = 48000.0;
+        const int frameMs = juce::jmax (20, (int) film.getProperty ("frameMs", 50));
+        const double frequency = (double) film.getProperty ("frequency", 1000.0);
+        struct Segment { double ms; bool silent; double fromDb, toDb; };
+        std::vector<Segment> segments;
+        double total = 0.0;
+        if (auto* list = film["segments"].getArray())
+            for (auto& s : *list)
+            {
+                const bool silent = ! s.hasProperty ("fromDb");
+                const double from = silent ? -200.0 : (double) s["fromDb"];
+                segments.push_back ({ (double) s["ms"], silent, from, s.hasProperty ("toDb") ? (double) s["toDb"] : from });
+                total += (double) s["ms"];
+            }
+        // input level (dBFS) at a time of the programme
+        const auto levelAt = [&segments] (double t, bool& silent) {
+            for (const auto& s : segments)
+            {
+                if (t < s.ms) { silent = s.silent; return s.silent ? -200.0 : s.fromDb + (s.toDb - s.fromDb) * t / juce::jmax (1.0, s.ms); }
+                t -= s.ms;
+            }
+            silent = true;
+            return -200.0;
+        };
+
+        file.deleteFile();
+        juce::FileOutputStream out (file);
+        if (! out.openedOk())
+            throw std::runtime_error (("cannot write " + file.getFullPathName()).toStdString());
+
+        juce::AudioBuffer<float> buffer (juce::jmax (2, plugin.getTotalNumInputChannels(), plugin.getTotalNumOutputChannels()), 512);
+        juce::MidiBuffer midi;
+        double phase = 0.0, played = 0.0; // samples
+        std::vector<uint8_t> previous, delta;
+        juce::Array<juce::var> frames;
+        const auto start = juce::Time::getMillisecondCounterHiRes();
+        double nextFrame = 0.0;
+        for (;;)
+        {
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (2);
+            const double now = juce::Time::getMillisecondCounterHiRes() - start;
+            // audio up to the present, in blocks
+            while (played + buffer.getNumSamples() <= now / 1000.0 * sampleRate)
+            {
+                for (int i = 0; i < buffer.getNumSamples(); ++i)
+                {
+                    bool silent = false;
+                    const double db = levelAt ((played + i) / sampleRate * 1000.0, silent);
+                    const float v = silent ? 0.0f : (float) (juce::Decibels::decibelsToGain (db, -200.0) * std::sin (phase));
+                    phase = std::fmod (phase + juce::MathConstants<double>::twoPi * frequency / sampleRate, juce::MathConstants<double>::twoPi);
+                    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                        buffer.setSample (ch, i, v);
+                }
+                midi.clear();
+                plugin.processBlock (buffer, midi);
+                played += buffer.getNumSamples();
+            }
+            if (now >= nextFrame)
+            {
+                const auto area = screenArea (holder);
+                std::vector<uint8_t> rgba;
+                std::string captureError;
+                if (! vch::captureScreen (area.getX(), area.getY(), area.getWidth(), area.getHeight(), rgba, captureError))
+                    throw std::runtime_error (captureError);
+                delta.resize (rgba.size());
+                for (size_t i = 0; i < rgba.size(); ++i)
+                    delta[i] = (uint8_t) (rgba[i] ^ (i < previous.size() ? previous[i] : 0));
+                previous.swap (rgba);
+                juce::MemoryOutputStream compressed;
+                {
+                    juce::GZIPCompressorOutputStream zip (compressed, 1, juce::GZIPCompressorOutputStream::windowBitsRaw);
+                    zip.write (delta.data(), delta.size());
+                }
+                bool silent = false;
+                const double db = levelAt (now, silent);
+                const auto ms = (uint32_t) juce::roundToInt (now);
+                const float level = (float) db;
+                const auto size = (uint32_t) compressed.getDataSize();
+                out.writeInt ((int) ms);
+                out.writeFloat (level);
+                out.writeInt ((int) size);
+                out.write (compressed.getData(), compressed.getDataSize());
+                frames.add (vch::makeObject ({ { "t", (int) ms }, { "levelDb", db } }));
+                nextFrame += frameMs;
+            }
+            if (now >= total)
+                break;
+        }
+        out.flush();
+        return frames;
+    }
 
     juce::File resolve (const juce::File& base, const juce::String& path)
     {
@@ -239,6 +352,19 @@ Each step starts from the plugin's initial parameter values. Results are JSON li
                     parameters[index]->setValueNotifyingHost ((float) (double) entry["value"]);
                     touched.push_back (index);
                 }
+            }
+
+            if (auto film = step["film"]; film.isObject())
+            {
+                // settle with silence after the parameter change, then the programme with the recording
+                feed.run (stepMs, 1000.0, -200.0);
+                const auto id = step["id"].toString();
+                auto file = output.getChildFile (id + ".film");
+                const auto frames = recordFilm (*plugin, *holder, film, file);
+                const auto area = screenArea (*holder);
+                vch::emit (vch::makeObject ({ { "type", "film" }, { "id", id }, { "file", file.getFullPathName() },
+                                         { "width", area.getWidth() }, { "height", area.getHeight() }, { "frames", frames } }));
+                continue;
             }
 
             // Audio runs in every step, silent unless the step asks for a tone: many editors (LV2 in particular) learn

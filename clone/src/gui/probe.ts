@@ -4,6 +4,7 @@ import type { Parameter } from "@vst-cloner/profile";
 import type { Logger } from "../build.ts";
 import { buildTable, detectEq, parameterSteps, tableNorm, tableRange, type EqMapping } from "../eq/mapping.ts";
 import { runGuiSnapshot, withVirtualDisplay, type GuiStep } from "./capture.ts";
+import { METER_FILM } from "./film.ts";
 import { countMask, diffMask, dilate, loadRaw } from "./image.ts";
 
 export interface ProbeFrame {
@@ -41,6 +42,11 @@ export interface GuiProbe {
    * taken with those parameter values (threshold turned down, so that a gain reduction meter moves)
    */
   meter?: { levelDb: number; file: string; params?: { index: number; value: number }[] }[];
+  /**
+   * films of the editor while METER_FILM plays (silence, rising sine, silence); with `params` taken with those
+   * parameter values (thresholds turned down). Newer probes have these instead of `meter`.
+   */
+  films?: { file: string; params?: { index: number; value: number }[]; frames: { t: number; levelDb: number }[] }[];
 }
 
 const MAX_CANDIDATES = 200;
@@ -171,7 +177,7 @@ export async function probeGui(options: ProbeOptions): Promise<GuiProbe> {
       steps: pass1Steps,
       display,
       ...(options.signal ? { signal: options.signal } : {}),
-      onShot: (_, done) => options.onProgress?.(done, pass1Steps.length, "Bedienelemente suchen"),
+      onShot: (_, done) => options.onProgress?.(done, pass1Steps.length, "Looking for controls"),
     });
 
     const { width, height } = first;
@@ -208,7 +214,7 @@ export async function probeGui(options: ProbeOptions): Promise<GuiProbe> {
           steps: pass2Steps,
           display,
           ...(options.signal ? { signal: options.signal } : {}),
-          onShot: (_, done) => options.onProgress?.(done, pass2Steps.length, "Bewegungen aufzeichnen"),
+          onShot: (_, done) => options.onProgress?.(done, pass2Steps.length, "Recording control movements"),
         })
       : undefined;
 
@@ -223,8 +229,8 @@ export async function probeGui(options: ProbeOptions): Promise<GuiProbe> {
       frames: sweepOf(param).map((value, k) => ({ value, file: second!.shots.get(`p${param.index}_${k}`)!.file })),
     }));
 
-    // level meters only move with audio: fresh instance, rising levels
-    let meter: GuiProbe["meter"];
+    // level meters only move with audio: fresh instance, films while a rising sine plays
+    let films: GuiProbe["films"];
     if (options.meterLevels?.length) {
       // a compressor at its initial threshold may not compress a sine at all: the levels again with the threshold
       // turned down, so that its gain reduction meter moves
@@ -232,7 +238,7 @@ export async function probeGui(options: ProbeOptions): Promise<GuiProbe> {
       const thresholds = options.parameters.filter((p) => p.automatable && /thresh/i.test(p.name) && !/hyster|zone|boost|release/i.test(p.name) && baseValue(p) > 0.2).slice(0, 8);
       const turnedDown = thresholds.map((p) => ({ index: p.index, value: 0.15 }));
       const series = [{ id: "meter", params: [] as { index: number; value: number }[] }, ...(turnedDown.length ? [{ id: "meterT", params: turnedDown }] : [])];
-      const steps: GuiStep[] = series.flatMap((s) => options.meterLevels!.map((levelDb, k) => ({ id: `${s.id}${k}`, params: s.params, audio: { frequency: 1000, levelDb } })));
+      const steps: GuiStep[] = series.map((s) => ({ id: `film-${s.id}`, params: s.params, film: METER_FILM }));
       const third = await runGuiSnapshot({
         plugin: options.plugin,
         ...(options.identifier ? { identifier: options.identifier } : {}),
@@ -240,10 +246,11 @@ export async function probeGui(options: ProbeOptions): Promise<GuiProbe> {
         steps,
         display,
         ...(options.signal ? { signal: options.signal } : {}),
-        onShot: (_, done) => options.onProgress?.(done, steps.length, "Pegelanzeige aufzeichnen"),
+        onShot: (_, done) => options.onProgress?.(done, steps.length, "Recording the meters"),
       });
-      if (third.width === width && third.height === height) {
-        meter = series.flatMap((s) => options.meterLevels!.map((levelDb, k) => ({ levelDb, file: third.shots.get(`${s.id}${k}`)!.file, ...(s.params.length ? { params: s.params } : {}) })));
+      const recorded = series.map((s) => ({ s, film: third.films.get(`film-${s.id}`) }));
+      if (recorded.every(({ film }) => film && film.width === width && film.height === height)) {
+        films = recorded.map(({ s, film }) => ({ file: film!.file, frames: film!.frames, ...(s.params.length ? { params: s.params } : {}) }));
       }
     }
 
@@ -256,7 +263,7 @@ export async function probeGui(options: ProbeOptions): Promise<GuiProbe> {
       base2: first.shots.get("base2")!.file,
       visible: probed,
       invisible,
-      ...(meter ? { meter } : {}),
+      ...(films ? { films } : {}),
     };
     // the probe with its pictures can be analysed again without the plugin (editor recognition bench)
     await writeFile(join(options.workDir, PROBE_FILE), JSON.stringify({ probe, parameters: options.parameters }));

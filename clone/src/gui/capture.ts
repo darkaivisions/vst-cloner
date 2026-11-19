@@ -13,6 +13,24 @@ export interface GuiStep {
   png?: boolean;
   /** feed a sine through the plugin while waiting (level meters) */
   audio?: { frequency: number; levelDb: number };
+  /** play an audio programme and record the editor meanwhile (see film.ts) */
+  film?: FilmProgramme;
+}
+
+/** Audio programme of a film: segments of digital silence (no levels) or of a sine ramping from fromDb to toDb. */
+export interface FilmProgramme {
+  frameMs: number;
+  frequency?: number;
+  segments: { ms: number; fromDb?: number; toDb?: number }[];
+}
+
+export interface GuiFilm {
+  id: string;
+  file: string;
+  width: number;
+  height: number;
+  /** time (ms from the start of the programme) and input level (dBFS, −200 = silence) of every frame */
+  frames: { t: number; levelDb: number }[];
 }
 
 export interface GuiShot {
@@ -27,6 +45,7 @@ export interface GuiSnapshotResult {
   width: number;
   height: number;
   shots: Map<string, GuiShot>;
+  films: Map<string, GuiFilm>;
   /** titles of windows the plugin opened besides its editor (moved out of the way before capturing) */
   dialogs: string[];
 }
@@ -126,6 +145,7 @@ export async function runGuiSnapshot(
     options.signal?.addEventListener("abort", onAbort, { once: true });
 
     const shots = new Map<string, GuiShot>();
+    const films = new Map<string, GuiFilm>();
     const dialogs: string[] = [];
     let size = { width: 0, height: 0 };
     let error: string | undefined;
@@ -147,6 +167,9 @@ export async function runGuiSnapshot(
           else if (message.type === "shot") {
             shots.set(message.id, message);
             options.onShot?.(message, shots.size);
+          } else if (message.type === "film") {
+            films.set(message.id, message);
+            options.onShot?.({ id: message.id, file: message.file, png: "", width: message.width, height: message.height }, shots.size + films.size);
           } else if (message.type === "dialog") {
             if (!dialogs.includes(message.title)) dialogs.push(message.title);
           } else if (message.type === "error") error = message.message;
@@ -164,7 +187,7 @@ export async function runGuiSnapshot(
       if (options.signal?.aborted) reject(new CancelledError());
       else if (error) reject(new Error(`Plugin editor: ${error}`));
       else if (!done) reject(new Error(`vch-gui ended unexpectedly (exit ${code})\n${stderr.trim().split("\n").slice(-8).join("\n")}`));
-      else resolve({ ...size, shots, dialogs });
+      else resolve({ ...size, shots, films, dialogs });
     });
   });
 }

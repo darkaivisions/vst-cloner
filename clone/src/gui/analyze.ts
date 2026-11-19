@@ -3,6 +3,7 @@ import { buildTable, detectEq, tableValue } from "../eq/mapping.ts";
 import {
   colorDistance,
   components,
+  countMask,
   diffMask,
   dilate,
   dominantColor,
@@ -19,6 +20,7 @@ import {
 } from "./image.ts";
 import type { Circle, Control, Display, Fill, GuiModel, LevelBar, Line, Needle, Panel, Readout, RotaryStyle, TextItem } from "./model.ts";
 import type { GuiProbe, ProbedParameter } from "./probe.ts";
+import { METER_FILM, readFilm, segmentTimes, type FilmFrame } from "./film.ts";
 import { findTesseract, plausibleText, recognizeBlocks } from "./ocr.ts";
 
 const TAU = Math.PI * 2;
@@ -1434,11 +1436,14 @@ function principalAxis(points: [number, number][]): { cx: number; cy: number; dx
  * the needle at rest, the pixels that appear are the deflected needle. Lines through all positions meet at the
  * pivot; the angles are calibrated with the gain reduction the compressor model predicts for each level.
  */
-async function analyzeMeter(probe: GuiProbe, noise: Uint8Array, reduction: (levelDb: number) => number): Promise<Display | undefined> {
+async function analyzeMeter(probe: GuiProbe, series: MeterShot[], noise: Uint8Array, reduction: (levelDb: number) => number): Promise<Display | undefined> {
   const { width, height } = probe;
-  const series = probe.meter?.filter((m) => !m.params);
-  if (!series || series.length < 3) return undefined;
-  const shots = await Promise.all(series.map((m) => loadRaw(m.file, width, height)));
+  if (series.length < 3) return undefined;
+  // only the levels at which the needle has left its rest (below the threshold it does not move)
+  const moved = series.slice(1).filter((m) => countMask(diffMask(m.image, series[0]!.image, 40, noise)) >= 20);
+  if (moved.length < 2) return undefined;
+  series = [series[0]!, ...moved];
+  const shots = series.map((m) => m.image);
   const rest = shots[0]!;
   const changes = shots.slice(1).map((s) => diffMask(s, rest, 40, noise));
   const restMask = new Uint8Array(width * height);
@@ -1559,15 +1564,14 @@ async function analyzeMeter(probe: GuiProbe, noise: Uint8Array, reduction: (leve
  * moves once the compressor works (or goes dark as a gate opens) shows gain reduction. Large areas that move with
  * the signal without that shape are analyzers or time graphs.
  */
-async function analyzeLevelMeters(probe: GuiProbe, noise: Uint8Array, exclude: Box[], reduction?: (levelDb: number) => number): Promise<Display[]> {
+async function analyzeLevelMeters(probe: GuiProbe, all: MeterSeries[], noise: Uint8Array, exclude: Box[], reduction?: (levelDb: number) => number): Promise<Display[]> {
   const found: Display[] = [];
   // the plain series first; the one with the threshold turned down adds gain reduction meters that stayed dark
-  const plain = probe.meter?.filter((m) => !m.params) ?? [];
-  const turned = probe.meter?.filter((m) => m.params) ?? [];
-  for (const [series, calibrated] of [[plain, true], [turned, false]] as const) {
+  for (const { shots: series, turned, moving } of [...all].sort((a, b) => Number(a.turned) - Number(b.turned))) {
+    const calibrated = !turned;
     if (series.length < 3) continue;
     const shared = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
-    for (const d of await levelMetersOf(probe, series, noise, [...exclude, ...found], calibrated ? reduction : undefined)) {
+    for (const d of await levelMetersOf(probe, series, turned, moving, noise, [...exclude, ...found], calibrated ? reduction : undefined)) {
       if (!found.some((f) => shared(f, d) > Math.min(area(f), area(d)) * 0.3)) found.push(d);
     }
   }
@@ -1591,9 +1595,9 @@ async function analyzeLevelMeters(probe: GuiProbe, noise: Uint8Array, exclude: B
 }
 
 /** analyzeLevelMeters for one series of shots (first: silence). */
-async function levelMetersOf(probe: GuiProbe, series: NonNullable<GuiProbe["meter"]>, noise: Uint8Array, exclude: Box[], reduction?: (levelDb: number) => number): Promise<Display[]> {
+async function levelMetersOf(probe: GuiProbe, series: MeterShot[], turned: boolean, moving: Uint8Array | undefined, noise: Uint8Array, exclude: Box[], reduction?: (levelDb: number) => number): Promise<Display[]> {
   const { width, height } = probe;
-  const shots = await Promise.all(series.map((m) => loadRaw(m.file, width, height)));
+  const shots = series.map((m) => m.image);
   const rest = shots[0]!;
   const levels = series.slice(1).map((m) => m.levelDb);
   const changes = shots.slice(1).map((s) => diffMask(s, rest, 30, noise));
@@ -1628,13 +1632,18 @@ async function levelMetersOf(probe: GuiProbe, series: NonNullable<GuiProbe["mete
     const seen = extents.map((e, k) => ({ e, k })).filter((x): x is { e: NonNullable<typeof x.e>; k: number } => x.e !== undefined);
     // a bar or LED chain fills its lit stretch; the lines of a graph do not
     const densest = Math.max(0, ...seen.map((s) => s.e.count / (s.e.length * short)));
-    if (long < short * 2.5 || densest < 0.25 || seen.length === 0) {
+    // a meter stands still while the input does; a time graph or analyzer keeps moving
+    let keepsMoving = 0;
+    if (moving) for (let y = box.y; y < box.y + box.h; y++) for (let x = box.x; x < box.x + box.w; x++) if (any[y * width + x] && moving[y * width + x]) keepsMoving++;
+    // (a pronounced bar may flicker with its peak display: that is no graph)
+    if (long < short * 2.5 || densest < 0.25 || seen.length === 0 || (keepsMoving > lit * 0.3 && long < short * 4)) {
       sparse.push(box);
       continue;
     }
     const lengths = seen.map((s) => s.e.length);
-    const rising = lengths.every((l, i) => i === 0 || l >= lengths[i - 1]! - 2);
-    const falling = lengths.every((l, i) => i === 0 || l <= lengths[i - 1]! + 2);
+    const slack = Math.max(2, long * 0.06);
+    const rising = lengths.every((l, i) => i === 0 || l >= lengths[i - 1]! - slack) && lengths[lengths.length - 1]! >= lengths[0]!;
+    const falling = lengths.every((l, i) => i === 0 || l <= lengths[i - 1]! + slack) && lengths[lengths.length - 1]! <= lengths[0]!;
     if (!rising && !falling) {
       sparse.push(box);
       continue;
@@ -1644,7 +1653,8 @@ async function levelMetersOf(probe: GuiProbe, series: NonNullable<GuiProbe["mete
     const anchoredLow = Math.abs(first.lo - last.lo) <= Math.abs(first.hi - last.hi);
     const origin: NonNullable<LevelBar["origin"]> = vertical ? (anchoredLow ? "top" : "bottom") : (anchoredLow ? "left" : "right");
     // lit at the quietest level: it follows the input; otherwise it shows what the compressor or gate does
-    const source: LevelBar["source"] = seen[0]!.k === 0 && rising && !series[0]!.params ? "input" : "reduction";
+    // (an input meter lights up at quiet levels and grows with the input; gain reduction starts at the threshold)
+    const source: LevelBar["source"] = levels[seen[0]!.k]! <= -30 && rising && !turned ? "input" : "reduction";
     // LED chain: the lit stretch falls into evenly spaced runs
     const runs: number[] = [];
     {
@@ -1701,6 +1711,84 @@ async function levelMetersOf(probe: GuiProbe, series: NonNullable<GuiProbe["mete
     displays.push({ kind: "generic", role: "analyzer", ...zone, background: hex(bg), grid: hex(bg), curve, text: curve });
   }
   return displays;
+}
+
+/**
+ * An LED chain in changed pixels: at least five blobs of about the same size in one row or column at an even
+ * pitch. Returns their extent and number.
+ */
+function ledChain(masks: Uint8Array[], width: number, box: Box): { box: Box; count: number; vertical: boolean } | undefined {
+  const all = new Uint8Array(masks[0]?.length ?? 0);
+  for (const m of masks) for (let y = box.y; y < box.y + box.h; y++) for (let x = box.x; x < box.x + box.w; x++) if (m[y * width + x]) all[y * width + x] = 1;
+  const blobs = components(all, width, all.length / width, 6).filter((b) => b.w >= 3 && b.h >= 3 && b.w <= 40 && b.h <= 40);
+  if (blobs.length < 5) return undefined;
+  const size = percentile(blobs.map((b) => b.w * b.h), 0.5);
+  const alike = blobs.filter((b) => b.w * b.h > size * 0.5 && b.w * b.h < size * 2);
+  for (const vertical of [false, true]) {
+    const lines = new Map<number, typeof alike>();
+    for (const b of alike) {
+      const key = Math.round((vertical ? b.cx : b.cy) / 4);
+      lines.set(key, [...(lines.get(key) ?? []), b]);
+    }
+    for (const row of lines.values()) {
+      if (row.length < 5) continue;
+      const along = row.map((b) => (vertical ? b.cy : b.cx)).sort((a, b) => a - b);
+      const pitches = along.slice(1).map((v, i) => v - along[i]!);
+      const pitch = percentile(pitches, 0.5);
+      if (pitch < 4 || !pitches.every((p) => Math.abs(p - pitch) <= Math.max(2, pitch * 0.2))) continue;
+      return { box: union(row), count: row.length, vertical };
+    }
+  }
+  return undefined;
+}
+
+interface MeterShot {
+  levelDb: number;
+  image: Image;
+}
+
+interface MeterSeries {
+  /** taken with the thresholds turned down */
+  turned: boolean;
+  /** silence first, then rising levels */
+  shots: MeterShot[];
+  /** pixels that keep changing while the input level is held (graphs scroll, meters stand) – films only */
+  moving?: Uint8Array;
+}
+
+/** levels picked from the rising sine of a meter film (dBFS) */
+const FILM_LEVELS = [-48, -40, -32, -26, -20, -14, -9, -5, -3];
+
+/** The audio-driven series of a probe: from its films (newer probes) or its still shots. */
+async function meterSeries(probe: GuiProbe): Promise<MeterSeries[]> {
+  const { width, height } = probe;
+  if (probe.films?.length) {
+    const times = segmentTimes(METER_FILM);
+    const ramp = times[1]!, hold = times[2]!;
+    return Promise.all(probe.films.map(async (film) => {
+      const frames = await readFilm(film.file, width, height);
+      // rest: the last frame of the first silence; levels: the frames nearest to FILM_LEVELS on the ramp
+      const rest = [...frames].reverse().find((f) => f.t < times[0]!.to - 10) ?? frames[0]!;
+      const onRamp = frames.filter((f) => f.t >= ramp.from && f.t <= hold.to);
+      const shots = FILM_LEVELS.flatMap((level) => {
+        const best = onRamp.reduce<FilmFrame | undefined>((a, f) => (!a || Math.abs(f.levelDb - level) < Math.abs(a.levelDb - level) ? f : a), undefined);
+        return best && Math.abs(best.levelDb - level) < 2 ? [{ levelDb: level, image: best.image }] : [];
+      });
+      const held = frames.filter((f) => f.t > hold.from + 150 && f.t <= hold.to);
+      const moving = new Uint8Array(width * height);
+      for (let i = 1; i < held.length; i++) {
+        const m = diffMask(held[i]!.image, held[i - 1]!.image, 30);
+        for (let p = 0; p < m.length; p++) if (m[p]) moving[p] = 1;
+      }
+      return { turned: Boolean(film.params), shots: [{ levelDb: -200, image: rest.image }, ...shots], moving };
+    }));
+  }
+  if (!probe.meter) return [];
+  const load = (list: NonNullable<GuiProbe["meter"]>) => Promise.all(list.map(async (m) => ({ levelDb: m.levelDb, image: await loadRaw(m.file, width, height) })));
+  return [
+    { turned: false, shots: await load(probe.meter.filter((m) => !m.params)) },
+    { turned: true, shots: await load(probe.meter.filter((m) => m.params)) },
+  ];
 }
 
 export interface AnalyzeOptions {
@@ -1865,6 +1953,17 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     const curvePoints = d.frames.flatMap((f) => maskPoints(diffMask(f, base, 40, noise), width, box)).slice(0, 20000);
     const curve = dominantAt(d.frames[0]!, curvePoints);
     const grid = dominantColor(base, box, subtle);
+    // a row of evenly spaced, equal lights a control switches on and off is an LED meter showing what it sets
+    const leds = ledChain(d.frames.map((f) => diffMask(f, base, 30, noise)), width, box);
+    if (leds) {
+      const lit = maskPoints(diffMask(d.frames[d.frames.length - 1]!, base, 30, noise), width, box);
+      const color = hex(lit.length ? dominantAt(d.frames[d.frames.length - 1]!, lit) : bg);
+      displays.push({
+        kind: "bar", ...leds.box, background: hex(bg), grid: color, curve: color, text: color,
+        bar: { source: "reduction", fromDb: 0, toDb: 20, color, origin: leds.vertical ? "bottom" : "left", segments: leds.count },
+      });
+      continue;
+    }
     // a display that the threshold, ratio or knee of a compressor or gate bend is its transfer curve
     const curveLike = !d.eq && d.params.some((p) => /thresh|ratio|knee|reduction|range/i.test(p.name));
     displays.push({
@@ -1873,10 +1972,12 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     });
   }
 
-  if (probe.meter) {
-    const meter = options.meterReduction ? await analyzeMeter(probe, animation, options.meterReduction) : undefined;
+  const series = await meterSeries(probe);
+  if (series.length) {
+    const plain = series.find((s) => !s.turned);
+    const meter = options.meterReduction && plain ? await analyzeMeter(probe, plain.shots, animation, options.meterReduction) : undefined;
     if (meter) displays.push(meter);
-    const meters = await analyzeLevelMeters(probe, animation, [...displays.filter((d) => d.kind === "meter"), ...controls], options.meterReduction);
+    const meters = await analyzeLevelMeters(probe, series, animation, [...displays.filter((d) => d.kind === "meter"), ...controls], options.meterReduction);
     // a display that moves with the signal is an analyzer or a meter, whatever control also changes it
     const inside = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
     for (let i = displays.length - 1; i >= 0; i--) {
@@ -1884,7 +1985,18 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
       if (d.kind !== "generic") continue;
       if (meters.some((m) => inside(m, d) > area(d) * 0.5)) displays.splice(i, 1);
     }
-    displays.push(...meters);
+    // a moving dot on a transfer curve is part of that curve; a graph found in pieces is one graph
+    const covered = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+    const kept = meters.filter((m) => !(m.role === "analyzer" && displays.some((d) => d.kind !== "bar" && covered(d, m) > area(m) * 0.5)));
+    for (let i = 0; i < kept.length; i++) {
+      for (let j = kept.length - 1; j > i; j--) {
+        if (kept[i]!.role === "analyzer" && kept[j]!.role === "analyzer" && overlaps(kept[i]!, kept[j]!, 8)) {
+          Object.assign(kept[i]!, union([kept[i]!, kept[j]!]));
+          kept.splice(j, 1);
+        }
+      }
+    }
+    displays.push(...kept);
   }
 
   // exclusion mask for static analysis
