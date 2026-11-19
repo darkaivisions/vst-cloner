@@ -2,7 +2,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { call, startJob, type JobHandle } from "../bridge.ts";
 import { clear, formatBytes, formatDb, h, openInSystem, revealInFolder, toast, verdictClass, zoomImage } from "../dom.ts";
 import { Progress } from "../progress.ts";
-import type { CaptureResult, CloneResult, PluginEntry, PluginInfo, ProfileSummary } from "../types.ts";
+import type { CaptureResult, CloneResult, PluginEntry, PluginInfo, PluginKind, ProfileSummary } from "../types.ts";
+import { filterBar, kindBadge } from "../kinds.ts";
 
 /** Main workflow: 1 choose plugin → 2 capture → 3 build the clone. */
 type Mode = "eq" | "dynamics" | "distortion" | "delay" | "modulation" | "reverb" | "neural" | "best";
@@ -11,6 +12,20 @@ export class CloneView {
   readonly element: HTMLElement;
 
   private plugins: PluginEntry[] = [];
+  /** what kind of effect each plugin is (by path), filled in the background */
+  private readonly kinds = new Map<string, PluginKind>();
+  private kindsLoading = false;
+  private group = "all";
+  private format: "all" | "VST3" | "LV2" | "Windows" = "all";
+  private hideClones = false;
+  private readonly chips = h("div.filter-chips");
+  private readonly formatSelect = h("select.filter-select", { title: "Plugin format" });
+  private readonly pending = h("span.filter-pending");
+  private readonly filters = h("div.filters", {}, this.chips,
+    h("div.filter-extra", {}, this.formatSelect,
+      h("label.check.filter-check", { title: "Hide the clones vst-cloner built" },
+        h("input", { type: "checkbox", onchange: (e: Event) => { this.hideClones = (e.target as HTMLInputElement).checked; this.renderList(); } }), "Hide clones"),
+      this.pending));
   private selected?: PluginEntry;
   private info?: PluginInfo;
   private profile?: { path: string; name: string; renders: number; planner: string };
@@ -52,6 +67,7 @@ export class CloneView {
 
   constructor(private readonly onLibraryChanged: () => void) {
     this.search.addEventListener("input", () => this.renderList());
+    this.formatSelect.addEventListener("change", () => { this.format = this.formatSelect.value as typeof this.format; this.renderList(); });
     this.captureButton.addEventListener("click", () => (this.captureJob ? this.captureJob.cancel() : this.bestJob ? this.bestJob.cancel() : this.mode === "best" ? this.runBest() : this.capture()));
     this.cloneButton.addEventListener("click", () => (this.cloneJob ? this.cloneJob.cancel() : this.buildClone()));
     this.guiBox.addEventListener("change", () => this.update());
@@ -61,7 +77,7 @@ export class CloneView {
         h("div.spacer"),
         h("button.ghost.small", { onclick: () => this.pickFile() }, "Other file …"),
         h("button.ghost.small", { onclick: () => this.refresh(), title: "Scan the plugin folders again" }, "Refresh")),
-      this.search, this.list, this.details);
+      this.search, this.filters, this.list, this.details);
 
     const step2 = h("section.card.step", {},
       h("header.step-header", {}, h("span.step-number", {}, "2"), h("h2", {}, "Measure")),
@@ -96,6 +112,29 @@ export class CloneView {
       this.plugins = [];
     }
     this.renderList();
+    void this.loadKinds();
+  }
+
+  /**
+   * Looks at every plugin once to tell what kind of effect it is (the bridge caches it per bundle, so only new or
+   * updated plugins are loaded). Done in small portions so the list fills in while it runs.
+   */
+  private async loadKinds() {
+    if (this.kindsLoading) return;
+    this.kindsLoading = true;
+    try {
+      const missing = this.plugins.map((p) => p.path).filter((path) => !this.kinds.has(path));
+      for (let i = 0; i < missing.length; i += 24) {
+        const found = await call<Record<string, PluginKind>>("plugins.kinds", { paths: missing.slice(i, i + 24) });
+        for (const [path, kind] of Object.entries(found)) this.kinds.set(path, kind);
+        this.renderList();
+      }
+    } catch (error) {
+      toast(`Effect types: ${(error as Error).message}`, "error");
+    } finally {
+      this.kindsLoading = false;
+      this.renderList();
+    }
   }
 
   /** Opens a profile from the library in step 3. */
@@ -194,9 +233,19 @@ export class CloneView {
   }
 
   private renderList() {
+    const scroll = this.list.scrollTop;
     clear(this.list);
     const query = this.search.value.trim().toLowerCase();
-    const items = this.plugins.filter((p) => !query || p.name.toLowerCase().includes(query));
+    const formatOk = (p: PluginEntry) => this.format === "all" || (this.format === "Windows" ? p.source === "yabridge" : p.format === this.format && p.source !== "yabridge");
+    // the counts of the chips follow search, format and clones – not the group itself
+    const base = this.plugins.filter((p) => (!query || p.name.toLowerCase().includes(query)) && formatOk(p) && !(this.hideClones && p.clone));
+    const counts = new Map<string, number>();
+    for (const p of base) {
+      const group = this.kinds.get(p.path)?.group;
+      if (group) counts.set(group, (counts.get(group) ?? 0) + 1);
+    }
+    const items = this.group === "all" ? base : base.filter((p) => this.kinds.get(p.path)?.group === this.group);
+    this.renderFilters(counts, base.length);
     if (items.length === 0) {
       this.list.appendChild(h("div.empty", {}, this.plugins.length ? "No match" : "No plugins found – choose \"Other file …\""));
       return;
@@ -204,12 +253,30 @@ export class CloneView {
     for (const plugin of items) {
       const row = h("button.plugin-row", { class: plugin === this.selected ? "selected" : "", onclick: () => this.select(plugin) },
         h("span.plugin-name", {}, plugin.name),
+        kindBadge(this.kinds.get(plugin.path)),
         h("span.badge", {}, plugin.format),
         plugin.source === "yabridge" && h("span.badge.accent", { title: "Windows plugin via yabridge" }, "Windows"),
         plugin.clone && h("span.badge.muted", {}, "Clone"));
       this.list.appendChild(row);
     }
+    this.list.scrollTop = scroll;
   }
+
+  /** Effect groups with counts; the format choice lists the formats present. */
+  private renderFilters(counts: Map<string, number>, total: number) {
+    clear(this.chips);
+    this.chips.appendChild(filterBar(counts, total, this.group, (group) => { this.group = group; this.renderList(); }));
+    const formats = (["all", "VST3", "LV2", "Windows"] as const).filter((f) => f === "all" || f === this.format || this.plugins.some((p) => (f === "Windows" ? p.source === "yabridge" : p.format === f)));
+    const wanted = formats.join(",");
+    if (this.formatSelect.dataset.formats !== wanted) {
+      clear(this.formatSelect);
+      for (const f of formats) this.formatSelect.appendChild(h("option", { value: f, selected: f === this.format }, f === "all" ? "All formats" : f === "Windows" ? "Windows (yabridge)" : f));
+      this.formatSelect.dataset.formats = wanted;
+    }
+    const known = [...counts.values()].reduce((a, b) => a + b, 0);
+    this.pending.textContent = this.kindsLoading && known < total ? `identifying effects … ${known} / ${total}` : "";
+  }
+
 
   private async pickFile() {
     const path = await open({ directory: true, title: "Choose a plugin bundle (.vst3 or .lv2)" });
@@ -218,6 +285,7 @@ export class CloneView {
     const entry: PluginEntry = { path, name, format: /\.lv2$/i.test(path) ? "LV2" : "VST3", source: /yabridge/i.test(path) ? "yabridge" : "native", clone: false };
     this.plugins = [entry, ...this.plugins.filter((p) => p.path !== path)];
     this.renderList();
+    void this.loadKinds();
     await this.select(entry);
   }
 

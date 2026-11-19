@@ -306,3 +306,24 @@ input:focus, select:focus { border-color: var(--accent); }
 .best-options .note button { margin-left: 6px; }
 .compare-table { margin-top: 10px; }
 .compare-table tr.chosen td { background: var(--panel-2); }
+
+/* ---- filters and effect badges (plugin list, library) ---- */
+.filters { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.filters:empty { display: none; }
+.filter-bar, .filter-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px;
+  border-radius: 999px; border: 1px solid var(--line); background: var(--panel-2); color: var(--muted);
+}
+.chip:hover { color: var(--text); }
+.chip.active { background: var(--accent); border-color: var(--accent); color: white; }
+.chip-count { font-size: 11px; opacity: 0.75; }
+.filter-extra { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.filter-select { width: auto; padding: 4px 8px; font-size: 12px; }
+.filter-check { font-size: 12px; }
+.filter-pending { font-size: 12px; color: var(--muted); }
+.badge.kind { white-space: nowrap; }
+.badge.kind.pending { opacity: 0.5; }
+.badge.kind.engine { color: #c9d8ff; border-color: #3a4f86; background: #1d2846; }
+.badge.kind.group-instrument, .badge.kind.group-unknown { opacity: 0.6; }
+.profile-name .badge.kind { margin-left: 8px; vertical-align: 1px; }

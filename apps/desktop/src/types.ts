@@ -12,6 +12,16 @@ export interface AppInfo {
   neural: { python: string | null };
 }
 
+/** What kind of effect a plugin is (bridge: plugins.kinds). */
+export interface PluginKind {
+  kind: string;
+  /** eq, dynamics, distortion, delay, modulation, reverb, filter, other, instrument, unknown */
+  group: string;
+  engine: boolean;
+  label: string;
+  category?: string;
+}
+
 export interface PluginEntry {
   path: string;
   name: string;
@@ -74,6 +84,11 @@ export interface ProfileSummary {
   createdAt: string;
   renders: number;
   planner: string;
+  /** what kind of effect the plugin is: eq, dynamics, distortion, delay, modulation, reverb, instrument, other */
+  kind?: string;
+  kindLabel?: string;
+  /** vst-cloner has an engine for this kind of effect */
+  engine?: boolean;
   hasModel: boolean;
   verdict?: string;
   rmsDb?: number;

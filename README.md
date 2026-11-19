@@ -81,6 +81,11 @@ rebuild a clone without the original, export, import) and **AI models** (provide
 test). At the bottom, the **log** shows every step, grouped by phase; "Details" also shows the
 output of the compiler and the host.
 
+The plugin list and the library show what kind of effect each plugin is (EQ, Dynamics, Distortion, Delay,
+Modulation, Reverb, Filter, Phaser … – highlighted where vst-cloner has an engine of its own for it) and filter by it;
+the plugin list also by format and without the own clones. Every plugin is loaded once for this in the background
+(about 40 ms natively) and the result is cached until the plugin changes.
+
 In the Clone section the app picks the measurement mode that fits the plugin: **EQ**, **Dynamics**,
 **Distortion**, **Delay**, **Modulation** (chorus, flanger, vibrato), **Reverb** or **Universal** (the network,
 for everything else). Plugins whose category names another effect class are not classified as a compressor or

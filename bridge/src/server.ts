@@ -90,6 +90,7 @@ import {
   parseModelRef,
 } from "@vst-cloner/agent";
 import { clonesDir, dataDir, fileSize, profilesDir, scanPlugins } from "./paths.ts";
+import { pluginKinds, profileKind } from "./kinds.ts";
 
 // ---- protocol -----------------------------------------------------------------------------------
 
@@ -172,6 +173,10 @@ interface ProfileSummary {
   createdAt: string;
   renders: number;
   planner: string;
+  /** what kind of effect the plugin is (see kinds.ts) and its badge text */
+  kind: string;
+  kindLabel: string;
+  engine: boolean;
   hasModel: boolean;
   verdict?: string;
   rmsDb?: number;
@@ -336,8 +341,10 @@ async function summarizeProfile(path: string): Promise<ProfileSummary> {
   const manifest = json("manifest.json");
   const captures = json("captures.json");
   const report = json("report.json");
+  const kind = profileKind(manifest, json("parameters.json")?.parameters ?? []);
   // EQ/compressor: rms deviation (dB); distortion: combined error of its characteristics
-  const rms = (report?.verify?.overall?.rmsDb ?? report?.verify?.overall?.total ?? report?.verify?.esr) as number | undefined;
+  // (the universal clone is judged by its typical setting, the median, where the report has one)
+  const rms = (report?.verify?.overall?.rmsDb ?? report?.verify?.overall?.total ?? report?.verify?.median ?? report?.verify?.esr) as number | undefined;
   return {
     path,
     file: basename(path),
@@ -348,6 +355,9 @@ async function summarizeProfile(path: string): Promise<ProfileSummary> {
     createdAt: manifest?.createdAt ?? "",
     renders: captures?.renders?.length ?? 0,
     planner: manifest?.capture?.plan?.planner ?? "generic",
+    kind: kind.group,
+    kindLabel: kind.label,
+    engine: kind.engine,
     hasModel: MODEL_FILES.some((file) => entries[file]),
     ...(rms !== undefined
       ? { rmsDb: rms, verdict: verdictFor(manifest?.capture?.plan?.planner)(rms), deviation: deviationText(manifest?.capture?.plan?.planner, rms) }
@@ -425,6 +435,9 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
   },
 
   "plugins.scan": () => scanPlugins(),
+
+  /** What kind of effect each plugin is (cached per bundle; loading a plugin takes ~40 ms natively). */
+  "plugins.kinds": (params) => pluginKinds(Array.isArray(params.paths) ? params.paths.filter((p): p is string => typeof p === "string") : []),
 
   async "plugins.info"(params) {
     const path = str(params, "path");
