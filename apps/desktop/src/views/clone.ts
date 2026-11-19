@@ -393,8 +393,10 @@ export class CloneView {
       this.result.append(
         h("div.verdict", { class: verdictClass(nn.verdict) },
           h("div.verdict-main", {}, nn.verdict),
-          h("div.verdict-sub", {}, `The clone's output differs from the original by ${pct(nn.esr)} of the signal energy · ${nn.renders} settings checked` +
-            (nn.validate !== undefined ? ` · unseen combinations ${pct(nn.validate)}` : ""))),
+          h("div.verdict-sub", {}, `The clone's output differs from the original by ${pct(nn.median ?? nn.esr)} of the signal energy in a typical setting` +
+            (nn.median !== undefined ? ` (mean ${pct(nn.esr)})` : "") + ` · ${nn.renders} settings checked` +
+            (nn.validate !== undefined ? ` · unseen combinations ${pct(nn.validate)}` : "") +
+            (nn.outliers ? ` · ${nn.outliers} setting${nn.outliers === 1 ? "" : "s"} off by half the signal or more` : ""))),
         h("ul.model-summary", {}, ...(result.summary ?? []).map((line) => h("li", {}, line))),
       );
       if (nn.worst.length) {

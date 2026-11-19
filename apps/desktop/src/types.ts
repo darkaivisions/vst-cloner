@@ -115,6 +115,8 @@ export interface CloneResult {
   /** universal clone: error-to-signal ratio clone vs. original (0 = identical) */
   neural?: {
     esr: number;
+    median?: number;
+    outliers?: number;
     validate?: number;
     worst: { label: string; esr: number }[];
     verdict: string;

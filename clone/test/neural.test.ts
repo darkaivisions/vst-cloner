@@ -4,7 +4,8 @@ import type { Parameter } from "@vst-cloner/profile";
 import { DEFAULT_PLAN } from "@vst-cloner/capture";
 import { MAX_NEURAL_CONTROLS, NEURAL_SURVEY_POINTS, neuralControls, neuralRenderCounts, neuralSurvey, outputPositions, planNeural } from "../src/neural/plan.ts";
 import { generateNeuralHeader, type NeuralModel } from "../src/neural/codegen.ts";
-import { neuralVerdict } from "../src/neural/workflow.ts";
+import { formatNeuralVerify, neuralReportVerdict, neuralVerdict } from "../src/neural/workflow.ts";
+import { median } from "../src/neural/verify.ts";
 
 const parameter = (index: number, name: string, extra: Partial<Parameter> = {}): Parameter => ({
   index, id: String(index), name, default: 0.5, numSteps: 0x7fffffff, discrete: false, boolean: false, automatable: true, ...extra,
@@ -95,4 +96,15 @@ test("universal clone rating: thresholds on the error share", () => {
   assert.equal(neuralVerdict(0.005), "excellent");
   assert.equal(neuralVerdict(0.04), "good");
   assert.equal(neuralVerdict(0.5), "inaccurate");
+});
+
+test("the verdict follows the typical setting, the mean and the outliers are reported", () => {
+  assert.equal(median([0.3, 0.01, 0.02]), 0.02);
+  assert.equal(median([0.01, 0.02, 0.03, 10]), 0.025);
+  const report = { clone: "x", renders: 4, esr: 2.5, median: 0.025, outliers: 1, worst: [{ label: "setting 3", esr: 10 }] };
+  assert.equal(neuralReportVerdict(report), "very good");
+  assert.equal(neuralReportVerdict({ esr: 0.2 }), "inaccurate");
+  const text = formatNeuralVerify(report).join("\n");
+  assert.match(text, /typical setting 2\.50 %/);
+  assert.match(text, /mean 250\.0 % \(4\.0 dB\); 1 setting off by half the signal or more/);
 });

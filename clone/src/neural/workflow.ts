@@ -52,8 +52,15 @@ export function formatNeuralModel(model: NeuralModel & { trainEsr?: number; vali
   return lines;
 }
 
+/**
+ * Verdict on a verified clone: by the typical setting (median), so that one setting with the resonance at
+ * self-oscillation does not decide it; the mean and the outliers are reported next to it.
+ */
+export const neuralReportVerdict = (report: { esr: number; median?: number }): string => neuralVerdict(report.median ?? report.esr);
+
 export function formatNeuralVerify(report: NeuralVerifyReport): string[] {
-  const lines = [`Clone vs. original (${report.renders} settings): error ${percent(report.esr)} – ${neuralVerdict(report.esr)}`];
+  const lines = [`Clone vs. original (${report.renders} settings): typical setting ${percent(report.median)} – ${neuralReportVerdict(report)}`];
+  lines.push(`  mean ${percent(report.esr)}` + (report.outliers ? `; ${report.outliers} setting${report.outliers === 1 ? "" : "s"} off by half the signal or more` : ""));
   if (report.validate !== undefined) lines.push(`  of which unseen combinations: error ${percent(report.validate)}`);
   lines.push("Largest deviations:", ...report.worst.map((w) => `  ${w.label}: ${percent(w.esr)}`));
   return lines;

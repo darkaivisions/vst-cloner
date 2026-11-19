@@ -22,6 +22,7 @@ import {
   neuralPlanner,
   neuralPython,
   neuralRenderCounts,
+  neuralReportVerdict,
   neuralVerdict,
   setupNeuralEnvironment,
   cloneDelayProfile,
@@ -635,7 +636,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
           log: (level, message) => ctx.log(level, message),
         });
         const v = result.verify;
-        if (v) ctx.log("success", `Clone ready – ${deviationText("neural", v.esr)} (${neuralVerdict(v.esr)})`);
+        if (v) ctx.log("success", `Clone ready – typical setting ${deviationText("neural", v.median)} (${neuralReportVerdict(v)})`);
         return {
           kind: "neural",
           pluginName,
@@ -647,9 +648,11 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
           neural: v
             ? {
                 esr: v.esr,
+                median: v.median,
+                outliers: v.outliers,
                 ...(v.validate !== undefined ? { validate: v.validate } : {}),
                 worst: v.worst,
-                verdict: neuralVerdict(v.esr),
+                verdict: neuralReportVerdict(v),
                 renders: v.renders,
               }
             : undefined,

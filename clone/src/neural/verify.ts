@@ -12,6 +12,10 @@ export interface NeuralVerifyReport {
   renders: number;
   /** error-to-signal ratio clone vs. original, mean over the renders (0 = identical, 1 = as large as the signal) */
   esr: number;
+  /** ESR of the typical setting (median over the renders): a few settings far off do not move it */
+  median: number;
+  /** settings whose error is at least half the signal energy */
+  outliers: number;
   train?: number;
   validate?: number;
   worst: { label: string; esr: number }[];
@@ -38,6 +42,15 @@ function esr(original: Float32Array, clone: Float32Array): number {
 }
 
 const mean = (values: number[]) => (values.length ? values.reduce((a, b) => a + b, 0) / values.length : undefined);
+
+export function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+/** a setting this far off (error ≥ half the signal energy) counts as an outlier */
+export const NEURAL_OUTLIER_ESR = 0.5;
 
 /** Renders the clone with every captured setting and compares it sample by sample with the original. */
 export async function verifyNeuralClone(
@@ -101,6 +114,8 @@ export async function verifyNeuralClone(
       clone: clonePath,
       renders: rows.length,
       esr: mean(rows.map((r) => r.esr))!,
+      median: median(rows.map((r) => r.esr)),
+      outliers: rows.filter((r) => r.esr >= NEURAL_OUTLIER_ESR).length,
       ...(train !== undefined ? { train } : {}),
       ...(validate !== undefined ? { validate } : {}),
       worst: [...rows].sort((a, b) => b.esr - a.esr).slice(0, 5).map((r) => ({ label: r.label, esr: r.esr })),
