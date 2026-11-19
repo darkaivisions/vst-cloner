@@ -179,7 +179,7 @@ npm run vch -- clone anything.vcprofile -o ./anything-clone --minutes 10
 ```
 
 The universal clone does not need to know what the plugin is. The measurement sets **all controls at random**
-in every setting (64–160 settings depending on the number of controls, plus 16 of their own as a cross-check)
+in every setting (128–400 settings depending on the number of controls, plus 32 of their own as a cross-check)
 and plays a ~7 s test signal through each: noise at four levels, a quiet and a loud sweep, level steps, a tone
 burst and an impulse. From that, a recurrent network (LSTM with 64 units) learns how the plugin turns its input
 into its output at every setting: the controls enter as inputs and, through a small second network (FiLM), scale

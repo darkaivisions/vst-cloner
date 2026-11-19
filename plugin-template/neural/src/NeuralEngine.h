@@ -5,11 +5,12 @@
 //   gates(t) = Wx·x(t) + Wc·knobs + b + U·h(t−1)          (order i, f, g, o – as in PyTorch; lstmU holds the
 //                                                          column of every h component: lstmU[k·4H + j] = U[j][k])
 //   c(t) = σ(f)·c(t−1) + σ(i)·tanh(g),  h(t) = σ(o)·tanh(c(t))
-//   gamma, beta, dry = film(knobs) = W2·tanh(W1·knobs + b1) + b2
-//   y(t) = dense·(gamma ⊙ h(t) + beta) + denseB + dry·x(t)
+//   gamma, beta, dry, level = film(knobs) = W2·tanh(W1·knobs + b1) + b2
+//   y(t) = exp(level) · (dense·(gamma ⊙ h(t) + beta) + denseB + dry·x(t))
 //
 // The knobs change only when a control moves, so their part of the gates, film() and the folded output weights
-// (dense ⊙ gamma, dense·beta + denseB) are computed per block in computeConditions(), not per sample.
+// (exp(level) · dense ⊙ gamma, exp(level) · (dense·beta + denseB), exp(level) · dry) are computed per block in
+// computeConditions(), not per sample. Models from before the level row (filmLevel = false) leave it at 0 dB.
 
 #include "CloneModel.h"
 
@@ -90,8 +91,12 @@ namespace vch
             out.outWeight[(size_t) k] = denseW[k] * gamma;
             bias += denseW[k] * beta;
         }
-        out.outBias = bias;
-        out.dry = film (2 * H);
+        // level on the natural-log scale, clamped as in training (±12 = ±104 dB)
+        const float gain = filmLevel ? std::exp (std::clamp (film (2 * H + 1), -12.0f, 12.0f)) : 1.0f;
+        for (auto& w : out.outWeight)
+            w *= gain;
+        out.outBias = bias * gain;
+        out.dry = film (2 * H) * gain;
     }
 
     /** State of one channel. */

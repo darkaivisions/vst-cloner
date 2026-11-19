@@ -20,8 +20,12 @@ export interface NeuralVerifyReport {
 /** ESR in dB (−20 dB = 1 % of the signal energy) – the number the app shows */
 export const esrToDb = (esr: number) => 10 * Math.log10(Math.max(esr, 1e-10));
 
-/** output quieter than this (dBFS power) counts as silence: a silent original makes any residual noise an infinite error */
-const SILENCE_POWER = 10 ** (-90 / 10);
+/**
+ * Output quieter than this (mean square, dBFS) counts as silence: errors are measured against at least this power.
+ * Otherwise a setting with the volume turned all the way down (Tal-Filter-2: −77 dB) makes inaudible residual noise
+ * an error of thousands of percent that dominates the mean. The same floor in dsp/neural/train.py.
+ */
+const SILENCE_POWER = 10 ** (-60 / 10);
 
 function esr(original: Float32Array, clone: Float32Array): number {
   const n = Math.min(original.length, clone.length);

@@ -32,7 +32,7 @@ test("universal plan: the number of controls is capped, more controls get more s
   const many = Array.from({ length: 40 }, (_, i) => parameter(i, `P${i}`));
   assert.equal(neuralControls(many).length, MAX_NEURAL_CONTROLS);
   assert.ok(neuralRenderCounts(8).train > neuralRenderCounts(1).train);
-  assert.ok(neuralRenderCounts(100).train <= 160);
+  assert.ok(neuralRenderCounts(100).train <= 400);
 });
 
 test("universal clone header: weights in the engine's layout, conditioning inputs mapped to clone parameters", () => {
@@ -57,6 +57,11 @@ test("universal clone header: weights in the engine's layout, conditioning input
   // U stays hidden-major: the weights of h0 to all gates, then those of h1
   assert.match(header, /lstmU\[16\] = \{ 0\.10000000149011\d*, 0\.20000000298023\d*/);
   assert.match(header, /filmW2\[10\]/);
+  // a model from before the level row keeps 0 dB; one with it switches the gain on
+  assert.match(header, /filmLevel = false;/);
+  const leveled = generateNeuralHeader({ ...model, film: { ...model.film, W2: [...model.film.W2, [0.1, 0.1]], b2: [...model.film.b2, 0] } }, [parameter(3, "Drive")], "Test");
+  assert.match(leveled.header, /filmLevel = true;/);
+  assert.throws(() => generateNeuralHeader({ ...model, film: { ...model.film, W2: model.film.W2.slice(1) } }, [parameter(3, "Drive")], "Test"), /FiLM output/);
   assert.throws(() => generateNeuralHeader({ ...model, parameters: [3, 4] }, [parameter(3, "Drive"), parameter(4, "Tone")], "Test"), /LSTM input weights/);
 });
 

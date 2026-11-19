@@ -246,6 +246,15 @@ vst-cloner/
      without), ESR normalised per render, no log-spectral loss term (it made training diverge), dry path
      initialised to pass the input; a plan with all controls at random cut the error on unseen combinations
      from 16 % to 3.8 %
+   - Level on a logarithmic scale ✔ – the knobs set a gain exp(level) on the whole output (±104 dB), so volume
+     controls spanning 100 dB and more can be learned; 50 random settings per control (128–400) instead of 12, 32 for
+     the cross-check; errors measured against at least −60 dBFS (a turned-down setting no longer dominates the mean).
+     Batch over five plugins, clone vs. original, all / unseen combinations (before → after):
+     3BandEQ 2.5 → 0.56 % / 4.5 → 1.9 %, wolf-shaper 16.2 → 0.62 % / 3.7 → 4.2 %, gxtape 24 → 10.5 % / 124 → 14 %,
+     ZamComp 81 → 21 % / 164 → 24 %, Tal-Filter-2 711 → 29 % / 92 → 70 %
+   - Open: Tal-Filter-2 (one unseen combination at 1292 %, the rest around 30 %; its LFO does not run without host
+     tempo/transport), ZamComp (attack/release of a compressor, 21 %), wow/flutter/hiss of gxtape cannot match
+     sample by sample
    - Open: long memory (reverb tails, long delays) and LFO modulation; stereo effects that treat the channels
      differently (one network for both channels now); plugins with more than 24 controls; hard staircase
      non-linearities (bitcrusher at few bits); AVX for a lower CPU load; editor reconstruction is shared with

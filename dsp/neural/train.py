@@ -11,7 +11,7 @@ Progress, results and errors are written as JSON lines to stdout (read by clone/
   {"type": "result", "model": "<path>", "trainEsr": x, "validateEsr": x, ...}
 
 Model: LSTM over [x(t), p1 … pn] → linear → + x(t) (the network learns the difference to the dry signal, so an
-untrained or bypassed state passes audio through). Weights are exported in RTNeural's layout (model.json).
+untrained or bypassed state passes audio through), times a level the knobs set on a logarithmic scale. Weights are exported in RTNeural's layout (model.json).
 """
 
 import argparse
@@ -64,7 +64,7 @@ def load_profile(directory):
         xin[: min(n, x.shape[0])] = x[: min(n, x.shape[0])]
         emphasised = y[1:] - 0.85 * y[:-1]
         renders.append({
-            "power": float((emphasised ** 2).mean()) + 1e-10,
+            "power": max(float((emphasised ** 2).mean()), SILENCE_POWER),
             "id": r["id"],
             "purpose": r.get("purpose", "train"),
             "label": r.get("label", r["id"]),
@@ -79,11 +79,22 @@ def load_profile(directory):
 # ---- model ------------------------------------------------------------------------------------------------------
 
 
+# limit of the level on the natural-log scale: ±12 = ±104 dB (the same clamp in NeuralEngine.h)
+LEVEL_LIMIT = 12.0
+
+# Output power (mean square, dBFS) below which a render counts as silent: errors are measured against at least this
+# power. A setting with the volume turned down (−77 dB) otherwise makes inaudible residual noise a huge error and
+# draws the training towards it. The same floor in clone/src/neural/verify.ts.
+SILENCE_POWER = 10 ** (-60 / 10)
+
+
 class Model(torch.nn.Module):
     """
-    y(t) = dense(gamma ⊙ h(t) + beta) + dry ⊙ x(t),  h = LSTM([x(t), knobs])
-    gamma, beta, dry = film(knobs): the knobs scale and shift what the network computes (FiLM) and set how much of
-    the dry signal passes – a level or drive control acts multiplicatively, which a plain extra input learns badly.
+    y(t) = exp(level) · (dense(gamma ⊙ h(t) + beta) + dry ⊙ x(t)),  h = LSTM([x(t), knobs])
+    gamma, beta, dry, level = film(knobs): the knobs scale and shift what the network computes (FiLM) and set how much
+    of the dry signal passes – a level or drive control acts multiplicatively, which a plain extra input learns badly.
+    `level` is a gain on a logarithmic scale: volume controls span 100 dB and more (Tal-Filter-2: −77 … +43 dB),
+    which a factor linear in the knobs cannot reach – with it the network learned nothing (validation ESR 0.92).
     The knobs only change when a control moves, so the plugin computes film() per block, not per sample.
     """
 
@@ -92,7 +103,7 @@ class Model(torch.nn.Module):
         self.use_film = use_film
         self.lstm = torch.nn.LSTM(1 + conditions, hidden, batch_first=True)
         self.film1 = torch.nn.Linear(max(1, conditions), film_hidden)
-        self.film2 = torch.nn.Linear(film_hidden, 2 * hidden + outputs)
+        self.film2 = torch.nn.Linear(film_hidden, 2 * hidden + outputs + 1)
         self.dense = torch.nn.Linear(hidden, outputs)
         self.hidden = hidden
         self.outputs = outputs
@@ -102,13 +113,15 @@ class Model(torch.nn.Module):
         with torch.no_grad():
             self.film2.bias.zero_()
             self.film2.bias[:hidden] = 1.0
-            self.film2.bias[2 * hidden:] = 1.0
+            self.film2.bias[2 * hidden: 2 * hidden + outputs] = 1.0  # dry; the level (last row) starts at 0 dB
 
     def film(self, cond):
         if cond.shape[1] == 0:
             cond = torch.zeros(cond.shape[0], 1, device=cond.device)
         f = self.film2(torch.tanh(self.film1(cond)))
-        return f[:, : self.hidden], f[:, self.hidden: 2 * self.hidden], f[:, 2 * self.hidden:]
+        h, o = self.hidden, self.outputs
+        level = torch.clamp(f[:, 2 * h + o:], -LEVEL_LIMIT, LEVEL_LIMIT)
+        return f[:, :h], f[:, h: 2 * h], f[:, 2 * h: 2 * h + o], level
 
     def forward(self, x, cond, state=None):
         # x: (batch, time, 1), cond: (batch, cond)
@@ -116,8 +129,9 @@ class Model(torch.nn.Module):
         h, state = self.lstm(torch.cat([x, c], dim=2), state)
         if not self.use_film:
             return self.dense(h) + x, state
-        gamma, beta, dry = self.film(cond)
-        return self.dense(gamma.unsqueeze(1) * h + beta.unsqueeze(1)) + dry.unsqueeze(1) * x, state
+        gamma, beta, dry, level = self.film(cond)
+        y = self.dense(gamma.unsqueeze(1) * h + beta.unsqueeze(1)) + dry.unsqueeze(1) * x
+        return torch.exp(level).unsqueeze(1) * y, state
 
 
 def emphasis(s):
@@ -128,7 +142,7 @@ def emphasis(s):
 def esr(pred, target, power):
     """
     Error-to-signal ratio per example, normalised by the power of the whole render it comes from (`power`, batch):
-    a quiet setting counts as much as a loud one, and a window of silence does not divide by zero.
+    a quiet setting counts as much as a loud one (down to SILENCE_POWER), and a window of silence does not divide by zero.
     """
     err = ((emphasis(pred) - emphasis(target)) ** 2).mean(dim=(1, 2))
     return (err / power).mean()
@@ -218,7 +232,7 @@ def evaluate(model, renders, device, channels):
         errors = []
         for ch in range(channels):
             target = r["y"][:, ch]
-            errors.append(float(((pred - target) ** 2).sum() / ((target ** 2).sum() + 1e-8)))
+            errors.append(float(((pred - target) ** 2).sum() / max(float((target ** 2).sum()), target.shape[0] * SILENCE_POWER)))
         results.append({"id": r["id"], "label": r["label"], "esr": float(np.mean(errors))})
     model.train()
     return results
@@ -242,7 +256,7 @@ def export(model, meta, path):
             "W": dense.weight.detach().cpu().numpy().tolist(),
             "b": dense.bias.detach().cpu().numpy().tolist(),
         },
-        # film(knobs) = film2(tanh(film1(knobs))) → [gamma (hidden), beta (hidden), dry (outputs)]
+        # film(knobs) = film2(tanh(film1(knobs))) → [gamma (hidden), beta (hidden), dry (outputs), level (1)]
         "film": {
             "W1": model.film1.weight.detach().cpu().numpy().tolist(),
             "b1": model.film1.bias.detach().cpu().numpy().tolist(),
