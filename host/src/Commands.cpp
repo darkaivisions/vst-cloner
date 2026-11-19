@@ -140,10 +140,48 @@ namespace
         return bus != nullptr && bus->isEnabled() ? bus->getNumberOfChannels() : 0;
     }
 
+    /**
+     * Transport the plugin sees when a job asks for one ("transport": { "bpm", "playing" }): a fixed tempo in 4/4,
+     * starting at 0 with every render. Without it the plugin has no play head – tempo-synced LFOs and delays then fall
+     * back to whatever the plugin assumes, and some LFOs do not run at all (Tal-Filter-2).
+     */
+    class TransportPlayHead : public juce::AudioPlayHead
+    {
+    public:
+        TransportPlayHead (double rate, double tempo, bool isPlaying) : sampleRate (rate), bpm (tempo), playing (isPlaying) {}
+
+        juce::Optional<PositionInfo> getPosition() const override
+        {
+            PositionInfo info;
+            const double seconds = (double) position / sampleRate;
+            const double ppq = seconds * bpm / 60.0;
+            info.setBpm (bpm);
+            info.setTimeSignature (TimeSignature { 4, 4 });
+            info.setTimeInSamples (position);
+            info.setTimeInSeconds (seconds);
+            info.setPpqPosition (ppq);
+            info.setPpqPositionOfLastBarStart (std::floor (ppq / 4.0) * 4.0);
+            info.setBarCount ((int64_t) std::floor (ppq / 4.0));
+            info.setIsPlaying (playing);
+            info.setIsRecording (false);
+            info.setIsLooping (false);
+            return info;
+        }
+
+        void restart() { position = 0; }
+        void advance (int samples) { if (playing) position += samples; }
+
+    private:
+        double sampleRate, bpm;
+        bool playing;
+        int64_t position = 0;
+    };
+
     class Renderer
     {
     public:
-        Renderer (juce::AudioPluginInstance& p, int block) : plugin (p), blockSize (block)
+        Renderer (juce::AudioPluginInstance& p, int block, TransportPlayHead* transport = nullptr)
+            : plugin (p), blockSize (block), playHead (transport)
         {
             inputChannels = mainBusChannels (plugin, true);
             outputChannels = mainBusChannels (plugin, false);
@@ -184,6 +222,9 @@ namespace
                 midi.clear();
                 plugin.processBlock (view, midi);
 
+                if (playHead != nullptr)
+                    playHead->advance (n);
+
                 if (dest != nullptr)
                     for (int ch = 0; ch < dest->getNumChannels(); ++ch)
                         dest->copyFrom (ch, destOffset + done, view, juce::jmin (ch, juce::jmax (0, outputChannels - 1)), 0, n);
@@ -195,6 +236,7 @@ namespace
     private:
         juce::AudioPluginInstance& plugin;
         int blockSize;
+        TransportPlayHead* playHead = nullptr;
         int inputChannels = 0, outputChannels = 0;
         juce::AudioBuffer<float> work;
         juce::MidiBuffer midi;
@@ -317,12 +359,21 @@ int runRender (const juce::StringArray& args)
     // that toggles on every press) otherwise leaks from one render into the next, and neither reset() nor
     // restoring the saved state undoes it reliably.
     const bool isolate = (bool) job.getProperty ("isolate", false);
+    std::unique_ptr<TransportPlayHead> transport;
+    if (auto* t = job["transport"].getDynamicObject())
+    {
+        const auto bpm = (double) t->getProperty ("bpm");
+        const bool playing = t->hasProperty ("playing") ? (bool) t->getProperty ("playing") : true;
+        transport = std::make_unique<TransportPlayHead> (sampleRate, bpm > 0.0 ? bpm : 120.0, playing);
+    }
     PluginLoader loader;
     const auto load = [&]
     {
         auto fresh = loader.load (job["plugin"].toString(), job["identifier"].toString(), sampleRate, blockSize);
         configureBuses (*fresh.instance, channels);
         fresh.instance->setNonRealtime (true);
+        if (transport != nullptr)
+            fresh.instance->setPlayHead (transport.get());
         fresh.instance->prepareToPlay (sampleRate, blockSize);
         applyState (*fresh.instance, job["state"].toString());
         return fresh;
@@ -333,7 +384,7 @@ int runRender (const juce::StringArray& args)
     for (auto* p : loaded.instance->getParameters())
         baseValues.push_back (p->getValue());
 
-    auto renderer = std::make_unique<Renderer> (*loaded.instance, blockSize);
+    auto renderer = std::make_unique<Renderer> (*loaded.instance, blockSize, transport.get());
     auto* renders = job["renders"].getArray();
 
     if (renders == nullptr)
@@ -359,7 +410,7 @@ int runRender (const juce::StringArray& args)
             loaded.instance->releaseResources();
             loaded.instance.reset();
             loaded = load();
-            renderer = std::make_unique<Renderer> (*loaded.instance, blockSize);
+            renderer = std::make_unique<Renderer> (*loaded.instance, blockSize, transport.get());
         }
         auto& plugin = *loaded.instance;
         auto parameters = plugin.getParameters();
@@ -384,7 +435,10 @@ int runRender (const juce::StringArray& args)
             }
         }
 
-        // Deliver parameter changes, clear internal state, then let smoothing settle.
+        // Deliver parameter changes, clear internal state, then let smoothing settle (the transport starts at 0
+        // with every render, so a tempo-synced LFO is in the same phase every time).
+        if (transport != nullptr)
+            transport->restart();
         renderer->process (nullptr, 0, blockSize, nullptr, 0);
         plugin.reset();
         renderer->process (nullptr, 0, prerollSamples, nullptr, 0);

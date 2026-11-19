@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Parameter } from "@vst-cloner/profile";
 import { DEFAULT_PLAN } from "@vst-cloner/capture";
-import { MAX_NEURAL_CONTROLS, neuralControls, neuralRenderCounts, planNeural } from "../src/neural/plan.ts";
+import { MAX_NEURAL_CONTROLS, NEURAL_SURVEY_POINTS, neuralControls, neuralRenderCounts, neuralSurvey, outputPositions, planNeural } from "../src/neural/plan.ts";
 import { generateNeuralHeader, type NeuralModel } from "../src/neural/codegen.ts";
 import { neuralVerdict } from "../src/neural/workflow.ts";
 
@@ -35,6 +35,28 @@ test("universal plan: the number of controls is capped, more controls get more s
   assert.ok(neuralRenderCounts(100).train <= 400);
 });
 
+test("universal survey: a control reported as continuous that moves in steps is found, a continuous one is not", () => {
+  const xs = Array.from({ length: NEURAL_SURVEY_POINTS }, (_, i) => i / (NEURAL_SURVEY_POINTS - 1));
+  const signal = (gain: number) => Float32Array.from({ length: 256 }, (_, i) => gain * Math.sin(i * 0.3));
+  // a selector with three positions: below 0.3, up to 0.6, above
+  const selector = xs.map((x) => signal(x < 0.3 ? 1 : x <= 0.6 ? 0.2 : 3));
+  const found = outputPositions(xs, selector)!;
+  assert.equal(found.values.length, 3);
+  assert.ok(found.bounds[0]![1] < 0.3 && found.bounds[1]![0] >= 0.3 && found.bounds[2]![0] > 0.6);
+  // a gain knob, also with a flat stretch at the bottom where it is off
+  assert.equal(outputPositions(xs, xs.map((x) => signal(0.1 + x))), undefined);
+  assert.equal(outputPositions(xs, xs.map((x) => signal(Math.max(0, x - 0.3)))), undefined);
+  // the survey sets each continuous control at every point; the plan then picks positions at random
+  const parameters = [parameter(0, "Type"), parameter(1, "Mode", { discrete: true, numSteps: 3 })];
+  const survey = neuralSurvey(parameters, { ...DEFAULT_PLAN })!;
+  assert.equal(survey.renders.length, NEURAL_SURVEY_POINTS);
+  const steps = survey.evaluate(selector, new Float32Array(256), 48000);
+  assert.deepEqual(steps.map((s) => s.index), [0]);
+  const plan = planNeural(parameters, { ...DEFAULT_PLAN, steps });
+  const types = new Set(plan.renders.filter((r) => r.kind === "random").map((r) => r.params[0]!.value));
+  assert.deepEqual([...types].sort(), [...steps[0]!.values].sort());
+});
+
 test("universal clone header: weights in the engine's layout, conditioning inputs mapped to clone parameters", () => {
   const H = 2;
   const model: NeuralModel = {
@@ -61,6 +83,10 @@ test("universal clone header: weights in the engine's layout, conditioning input
   assert.match(header, /filmLevel = false;/);
   const leveled = generateNeuralHeader({ ...model, film: { ...model.film, W2: [...model.film.W2, [0.1, 0.1]], b2: [...model.film.b2, 0] } }, [parameter(3, "Drive")], "Test");
   assert.match(leveled.header, /filmLevel = true;/);
+  // a stepped control is snapped to the middle of its position before the network sees it
+  assert.match(header, /snapCondition \(int condition, float value\)\n\{\n    \(void\) condition;/);
+  const stepped = generateNeuralHeader({ ...model, positions: [{ values: [0.1, 0.6], bounds: [[0, 0.2], [0.5, 1]] }] }, [parameter(3, "Drive")], "Test");
+  assert.match(stepped.header, /case 0:[\s\S]*mid\[\] = \{ 0\.10000000149011\d*f, 0\.60000002384185\d*f \}[\s\S]*snapPosition \(lo, hi, mid, 2, value\)/);
   assert.throws(() => generateNeuralHeader({ ...model, film: { ...model.film, W2: model.film.W2.slice(1) } }, [parameter(3, "Drive")], "Test"), /FiLM output/);
   assert.throws(() => generateNeuralHeader({ ...model, parameters: [3, 4] }, [parameter(3, "Drive"), parameter(4, "Tone")], "Test"), /LSTM input weights/);
 });

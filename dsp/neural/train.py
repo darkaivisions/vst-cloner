@@ -50,6 +50,10 @@ def load_profile(directory):
     if not selected:
         selected = [p["index"] for p in parameters if p.get("automatable", True) and not p.get("meta", False)]
     base = {p["index"]: float(p.get("value", p.get("default", 0.0))) for p in parameters}
+    # controls that move in steps (positions.json, written by clone/src/neural/train.ts): the network sees the middle
+    # of the position a value falls into, so it never has to learn a jump between two neighbouring values
+    positions_path = os.path.join(directory, "positions.json")
+    positions = {int(k): v for k, v in json.load(open(positions_path)).items()} if os.path.exists(positions_path) else {}
     x, rate = read_wav(os.path.join(directory, "input.wav"))
     x = x[:, 0]
     renders = []
@@ -58,6 +62,9 @@ def load_profile(directory):
         values = dict(base)
         for p in r.get("params", []):
             values[p["index"]] = float(p["value"])
+        for index, pos in positions.items():
+            if index in values:
+                values[index] = snap(pos, values[index])
         # the capture is input length + tail; the input is padded with silence for the tail
         n = y.shape[0]
         xin = np.zeros(n, dtype=np.float32)
@@ -73,7 +80,18 @@ def load_profile(directory):
             "y": y.astype(np.float32),  # (frames, channels)
         })
     names = {p["index"]: p["name"] for p in parameters}
-    return {"rate": rate, "selected": selected, "names": [names[i] for i in selected], "renders": renders}
+    return {"rate": rate, "selected": selected, "names": [names[i] for i in selected], "renders": renders,
+            "positions": [positions.get(i) for i in selected]}
+
+
+def snap(positions, value):
+    """Middle of the position a value falls into: the one whose range contains it, else the nearest (positionOf)."""
+    best, distance = 0, math.inf
+    for i, (lo, hi) in enumerate(positions["bounds"]):
+        d = lo - value if value < lo else value - hi if value > hi else 0.0
+        if d < distance:
+            best, distance = i, d
+    return float(positions["values"][best])
 
 
 # ---- model ------------------------------------------------------------------------------------------------------
@@ -365,7 +383,7 @@ def main():
     train_results = evaluate(model, train, device, channels)
     validate_results = evaluate(model, validate, device, channels)
     path = os.path.join(args.out, "model.json")
-    export(model, {"sampleRate": data["rate"], "parameters": data["selected"], "names": data["names"]}, path)
+    export(model, {"sampleRate": data["rate"], "parameters": data["selected"], "names": data["names"], "positions": data["positions"]}, path)
     if os.environ.get("VCH_NEURAL_DEBUG"):
         for r in sorted(train_results + validate_results, key=lambda r: r["esr"]):
             emit("info", message=f"{r['id']} {r['label']}: ESR {r['esr']:.4f}")

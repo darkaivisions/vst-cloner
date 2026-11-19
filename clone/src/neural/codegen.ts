@@ -18,6 +18,45 @@ export interface NeuralModel {
   dense: { W: number[][]; b: number[] };
   /** W1: filmHidden × max(1, conditions), W2: (2·hidden + outputs [+ 1 level row]) × filmHidden */
   film: { W1: number[][]; b1: number[]; W2: number[][]; b2: number[] };
+  /** per conditioning input: positions of a control that moves in steps (the network saw their middles), or null */
+  positions?: ({ values: number[]; bounds: [number, number][] } | null)[];
+}
+
+/** C++ function that maps a conditioning input to the middle of its position, as train.py's snap() does. */
+function snapLines(model: NeuralModel): string[] {
+  const cases = (model.positions ?? []).flatMap((pos, c) => {
+    if (!pos || pos.values.length === 0) return [];
+    const list = (values: number[]) => values.map((v) => cppNumber(Math.fround(v)) + "f").join(", ");
+    return [
+      `        case ${c}:`,
+      "        {",
+      `            static constexpr float lo[] = { ${list(pos.bounds.map((b) => b[0]))} };`,
+      `            static constexpr float hi[] = { ${list(pos.bounds.map((b) => b[1]))} };`,
+      `            static constexpr float mid[] = { ${list(pos.values)} };`,
+      `            return snapPosition (lo, hi, mid, ${pos.values.length}, value);`,
+      "        }",
+    ];
+  });
+  return [
+    "// middle of the position a value falls into: the one whose range contains it, else the nearest",
+    "inline float snapPosition (const float* lo, const float* hi, const float* mid, int n, float value)",
+    "{",
+    "    int best = 0;",
+    "    float distance = 1.0e9f;",
+    "    for (int i = 0; i < n; ++i)",
+    "    {",
+    "        const float d = value < lo[i] ? lo[i] - value : value > hi[i] ? value - hi[i] : 0.0f;",
+    "        if (d < distance) { best = i; distance = d; }",
+    "    }",
+    "    return mid[best];",
+    "}",
+    "// controls that move in steps: the network was trained on the middle of each position",
+    "inline float snapCondition (int condition, float value)",
+    "{",
+    ...(cases.length ? ["    switch (condition)", "    {", ...cases, "        default: break;", "    }"] : ["    (void) condition;"]),
+    "    return value;",
+    "}",
+  ];
 }
 
 const floats = (values: number[]) => values.map((v) => cppNumber(Math.fround(v))).join(", ");
@@ -71,6 +110,7 @@ export function generateNeuralHeader(model: NeuralModel, parameters: Parameter[]
     `inline const float filmB1[${filmHidden}] = { ${floats(model.film.b1)} };`,
     `inline const float filmW2[${model.film.W2.flat().length}] = { ${floats(model.film.W2.flat())} };`,
     `inline const float filmB2[${model.film.b2.length}] = { ${floats(model.film.b2)} };`,
+    ...snapLines(model),
     "} // namespace clonemodel",
     "",
   ];

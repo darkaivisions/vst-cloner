@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 import { CancelledError, regenerateTestSignal, throwIfCancelled } from "@vst-cloner/capture";
 import { encodeWav, type Profile } from "@vst-cloner/profile";
 import { run, type Logger } from "../build.ts";
+import type { MeasuredSteps } from "@vst-cloner/capture";
 import type { NeuralModel } from "./codegen.ts";
+import { neuralPositions } from "./plan.ts";
 
 const TRAIN_SCRIPT = fileURLToPath(new URL("../../../dsp/neural/train.py", import.meta.url));
 
@@ -80,6 +82,11 @@ async function extractForTraining(profile: Profile, dir: string): Promise<void> 
   await writeFile(join(dir, "manifest.json"), JSON.stringify(profile.manifest));
   await writeFile(join(dir, "parameters.json"), JSON.stringify(profile.parameters));
   await writeFile(join(dir, "captures.json"), JSON.stringify(profile.captures));
+  // controls that move in steps: the network sees the middle of the position (see neuralPositions)
+  const plan = profile.manifest.capture.plan as { selectedParameters?: number[]; steps?: MeasuredSteps[] } | undefined;
+  const selected = new Set(plan?.selectedParameters ?? []);
+  const positions = neuralPositions(profile.parameters.parameters.filter((p) => selected.has(p.index)), plan?.steps);
+  await writeFile(join(dir, "positions.json"), JSON.stringify(Object.fromEntries(positions)));
   const input = regenerateTestSignal(profile.testSignals).audio;
   await writeFile(join(dir, "input.wav"), encodeWav(input));
   for (const render of profile.captures.renders) {

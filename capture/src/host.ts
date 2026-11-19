@@ -61,6 +61,12 @@ export interface RenderJob {
   input: string;
   /** a fresh instance of the plugin for every render (see `capture`: plugins with state that is no parameter) */
   isolate?: boolean;
+  /**
+   * a play head for the plugin: a fixed tempo in 4/4 from 0 at every render, running unless `playing` is false.
+   * Without it the plugin has no transport, and tempo-synced delays fall back to their own time (ZamDelay with
+   * "Sync BPM": 160 ms without, 2000 ms for a whole note at 120 BPM).
+   */
+  transport?: { bpm: number; playing?: boolean };
   renders: { id: string; params: { index: number; value: number }[]; output: string }[];
 }
 

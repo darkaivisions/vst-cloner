@@ -53,7 +53,7 @@ void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     for (int c = 0; c < vch::C; ++c)
     {
         const int index = clonemodel::conditionParams[c];
-        target[(size_t) c] = (float) vch::originalValue (clonemodel::params[index], *parameters[(size_t) index]);
+        target[(size_t) c] = clonemodel::snapCondition (c, (float) vch::originalValue (clonemodel::params[index], *parameters[(size_t) index]));
     }
     if (! initialised)
     {
