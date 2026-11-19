@@ -258,7 +258,17 @@ vst-cloner/
    - Captures 24-bit scaled to their peak (`scale` in captures.json): profiles about 40 % smaller
    - Transport in the capture host (optional per job: tempo, playing) ✔ – not used by captures yet; tempo-synced
      clones would have to read the host tempo themselves
-   - Open: Tal-Filter-2 (one unseen combination at 1292 %, the rest around 30 %; its modulation follows a drawn curve stored in the plugin state – flat in the
+   - Broad batch over 16 plugins (6 min each, clone vs. original, all / unseen combinations):
+     very good: ZamAutoSat 0.00 % (no controls), gxts9 0.67 / 0.71 %, gx_tremolo 1.0 / 0.56 %, ZaMaximX2 1.8 / 2.2 %;
+     usable: cheapdist 8.1 / 7.9 %, gx_bossds1 8.2 / 7.0 %, gxtilttone 9.7 / 10.8 %, gx_phaser 14.5 / 15.5 %;
+     inaccurate: ZamGate 18 / 21 %, gx_chorus 19 / 19 %, ZynDistortion 20 / 22 %, ZamGEQ31 28 / 31 % (24 controls),
+     gx_compressor 33 / 37 %, ZamDelay 40 / 38 % (long delay), MVerb 42 / 36 % (reverb tail), SwankyAmp 64 / 70 %
+     (22 controls). Unseen ≈ training everywhere: the limit is capacity and training time, not overfitting.
+     A plugin without controls failed to build (empty C++ array) – fixed
+   - Tal-Filter-2 with the 24-bit capture and its 10 filter types: 89 / 84 %; the mean is set by a few settings with high
+     resonance and the output turned down (one at 1077 %), the median render is at 22 %. Without snapping just as bad,
+     so not caused by the positions; self-oscillation is hardly predictable sample by sample
+   - Open: Tal-Filter-2 (its modulation follows a drawn curve stored in the plugin state – flat in the
      initial state, not a parameter), ZamComp (attack/release of a compressor, 21 %), wow/flutter/hiss of gxtape cannot match
      sample by sample
    - Open: long memory (reverb tails, long delays) and LFO modulation; stereo effects that treat the channels

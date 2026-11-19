@@ -58,6 +58,8 @@ export function parameterLines(params: CloneParam[]): string[] {
         `${p.stepValues ? `stepValues${i}` : "nullptr"}, ${p.stepValues?.length ?? 0} },`,
     );
   });
+  // C++ has no empty arrays: a plugin without controls gets one unused placeholder (numParams stays 0)
+  if (params.length === 0) lines.push('    { "", "", ParamKind::continuous, 0.0f, nullptr, 0, false, "", nullptr, 0, -1, nullptr, 0 },');
   lines.push("};", `inline constexpr int numParams = ${params.length};`, "");
   return lines;
 }
