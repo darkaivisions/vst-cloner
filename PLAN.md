@@ -257,6 +257,24 @@ vst-cloner/
      clone vs. original (15 before the calibration), single controls 2.8 dB; the comparison aligns the LFO phase.
      Open: very fast and deep settings (9 Hz, 25 ms) let the repeats overtake each other – the clicks cannot follow
      them; phaser (allpass chain) and tremolo (the network already reaches 1 %) are not covered
+   - **Night of 20 Nov: core functions per class** (each step measured before and after with `vch batch`, kept only
+     where nothing got worse; results in `.vch-work/night/`):
+     - Tremolo and phaser engines ✔ – the LFO also moves the level and the corner of an allpass chain with feedback;
+       tremolo read off the dry part of the clicks, phaser off the notches of each click's spectrum. GxTremolo
+       0.52, GxSwitchedTremolo 1.17, dRowAudio Tremolo 2.27, ZynPhaser 4.52, GxPhaser 7.83 dB. The network was
+       better on GxTremolo (0.10 vs 0.44 dB spectral) and much better on GxPhaser (0.30 vs 5.2 dB): tremolos and
+       phasers stay universal by default and get the engine in "engine vs. network". Chorus/flanger batch unchanged
+     - Stereo delays ✔ – a model of its own for the right channel (ping-pong, stereo LFOs), both channels verified:
+       DualDelay 26.1 → 7.8, GxDelay-Stereo 12.4 → 4.3, GxEcho-Stereo 12.3 → 3.5, Tal-Dub-3 8.5 → 2.9 dB,
+       GxChorus-Stereo 7.5 → 3.7 dB; nothing worse
+     - Reverb width ✔ – the clone's tails correlate as the original's (mono originals stay mono): width deviation
+       MaFreeverb 42.8 → 0.0, GxReverb 33.2 → 1.1, Gxroom_simulator 32.2 → 0.0, MDA Ambience 10.5 → 1.6 dB
+     - Dynamics: not changed. The batch (0.36–3.62 dB) is weak on unseen combinations (GxExpander 10.2,
+       DirectionalCompressor 9.7, GxCompressor 7.7 dB); the worst combinations all have a long attack and a long
+       release together. Limiting each control's sweep to the values it stands for helped by tenths only (and made
+       single controls worse) – reverted. What it needs: attack × release measured together (a joint table)
+     - Open: ZynChorus 16.98 → 2.49 dB between two runs of the same code – capture not repeatable? (to check);
+       GxPhaser topology (the allpass model misses it); ducking delays (level-dependent wet path)
 7. **Universal clone (path B)** ← in progress – first version in CLI and app ✔
    - Capture plan `neural`, training (`dsp/neural/train.py`, PyTorch, CUDA), C++ template with the same network
      (~5 % of a core per channel), sample-rate adapter (other host rates, anti-alias filters, latency reported),
