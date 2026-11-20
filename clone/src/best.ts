@@ -5,7 +5,7 @@ import { readProfile } from "@vst-cloner/profile";
 import { installPlugins, slugify, type BuildResult, type Logger } from "./build.ts";
 import { classifyPlugin, type EffectClass } from "./batch.ts";
 import { bestClone, compareClones, formatComparison, type CloneCandidate, type CloneComparison } from "./compare.ts";
-import { delayPlanner, modulationPlanner } from "./delay/plan.ts";
+import { delayPlanner, detectModulation, modulationPlanner } from "./delay/plan.ts";
 import { cloneDelayProfile } from "./delay/workflow.ts";
 import { distortionPlanner } from "./distortion/plan.ts";
 import { cloneDistortionProfile } from "./distortion/workflow.ts";
@@ -96,7 +96,18 @@ export async function cloneBest(options: BestCloneOptions): Promise<BestCloneRes
   const info = await pluginInfo(options.plugin, signal ? { signal } : {});
   const name = info.plugin.name || basename(options.plugin).replace(/\.[^.]+$/, "");
   const pluginName = `${name} Clone`;
-  const { effectClass, reason } = classifyPlugin(info);
+  const classified = classifyPlugin(info);
+  const { reason } = classified;
+  // tremolos and phasers have engines, but not as their default: here they are compared with the network
+  let effectClass = classified.effectClass;
+  if (!effectClass) {
+    try {
+      detectModulation(info.parameters, info.plugin.category, info.plugin.name);
+      effectClass = "modulation";
+    } catch {
+      // no modulation effect either
+    }
+  }
   const classPath = effectClass ? CLASS_PATHS[effectClass] : undefined;
   const engineName = effectClass ? ENGINE_NAMES[effectClass] ?? `${effectClass} engine` : "";
   log("info", effectClass ? `${name}: class ${effectClass}${classPath ? ` – cloning with the ${engineName} and as a network` : " – its clone is not compared, network only"}` : `${name}: no class (${reason.slice(0, 120)}) – network only`);

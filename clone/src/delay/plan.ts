@@ -46,9 +46,9 @@ export function detectDelay(parameters: Parameter[], category = "", name = ""): 
   return { roles, other };
 }
 
-const MODULATION_NAME = /chorus|flang|vibrat|ensemble|dimension|doubler/i;
-/** modulation effects the model (one delay line moved by one LFO) cannot represent */
-const NOT_A_MODULATED_DELAY = /phas|trem|rotar|leslie|ring|pitch|reverb/i;
+const MODULATION_NAME = /chorus|flang|vibrat|ensemble|dimension|doubler|phas|trem/i;
+/** modulation effects the model (a delay line, a level or an allpass chain moved by one LFO) cannot represent */
+const NOT_A_MODULATED_DELAY = /rotar|leslie|ring|pitch|reverb/i;
 
 /**
  * Recognises a chorus, flanger or vibrato (one delay line whose time an LFO moves) by its category or name. The
@@ -56,7 +56,7 @@ const NOT_A_MODULATED_DELAY = /phas|trem|rotar|leslie|ring|pitch|reverb/i;
  */
 export function detectModulation(parameters: Parameter[], category = "", name = ""): DelayMapping {
   if (!MODULATION_NAME.test(category) && !MODULATION_NAME.test(name)) throw new NotDelayError("Neither category nor name point to a chorus, flanger or vibrato");
-  if (NOT_A_MODULATED_DELAY.test(name)) throw new NotDelayError(`"${name}" is no modulated delay (phaser, tremolo, rotary …)`);
+  if (NOT_A_MODULATED_DELAY.test(name)) throw new NotDelayError(`"${name}" is no modulation effect the engine covers (rotary, ring modulator, pitch …)`);
   const roles: DelayMapping["roles"] = {};
   const other: number[] = [];
   for (const p of parameters) {
@@ -129,7 +129,7 @@ const MAX_POSITIONS = 24;
  * Model values (packed, see packDelay) that differ by less are the same position: 0.1 % in time, 0.05 dB, 0.5 % in
  * frequency. Tight, because a position repeats its effect exactly while a slow control only nearly does.
  */
-const SAME = [0.001, 0.05, 0.05, 0.05, 0.005, 0.005, 0.005, 0.005, 0.01, 0.005, 0.05];
+const SAME = [0.001, 0.05, 0.05, 0.05, 0.005, 0.005, 0.005, 0.005, 0.01, 0.005, 0.05, 0.01, 0.005, 0.02, 0.01];
 
 /**
  * Positions of a control from what it does at evenly spaced values: runs of values with the same effect. A

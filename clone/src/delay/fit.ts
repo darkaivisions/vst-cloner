@@ -5,7 +5,7 @@ import { pchip, tableAt, type Errors, type ParamTable } from "../dynamics/fit.ts
 import { parameterPositions, positionOf, renderCondition, steppedParameter, SWITCH_STATES } from "../dynamics/plan.ts";
 import type { MeasuredSteps } from "@vst-cloner/capture";
 import { HP_OFF, hpActive, LP_OFF, lpActive, MAX_FEEDBACK_DB, MOD_OFF, OFF_DB, onePole, packDelay, processDelay, unpackDelay, type DelayParams, type DelayStructure } from "./model.ts";
-import { clickTaps, measureModulation, wrapPhase, type MeasuredModulation } from "./modulation.ts";
+import { clickTaps, measureModulation, measurePhaser, measureTremolo, wrapPhase, type MeasuredModulation, type MeasuredPhaser, type MeasuredTremolo } from "./modulation.ts";
 
 export interface DelayInput {
   sampleRate: number;
@@ -576,13 +576,41 @@ const variantGain = (before: number[], after: number[]): boolean => {
  * phase at the first click of every render is φ0 + ω · (L + pre-roll + start of the clicks). With a single rate
  * the lead cannot be told from the phase; it is then 0.
  */
-export function lfoStart(measured: MeasuredModulation[], input: DelayInput): { phase: number; lead: number } {
+/** What a measured LFO says about its start: rate (Hz), phase at the first click, uncertainty of the phase (rad). */
+export interface LfoReading {
+  rate: number;
+  phase: number;
+  error: number;
+}
+
+/** The phase error of a sine fitted to repeat times is about its residual over its depth. */
+export const delayReading = (m: MeasuredModulation, sampleRate: number): LfoReading =>
+  ({ rate: m.rate, phase: m.phase, error: m.residual / Math.max(m.depth * sampleRate, 1e-9) });
+
+/** What the LFO moves in a modulation effect: the delay time (chorus, flanger, vibrato), the level, or a phaser. */
+export type ModulationKind = "delay" | "tremolo" | "phaser";
+export function modulationKind(name: string, category = ""): ModulationKind {
+  const text = `${name} ${category}`;
+  if (/phas/i.test(text)) return "phaser";
+  if (/trem/i.test(text)) return "tremolo";
+  return "delay";
+}
+
+/** The LFO of an answer to the clicks, as the measurement of that kind sees it. */
+function readLfo(kind: ModulationKind, h: Float32Array, input: DelayInput): LfoReading | undefined {
+  const response = { h, period: input.clicks!.period };
+  if (kind === "tremolo") return measureTremolo(response, input.sampleRate);
+  if (kind === "phaser") return measurePhaser(response, input.sampleRate);
+  const m = measureModulation(response, input.sampleRate);
+  return m ? delayReading(m, input.sampleRate) : undefined;
+}
+
+export function lfoStart(readings: LfoReading[], input: DelayInput): { phase: number; lead: number } {
   const offset = input.preroll + (input.clicks?.start ?? 0);
-  // weighted by how sure each phase is: the phase error of a sine fit is about its residual over its depth
-  const items = measured.map((m) => {
+  // weighted by how sure each phase is
+  const items = readings.map((m) => {
     const omega = (2 * Math.PI * m.rate) / input.sampleRate;
-    const error = m.residual / Math.max(m.depth * input.sampleRate, 1e-9);
-    return { omega, r: m.phase - omega * offset, w: 1 / (0.01 + error * error) };
+    return { omega, r: m.phase - omega * offset, w: 1 / (0.01 + m.error * m.error) };
   });
   return phaseAndLead(items, -input.preroll, input.sampleRate);
 }
@@ -610,18 +638,16 @@ function phaseAndLead(items: { omega: number; r: number; w: number }[], from: nu
  * delay it was read with, and plugins differ in when they read it). The model is therefore measured the way the
  * original was, and its LFO start is moved by the difference – in phase, and in lead where it grows with the rate.
  */
-function calibrateLfo(model: DelayTables & { variants?: DelayVariant[] }, observations: DelayObservation[], measured: Map<string, MeasuredModulation>, input: DelayInput): void {
+function calibrateLfo(model: DelayTables & { variants?: DelayVariant[] }, observations: DelayObservation[], readings: Map<string, LfoReading>, kind: ModulationKind, input: DelayInput): void {
   if (!input.clicks) return;
   const items: { omega: number; r: number; w: number }[] = [];
   for (const o of observations) {
-    const original = measured.get(o.renderId);
+    const original = readings.get(o.renderId);
     if (!original || o.purpose !== "train") continue;
     const predicted = predictDelayModel(model, new Map(o.params.map((p) => [p.index, p.value])));
-    const answer = modelClicks(predicted.params, predicted.structure, input)!;
-    const own = measureModulation({ h: answer, period: input.clicks.period }, input.sampleRate);
+    const own = readLfo(kind, modelClicks(predicted.params, predicted.structure, input)!, input);
     if (!own || Math.abs(Math.log(own.rate / original.rate)) > 0.01) continue;
-    const error = original.residual / Math.max(original.depth * input.sampleRate, 1e-9);
-    items.push({ omega: (2 * Math.PI * original.rate) / input.sampleRate, r: wrapPhase(original.phase - own.phase), w: 1 / (0.01 + error * error) });
+    items.push({ omega: (2 * Math.PI * original.rate) / input.sampleRate, r: wrapPhase(original.phase - own.phase), w: 1 / (0.01 + original.error * original.error) });
   }
   if (items.length === 0) return;
   const shift = phaseAndLead(items, -Math.round(0.1 * input.sampleRate), Math.round(0.1 * input.sampleRate));
@@ -659,11 +685,28 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
   // LFO (modulation measurements): read off every render's clicks; the phase at the LFO's start is the same for
   // all of them, but when that start lies before the pre-roll (the plugin's set-up) the phase at the input depends
   // on the rate – the lead is found as the one that lines all renders up
+  const kind = modulationKind(profile.manifest.plugin.name, profile.manifest.plugin.category ?? "");
   const measured = new Map<string, MeasuredModulation>();
+  const tremolos = new Map<string, MeasuredTremolo>();
+  const phasers = new Map<string, MeasuredPhaser>();
   for (const o of observations) {
-    const m = o.clicks && input.clicks ? measureModulation({ h: o.clicks, period: input.clicks.period }, input.sampleRate) : undefined;
-    if (m) measured.set(o.renderId, m);
+    if (!o.clicks || !input.clicks) continue;
+    const response = { h: o.clicks, period: input.clicks.period };
+    if (kind === "tremolo") {
+      const m = measureTremolo(response, input.sampleRate);
+      if (m) tremolos.set(o.renderId, m);
+    } else if (kind === "phaser") {
+      const m = measurePhaser(response, input.sampleRate);
+      if (m) phasers.set(o.renderId, m);
+    } else {
+      const m = measureModulation(response, input.sampleRate);
+      if (m) measured.set(o.renderId, m);
+    }
   }
+  // the number of allpass stages is the plugin's: the most frequent one
+  const stageCounts = new Map<number, number>();
+  for (const m of phasers.values()) stageCounts.set(m.stages, (stageCounts.get(m.stages) ?? 0) + 1);
+  const phaserStages = [...stageCounts].sort((a, b) => b[1] - a[1])[0]?.[0];
   // A repeat later than the spacing of the clicks lands after the next click: the clicks show the time modulo the
   // spacing. The impulse response shows the whole time; the clicks' centre is moved by whole spacings to lie
   // nearest to it, and the phase with it (the repeat seen after click k + w belongs to click k).
@@ -678,11 +721,40 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
     const m = measured.get(o.renderId);
     if (m) measured.set(o.renderId, unwrapped(m, analyseResponse(o.response, input.sampleRate))!);
   }
-  const lfo = measured.size ? lfoStart([...measured.values()], input) : undefined;
+  const readings = new Map<string, LfoReading>([
+    ...[...measured].map(([id, m]) => [id, delayReading(m, input.sampleRate)] as const),
+    ...tremolos, ...phasers,
+  ]);
+  const lfo = readings.size ? lfoStart([...readings.values()], input) : undefined;
   /** the impulse response's analysis, with the LFO of the render where it has one */
   const analyse = (o: DelayObservation, fallback?: DelayParams): DelayAnalysis => {
     const analysis = analyseResponse(o.response, input.sampleRate, fallback);
     if (!lfo) return analysis;
+    const db = (v: number) => Math.max(OFF_DB, 20 * Math.log10(Math.abs(v) + 1e-12));
+    if (kind === "tremolo") {
+      // the level the LFO moves; no echoes
+      const t = tremolos.get(o.renderId);
+      const params: DelayParams = {
+        ...analysis.params, wetDb: OFF_DB, feedbackDb: OFF_DB, modDepthSeconds: MOD_OFF, modPhase: lfo.phase,
+        modRate: t?.rate ?? fallback?.modRate ?? 1, tremDepth: t?.depth ?? 0, ...(t ? { dryDb: db(t.level) } : {}),
+      };
+      const structure = { ...analysis.structure, ...(t ? { drySign: t.level < 0 ? -1 : 1 } : {}), modLead: lfo.lead };
+      return { ...analysis, params, structure, echoes: 1 };
+    }
+    if (kind === "phaser" && phaserStages) {
+      // dry plus the allpass chain the LFO sweeps
+      const ph = phasers.get(o.renderId);
+      const params: DelayParams = {
+        ...analysis.params, feedbackDb: OFF_DB, modDepthSeconds: MOD_OFF, modPhase: lfo.phase,
+        modRate: ph?.rate ?? fallback?.modRate ?? 1,
+        phaserCentre: ph?.centre ?? fallback?.phaserCentre ?? 1000, phaserOctaves: ph?.octaves ?? 0,
+        phaserFeedback: ph?.feedback ?? fallback?.phaserFeedback ?? 0,
+        ...(ph ? { dryDb: db(ph.dry), wetDb: db(ph.wet) } : {}),
+      };
+      const drySign = analysis.structure.drySign;
+      const structure = { ...analysis.structure, ...(ph ? { wetSign: Math.sign(ph.wet / ph.dry) * drySign } : {}), phaserStages, modLead: lfo.lead };
+      return { ...analysis, params, structure, echoes: 1 };
+    }
     const m = measured.get(o.renderId);
     // a repeat that falls on the dry signal at the moment of the impulse (a flanger near zero) is not seen in the
     // impulse response: its level is then that of the clicks' repeats
@@ -814,7 +886,7 @@ export function fitDelay(profile: Profile, onProgress?: (done: number, total: nu
     ...(variants.length ? { variants } : {}),
     report: { echoes, renders: [] },
   };
-  if (lfo) calibrateLfo(model, observations, measured, input);
+  if (lfo) calibrateLfo(model, observations, readings, kind, input);
   model.report.renders = observations.map((o) => {
     const e = errorOf(model, o);
     return { renderId: o.renderId, label: o.label, purpose: o.purpose, rmsDb: e.rmsDb, maxDb: e.maxDb };

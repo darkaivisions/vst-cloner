@@ -14,8 +14,8 @@ test("category words name effects without a class: generic words are skipped", (
 });
 
 test("effects without an engine are grouped by what they do, instruments apart", () => {
-  const phaser = pluginKind(info("GxPhaser", "Phaser Plugin"));
-  assert.deepEqual([phaser.group, phaser.engine, phaser.label], ["modulation", false, "Phaser"]);
+  const rotary = pluginKind(info("Rotary Speaker", "Modulator Plugin"));
+  assert.deepEqual([rotary.group, rotary.engine, rotary.label], ["modulation", false, "Modulator"]);
   const eq = pluginKind(info("3 Band EQ", "Fx|EQ"));
   assert.deepEqual([eq.group, eq.label], ["eq", "EQ"]);
   assert.equal(pluginKind(info("TAL-Filter-2", "Filter Plugin")).group, "filter");

@@ -28,6 +28,7 @@ import {
   cloneBest,
   ENGINE_NAMES,
   modulationPlanner,
+  detectModulation,
   cloneDelayProfile,
   cloneDistortionProfile,
   cloneDynamicsProfile,
@@ -527,6 +528,16 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
         reverb = undefined;
       }
     }
+    // a class engine to compare with the network: the plugin's class, or the modulation engine for tremolos and phasers
+    let engineClass = effectClass;
+    if (!engineClass) {
+      try {
+        detectModulation(info.parameters, info.plugin.category, info.plugin.name);
+        engineClass = "modulation";
+      } catch {
+        // no engine
+      }
+    }
     // the universal clone works for every plugin: how many settings its plan measures
     const controls = neuralControls(info.parameters);
     const counts = neuralRenderCounts(controls.length);
@@ -562,7 +573,7 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
       neural,
       genericRenders,
       // a class with an engine of its own: the app can build both clones and keep the better one
-      ...(effectClass && ENGINE_NAMES[effectClass] ? { engine: ENGINE_NAMES[effectClass] } : {}),
+      ...(engineClass && ENGINE_NAMES[engineClass] ? { engine: ENGINE_NAMES[engineClass] } : {}),
     };
   },
 

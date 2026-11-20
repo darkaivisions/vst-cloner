@@ -38,6 +38,8 @@ export function formatDelayModel(model: DelayModel): string[] {
     `Delay: ${(p.delaySeconds * 1000).toFixed(1)} ms, Feedback ${level(p.feedbackDb)}, dry ${level(p.dryDb)}, echo ${level(p.wetDb)} (${model.report.echoes} repeats measured)`,
     `Tone: echo – ${filter(p.wetLp, p.wetHp)}; feedback loop – ${filter(p.loopLp, p.loopHp)}`,
     ...(modActive(p) ? [`LFO: delay moves by ±${(p.modDepthSeconds! * 1000).toFixed(2)} ms at ${p.modRate!.toFixed(2)} Hz`] : []),
+    ...((p.tremDepth ?? 0) > 0.01 ? [`Tremolo: level moves by ${Math.round(p.tremDepth! * 100)} % at ${p.modRate!.toFixed(2)} Hz`] : []),
+    ...((model.structure.phaserStages ?? 0) > 0 ? [`Phaser: ${model.structure.phaserStages} allpass stages around ${Math.round(p.phaserCentre ?? 0)} Hz, swept ±${(p.phaserOctaves ?? 0).toFixed(1)} octaves at ${p.modRate!.toFixed(2)} Hz, feedback ${(p.phaserFeedback ?? 0).toFixed(2)}`] : []),
     `Parameter: ${model.tables.map((t) => t.name).join(", ")}`,
   ];
   if (model.variants?.length) lines.push(`Separate model for switch positions: ${model.variants.map((v) => v.name).join(", ")}`);

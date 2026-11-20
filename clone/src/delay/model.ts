@@ -25,6 +25,12 @@ export interface DelayParams {
   modDepthSeconds?: number;
   modRate?: number;
   modPhase?: number;
+  /** tremolo: the same LFO moves the output level by this share (0: none, 1: down to silence) */
+  tremDepth?: number;
+  /** phaser (structure.phaserStages > 0): allpass corner frequency (Hz), swept by the LFO ± octaves, feedback around the chain */
+  phaserCentre?: number;
+  phaserOctaves?: number;
+  phaserFeedback?: number;
 }
 
 /** Polarities (±1): they do not change with the controls of the plugins measured so far. */
@@ -37,6 +43,11 @@ export interface DelayStructure {
    * pre-roll): at a reset the LFO starts at modPhase + 2π · rate · modLead / sampleRate.
    */
   modLead?: number;
+  /**
+   * Phaser: number of first-order allpass stages. The wet path is then the allpass chain (with feedback around it)
+   * fed directly by the input – the delay line is not used.
+   */
+  phaserStages?: number;
 }
 
 export const OFF_DB = -80;
@@ -56,10 +67,11 @@ export const MAX_FEEDBACK_DB = -0.1;
 export const delayGain = (db: number) => (db <= OFF_DB + 0.5 ? 0 : 10 ** (db / 20));
 
 /** Packed model values: additive changes of them are what single controls do (times and levels multiply). */
-export const NUM_DELAY_PACKED = 11;
+export const NUM_DELAY_PACKED = 15;
 export const packDelay = (p: DelayParams): number[] => [
   Math.log(p.delaySeconds), p.dryDb, p.wetDb, p.feedbackDb, Math.log(p.loopLp), Math.log(p.loopHp), Math.log(p.wetLp), Math.log(p.wetHp),
   Math.log(Math.max(p.modDepthSeconds ?? MOD_OFF, MOD_OFF)), Math.log(Math.max(p.modRate ?? 1, 0.01)), p.modPhase ?? 0,
+  p.tremDepth ?? 0, Math.log(Math.max(p.phaserCentre ?? 1000, 20)), p.phaserOctaves ?? 0, p.phaserFeedback ?? 0,
 ];
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 export const unpackDelay = (x: number[]): DelayParams => ({
@@ -75,9 +87,20 @@ export const unpackDelay = (x: number[]): DelayParams => ({
   modDepthSeconds: clamp(Math.exp(x[8] ?? Math.log(MOD_OFF)), MOD_OFF, MAX_MOD_DEPTH_SECONDS),
   modRate: clamp(Math.exp(x[9] ?? 0), 0.01, 50),
   modPhase: x[10] ?? 0,
+  // (models fitted before tremolo and phaser have 11 values)
+  tremDepth: clamp(x[11] ?? 0, 0, 1),
+  phaserCentre: clamp(Math.exp(x[12] ?? Math.log(1000)), 20, 18000),
+  phaserOctaves: clamp(x[13] ?? 0, 0, 6),
+  phaserFeedback: clamp(x[14] ?? 0, -0.95, 0.95),
 });
 /** deepest LFO the engine provides (seconds) */
 export const MAX_MOD_DEPTH_SECONDS = 0.05;
+
+/** Coefficient of a first-order allpass y = a·x + x₁ − a·y₁ with its corner (90°) at `frequency`. */
+export const allpassCoefficient = (frequency: number, sampleRate: number) => {
+  const t = Math.tan((Math.PI * Math.min(frequency, sampleRate * 0.49)) / sampleRate);
+  return (t - 1) / (t + 1);
+};
 
 /** Coefficient of a one-pole low-pass: state += (1 − a) · (x − state). */
 export const onePole = (frequency: number, sampleRate: number) => Math.exp((-2 * Math.PI * frequency) / sampleRate);
@@ -94,9 +117,26 @@ export function processDelay(signal: ArrayLike<number>, p: DelayParams, s: Delay
   const loopLp = lpActive(p.loopLp) ? onePole(p.loopLp, sampleRate) : -1, loopHp = hpActive(p.loopHp) ? onePole(p.loopHp, sampleRate) : -1;
   const wetLp = lpActive(p.wetLp) ? onePole(p.wetLp, sampleRate) : -1, wetHp = hpActive(p.wetHp) ? onePole(p.wetHp, sampleRate) : -1;
   let loopLow = 0, loopHigh = 0, wetLow = 0, wetHigh = 0, write = 0;
+  const trem = Math.min(1, Math.max(0, p.tremDepth ?? 0));
+  const stages = s.phaserStages ?? 0;
+  const apX = new Float64Array(stages), apY = new Float64Array(stages);
+  let apOut = 0;
   for (let n = 0; n < length; n++) {
     const x = n < signal.length ? signal[n]! : 0;
-    const delay = depth > 0 ? Math.max(1, centre + depth * Math.sin(phase + omega * (n + start + (s.modLead ?? 0)))) : centre;
+    const lfo = Math.sin(phase + omega * (n + start + (s.modLead ?? 0)));
+    if (stages > 0) {
+      // phaser: allpass chain swept by the LFO, its output fed back to its input
+      const a = allpassCoefficient((p.phaserCentre ?? 1000) * 2 ** ((p.phaserOctaves ?? 0) * lfo), sampleRate);
+      let v = x + (p.phaserFeedback ?? 0) * apOut;
+      for (let k = 0; k < stages; k++) {
+        const y = a * v + apX[k]! - a * apY[k]!;
+        apX[k] = v; apY[k] = y; v = y;
+      }
+      apOut = v;
+      out[n] = (dry * x + wet * v) * (1 - trem * (0.5 + 0.5 * lfo));
+      continue;
+    }
+    const delay = depth > 0 ? Math.max(1, centre + depth * lfo) : centre;
     const whole = Math.floor(delay), frac = delay - whole;
     let read = write - whole;
     if (read < 0) read += size;
@@ -110,7 +150,8 @@ export function processDelay(signal: ArrayLike<number>, p: DelayParams, s: Delay
     let g = tap;
     if (wetLp >= 0) { wetLow += (1 - wetLp) * (g - wetLow); g = wetLow; }
     if (wetHp >= 0) { wetHigh += (1 - wetHp) * (g - wetHigh); g -= wetHigh; }
-    out[n] = dry * x + wet * g;
+    // tremolo: the LFO moves the level, from full (LFO at −1) down by its depth (LFO at +1)
+    out[n] = (dry * x + wet * g) * (1 - trem * (0.5 + 0.5 * lfo));
     write = write + 1 === size ? 0 : write + 1;
   }
   return out;

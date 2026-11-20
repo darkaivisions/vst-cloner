@@ -12,6 +12,7 @@ import { measuredCompression } from "./dynamics/fit.ts";
 import { detectDistortion, distortionPlanner } from "./distortion/plan.ts";
 import { cloneDistortionProfile, distortionVerdict } from "./distortion/workflow.ts";
 import { delayPlanner, detectDelay, detectModulation, modulationPlanner } from "./delay/plan.ts";
+import { modulationKind } from "./delay/fit.ts";
 import { cloneDelayProfile, delayVerdict } from "./delay/workflow.ts";
 import { detectReverb, reverbPlanner } from "./reverb/plan.ts";
 import { cloneReverbProfile, reverbVerdict } from "./reverb/workflow.ts";
@@ -37,7 +38,9 @@ export function classifyPlugin(info: Pick<HostInfo, "parameters" | "plugin"> & P
   }
   try {
     detectModulation(info.parameters, info.plugin.category, info.plugin.name);
-    return { effectClass: "modulation", reason: "Chorus, flanger or vibrato detected" };
+    // tremolo and phaser engines exist, but the network was as good or better on every one measured: they are
+    // compared by "engine vs. network" (vch best), not the default
+    if (modulationKind(info.plugin.name, info.plugin.category) === "delay") return { effectClass: "modulation", reason: "Chorus, flanger or vibrato detected" };
   } catch {
     // not a modulated delay
   }
