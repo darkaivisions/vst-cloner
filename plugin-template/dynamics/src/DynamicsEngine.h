@@ -159,6 +159,8 @@ public:
     }
 
     const CompressorParams& current() const { return params; }
+    /** gain reduction (dB) of the static curve for a steady input of this level – what a transfer curve display shows */
+    double reductionAt (double levelDb) const { return curveAt (std::pow (10.0, levelDb / 10.0)); }
 
 private:
     /** outside the knee edge the curve is 0 (compressor: below it, expander: above it) */

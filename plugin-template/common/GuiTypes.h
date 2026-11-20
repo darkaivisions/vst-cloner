@@ -50,7 +50,21 @@ struct Control
 /** Gain reduction needle (editor coordinates; angles in radians clockwise from 12 o'clock): angle = angleZero + radiansPerDb · reduction */
 struct Needle { float pivotX, pivotY, length, width; uint32_t color; float angleZero, radiansPerDb; float capRadius; uint32_t capColor; Ticks ticks; };
 
-/** kind 2: gain reduction meter (needle) */
-struct Display { int kind; float x, y, w, h; uint32_t background, backgroundBottom, grid, curve, text; float fMin, fMax, dbTop, dbBottom, dbStep, labelBand, dbLabelRight; Needle needle; };
+/** kind 2: gain reduction meter (needle); kind 3: level bar or LED chain – dbBottom at its origin, dbTop at the far end;
+    meterSource: 0 input, 1 output, 2 gain reduction; meterOrigin: 0 bottom, 1 top, 2 left, 3 right;
+    segments: number of LEDs (0: a plain bar); offColor: unlit LED or empty bar;
+    role of a generic area (kind 1): 0 unknown, 1 transfer curve, 2 analyzer or time graph */
+struct Display
+{
+    int kind; float x, y, w, h; uint32_t background, backgroundBottom, grid, curve, text;
+    float fMin, fMax, dbTop, dbBottom, dbStep, labelBand, dbLabelRight; Needle needle;
+    int meterSource, meterOrigin, segments; bool round; uint32_t offColor; int role;
+    /** LED chains: value at which each LED lights up, from the origin (nullptr: evenly from dbBottom to dbTop) */
+    const float* ledDb;
+    /** how fast a peak meter falls back (dB per second; 0: 20 dB/s) */
+    float fallDbPerSecond;
+    /** transfer curve: area below it filled with fill (hasFill) */
+    bool hasFill; uint32_t fill;
+};
 
 } // namespace clonegui

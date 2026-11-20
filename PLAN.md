@@ -202,8 +202,12 @@ vst-cloner/
        threshold/ratio/knee)
      - App ✔ – replay of the recognition in the library details (controls moved, meter films, recognised
        elements over them) and a live preview while the original's editor is captured
-     - Open: the clone editor draws only needles and vertical bars – LED chains, horizontal and top-down bars and
-       a live transfer curve are recognised but not drawn yet; controls (45 extra detections, mostly LSP buttons);
+     - Clone editor ✔ – level bars and LED chains in any direction (input, output, gain reduction), LEDs at the
+       levels they light up at in the original's film (ZamComp: 40, 30, 20, 15 … at −39, −29, −18, −14 dB) and
+       falling as fast; the transfer curve live from the clone's own curve, with the original's fill and a dot at
+       the current level; analyzers/time graphs as a running history of level and gain reduction. Checked by
+       filming the clone's editor like the original's (ZamComp, OmniCompressor)
+     - Open: meter scales and labels inside displays; controls (45 extra detections, mostly LSP buttons);
        gain reduction of LSP Gate; XY points, knobs with a gradient and a small pointer (DS1), meter scales, font
        weights within a title, logos, frames/decoration; more editors in the bench
 5. **Dynamics + distortion**

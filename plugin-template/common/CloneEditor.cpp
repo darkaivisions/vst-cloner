@@ -729,10 +729,35 @@ namespace
     };
 
     /** Level bar: filled from the bottom (`dbBottom`) up to the input peak level, the top edge is `dbTop`. */
+    /** What a meter shows, in dB: input or output peak, or gain reduction (see Display::meterSource). */
+    struct MeterSource
+    {
+        explicit MeterSource (CloneProcessor& p, float fallDbPerSecond = 0.0f) : processor (p), fall (fallDbPerSecond > 0.0f ? fallDbPerSecond : 20.0f) {}
+
+        /** called 30 times a second: peaks rise at once and fall as fast as the original's (20 dB/s if unknown), gain reduction glides */
+        float next (int source)
+        {
+            if (source == 2)
+            {
+                shown += (processor.getGainReduction() - shown) * 0.35f;
+                return shown;
+            }
+            const float inputDb = 20.0f * std::log10 (processor.takeInputPeak() + 1e-9f);
+            const float db = source == 1 ? processor.transferOutputDb (inputDb) : inputDb;
+            shown = std::max (db, shown - fall / 30.0f);
+            return shown;
+        }
+
+        CloneProcessor& processor;
+        float fall;
+        float shown = -120.0f;
+    };
+
+    /** Level bar or LED chain (kind 3) growing from the end the original's meter grows from. */
     class LevelBar final : public juce::Component, private juce::Timer
     {
     public:
-        LevelBar (CloneProcessor& p, const Display& d) : processor (p), display (d)
+        LevelBar (CloneProcessor& p, const Display& d) : source (p, d.fallDbPerSecond), display (d)
         {
             setInterceptsMouseClicks (false, false);
             startTimerHz (30);
@@ -742,18 +767,58 @@ namespace
         {
             const auto b = getLocalBounds().toFloat();
             const float t = juce::jlimit (0.0f, 1.0f, (shownDb - display.dbBottom) / (display.dbTop - display.dbBottom));
-            if (t <= 0.0f)
+            const bool vertical = display.meterOrigin <= 1;
+            const float length = vertical ? b.getHeight() : b.getWidth();
+            // position along the meter, measured from its origin
+            const auto stretch = [&] (float from, float to) {
+                switch (display.meterOrigin)
+                {
+                    case 0:  return juce::Rectangle<float> (b.getX(), b.getBottom() - to, b.getWidth(), to - from);
+                    case 1:  return juce::Rectangle<float> (b.getX(), b.getY() + from, b.getWidth(), to - from);
+                    case 2:  return juce::Rectangle<float> (b.getX() + from, b.getY(), to - from, b.getHeight());
+                    default: return juce::Rectangle<float> (b.getRight() - to, b.getY(), to - from, b.getHeight());
+                }
+            };
+            if (display.segments > 0)
+            {
+                // LEDs: lit up to the level, the rest in their unlit colour
+                const int n = display.segments;
+                const float pitch = length / (float) n;
+                // measured thresholds where known (meter scales are rarely linear)
+                int lit = juce::roundToInt (t * (float) n);
+                if (display.ledDb != nullptr)
+                {
+                    lit = 0;
+                    while (lit < n && display.ledDb[lit] <= shownDb) ++lit;
+                }
+                for (int k = 0; k < n; ++k)
+                {
+                    auto led = stretch (k * pitch + pitch * 0.1f, (k + 1) * pitch - pitch * 0.1f);
+                    led = vertical ? led.reduced (led.getWidth() * 0.08f, 0.0f) : led.reduced (0.0f, led.getHeight() * 0.08f);
+                    g.setColour (colour (k < lit ? display.curve : display.offColor));
+                    if (display.round)
+                    {
+                        const float d = std::min (led.getWidth(), led.getHeight());
+                        g.fillEllipse (led.withSizeKeepingCentre (d, d));
+                    }
+                    else
+                        g.fillRect (led);
+                }
                 return;
-            g.setColour (colour (display.curve));
-            g.fillRect (b.withTop (b.getBottom() - t * b.getHeight()));
+            }
+            g.setColour (colour (display.offColor));
+            g.fillRect (b);
+            if (t > 0.0f)
+            {
+                g.setColour (colour (display.curve));
+                g.fillRect (stretch (0.0f, t * length));
+            }
         }
 
     private:
         void timerCallback() override
         {
-            const float peakDb = 20.0f * std::log10 (processor.takeInputPeak() + 1e-9f);
-            // instant rise, falls about 20 dB per second
-            const float next = std::max (peakDb, shownDb - 20.0f / 30.0f);
+            const float next = source.next (display.meterSource);
             if (std::abs (next - shownDb) > 0.01f)
             {
                 shownDb = next;
@@ -761,9 +826,133 @@ namespace
             }
         }
 
-        CloneProcessor& processor;
+        MeterSource source;
         const Display& display;
         float shownDb = -120.0f;
+    };
+
+    /** Transfer curve of the clone (generic area with role 1): output against input level, −60…0 dB on both axes,
+        drawn from the curve the clone computes now, with a dot at the current input level. */
+    class TransferCurve final : public juce::Component, private juce::Timer
+    {
+    public:
+        TransferCurve (CloneProcessor& p, const Display& d) : processor (p), display (d), source (p)
+        {
+            setInterceptsMouseClicks (false, false);
+            startTimerHz (30);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto b = getLocalBounds().toFloat();
+            g.setColour (colour (display.background));
+            g.fillRect (b);
+            const auto x = [&b] (float db) { return b.getX() + (db - lowDb) / (highDb - lowDb) * b.getWidth(); };
+            const auto y = [&b] (float db) { return b.getBottom() - (db - lowDb) / (highDb - lowDb) * b.getHeight(); };
+            const auto grid = [&] {
+                g.setColour (colour (display.grid));
+                for (float db = lowDb; db <= highDb + 0.1f; db += 10.0f)
+                {
+                    g.drawLine (x (db), b.getY(), x (db), b.getBottom(), 1.0f);
+                    g.drawLine (b.getX(), y (db), b.getRight(), y (db), 1.0f);
+                }
+                g.setColour (colour (display.text).withAlpha (0.5f));
+                const float dashes[] = { 3.0f, 3.0f };
+                g.drawDashedLine ({ x (lowDb), y (lowDb), x (highDb), y (highDb) }, dashes, 2, 1.0f);
+            };
+
+            juce::Path curve;
+            for (int i = 0; i <= 120; ++i)
+            {
+                const float in = lowDb + (highDb - lowDb) * (float) i / 120.0f;
+                const float out = juce::jlimit (lowDb - 20.0f, highDb + 20.0f, processor.transferOutputDb (in));
+                if (i == 0) curve.startNewSubPath (x (in), y (out));
+                else curve.lineTo (x (in), y (out));
+            }
+            g.saveState();
+            g.reduceClipRegion (getLocalBounds());
+            if (display.hasFill)
+            {
+                juce::Path area (curve);
+                area.lineTo (x (highDb), b.getBottom() + 1.0f);
+                area.lineTo (x (lowDb), b.getBottom() + 1.0f);
+                area.closeSubPath();
+                g.setColour (colour (display.fill));
+                g.fillPath (area);
+            }
+            // the grid over the filled area, the curve over both
+            grid();
+            g.setColour (colour (display.curve));
+            g.strokePath (curve, juce::PathStrokeType (2.0f));
+            if (levelDb > lowDb)
+            {
+                const float out = processor.transferOutputDb (levelDb);
+                g.fillEllipse (x (levelDb) - 4.0f, y (out) - 4.0f, 8.0f, 8.0f);
+            }
+            g.restoreState();
+        }
+
+    private:
+        void timerCallback() override
+        {
+            levelDb = source.next (0);
+            repaint();
+        }
+
+        static constexpr float lowDb = -60.0f, highDb = 0.0f;
+        CloneProcessor& processor;
+        const Display& display;
+        MeterSource source;
+        float levelDb = -120.0f;
+    };
+
+    /** Analyzer or time graph (generic area with role 2): the last seconds of input level and gain reduction. */
+    class LevelHistory final : public juce::Component, private juce::Timer
+    {
+    public:
+        LevelHistory (CloneProcessor& p, const Display& d) : processor (p), display (d), input (p)
+        {
+            setInterceptsMouseClicks (false, false);
+            history.assign (150, { -120.0f, 0.0f });
+            startTimerHz (30);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto b = getLocalBounds().toFloat();
+            g.setColour (colour (display.background));
+            g.fillRect (b);
+            g.setColour (colour (display.grid));
+            for (int k = 1; k < 6; ++k)
+                g.drawHorizontalLine (juce::roundToInt (b.getY() + b.getHeight() * (float) k / 6.0f), b.getX(), b.getRight());
+            const auto y = [&b] (float db) { return b.getY() + juce::jlimit (0.0f, 1.0f, -db / 72.0f) * b.getHeight(); };
+            juce::Path level, reduction;
+            for (size_t i = 0; i < history.size(); ++i)
+            {
+                const auto& h = history[(next + i) % history.size()];
+                const float x = b.getX() + b.getWidth() * (float) i / (float) (history.size() - 1);
+                if (i == 0) { level.startNewSubPath (x, y (h.first)); reduction.startNewSubPath (x, y (-h.second)); }
+                else { level.lineTo (x, y (h.first)); reduction.lineTo (x, y (-h.second)); }
+            }
+            g.setColour (colour (display.curve));
+            g.strokePath (level, juce::PathStrokeType (1.5f));
+            g.setColour (colour (display.text));
+            g.strokePath (reduction, juce::PathStrokeType (1.5f));
+        }
+
+    private:
+        void timerCallback() override
+        {
+            history[next] = { input.next (0), processor.getGainReduction() };
+            next = (next + 1) % history.size();
+            repaint();
+        }
+
+        CloneProcessor& processor;
+        const Display& display;
+        MeterSource input;
+        std::vector<std::pair<float, float>> history;
+        size_t next = 0;
     };
 #endif // VCH_GAIN_REDUCTION_METER
 }
@@ -804,7 +993,12 @@ public:
                 children.push_back (std::move (needle));
                 continue;
             }
-            component = std::make_unique<MeterDisplay> (processor, d);
+            if (d.role == 1)
+                component = std::make_unique<TransferCurve> (processor, d);
+            else if (d.role == 2)
+                component = std::make_unique<LevelHistory> (processor, d);
+            else
+                component = std::make_unique<MeterDisplay> (processor, d);
 #endif
             if (component != nullptr)
             {

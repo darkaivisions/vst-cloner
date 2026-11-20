@@ -43,6 +43,9 @@ public:
     float getGainReduction() const { return gainReduction.load(); }
     /** Highest input peak (linear) since the last call, for level bars. */
     float takeInputPeak() { return inputPeak.exchange (0.0f); }
+    /** Output level (dB) of the static curve for a steady input level – for transfer curve displays (read while the
+        audio thread may update the curve: a display tolerates a value from just before) */
+    float transferOutputDb (float inputDb) const { return inputDb - (float) computer.reductionAt (inputDb) + (float) makeupDb; }
 
     // interface used by the rebuilt editor (plugin-template/common/CloneEditor.cpp)
     juce::RangedAudioParameter* parameter (int index) const { return index >= 0 && index < (int) parameters.size() ? parameters[(size_t) index] : nullptr; }

@@ -175,6 +175,8 @@ export interface Display {
   bar?: LevelBar;
   /** what a generic display shows, where it is known: a compressor's transfer curve, an analyzer or time graph */
   role?: "curve" | "analyzer";
+  /** transfer curve: colour of the area below the curve, where the original fills it */
+  fill?: string;
 }
 
 /** Vertical level bar: filled from the bottom of the display box (`fromDb`) to the level, the top is `toDb`. */
@@ -189,6 +191,14 @@ export interface LevelBar {
   origin?: "bottom" | "top" | "left" | "right";
   /** LED chain: number of segments over the whole length */
   segments?: number;
+  /** colour of an unlit LED or of the empty bar */
+  offColor?: string;
+  /** round LEDs (otherwise rectangles) */
+  round?: boolean;
+  /** LED chain: the value at which each LED lights up, from the origin (measured; scales are often not linear) */
+  ledDb?: number[];
+  /** how fast the shown value falls back when the signal stops (dB per second, measured) */
+  fallDbPerSecond?: number;
 }
 
 export interface GuiModel {

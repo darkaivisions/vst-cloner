@@ -1567,11 +1567,11 @@ async function analyzeMeter(probe: GuiProbe, series: MeterShot[], noise: Uint8Ar
 async function analyzeLevelMeters(probe: GuiProbe, all: MeterSeries[], noise: Uint8Array, exclude: Box[], reduction?: (levelDb: number) => number): Promise<Display[]> {
   const found: Display[] = [];
   // the plain series first; the one with the threshold turned down adds gain reduction meters that stayed dark
-  for (const { shots: series, turned, moving } of [...all].sort((a, b) => Number(a.turned) - Number(b.turned))) {
+  for (const { shots: series, turned, moving, film } of [...all].sort((a, b) => Number(a.turned) - Number(b.turned))) {
     const calibrated = !turned;
     if (series.length < 3) continue;
     const shared = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
-    for (const d of await levelMetersOf(probe, series, turned, moving, noise, [...exclude, ...found], calibrated ? reduction : undefined)) {
+    for (const d of await levelMetersOf(probe, series, turned, moving, film, noise, [...exclude, ...found], calibrated ? reduction : undefined)) {
       if (!found.some((f) => shared(f, d) > Math.min(area(f), area(d)) * 0.3)) found.push(d);
     }
   }
@@ -1595,7 +1595,7 @@ async function analyzeLevelMeters(probe: GuiProbe, all: MeterSeries[], noise: Ui
 }
 
 /** analyzeLevelMeters for one series of shots (first: silence). */
-async function levelMetersOf(probe: GuiProbe, series: MeterShot[], turned: boolean, moving: Uint8Array | undefined, noise: Uint8Array, exclude: Box[], reduction?: (levelDb: number) => number): Promise<Display[]> {
+async function levelMetersOf(probe: GuiProbe, series: MeterShot[], turned: boolean, moving: Uint8Array | undefined, film: FilmFrame[] | undefined, noise: Uint8Array, exclude: Box[], reduction?: (levelDb: number) => number): Promise<Display[]> {
   const { width, height } = probe;
   const shots = series.map((m) => m.image);
   const rest = shots[0]!;
@@ -1669,7 +1669,60 @@ async function levelMetersOf(probe: GuiProbe, series: MeterShot[], turned: boole
     }
     const pitches = runs.slice(1).map((r, i) => r - runs[i]!);
     const pitch = pitches.length >= 3 ? percentile(pitches, 0.5) : 0;
-    const segments = pitch >= 4 && pitches.every((p) => Math.abs(p - pitch) <= Math.max(2, pitch * 0.25)) ? Math.round(long / pitch) : undefined;
+    let segments = pitch >= 4 && pitches.every((p) => Math.abs(p - pitch) <= Math.max(2, pitch * 0.25)) ? Math.round(long / pitch) : undefined;
+    // An LED chain is longer than the part that lit up: unlit LEDs repeat at the same pitch in the silent picture.
+    let round: boolean | undefined;
+    if (segments && runs.length >= 2) {
+      const across = vertical ? box.x + box.w / 2 : box.y + box.h / 2;
+      const r = Math.max(1, Math.floor(Math.min(short, pitch) / 4));
+      const patch = (t: number): Rgb | undefined => {
+        const cx = Math.round(vertical ? across : t), cy = Math.round(vertical ? t : across);
+        if (cx - r < 0 || cy - r < 0 || cx + r >= width || cy + r >= height) return undefined;
+        return medianColor(rest, { x: cx - r, y: cy - r, w: 2 * r + 1, h: 2 * r + 1 });
+      };
+      const lastLit = changes[seen[seen.length - 1]!.k]!;
+      const runWidth = (start: number) => {
+        let t = start;
+        while (t < start + pitch) {
+          let on = false;
+          for (let u = vertical ? box.x : box.y; u < (vertical ? box.x + box.w : box.y + box.h) && !on; u++) on = lastLit[(vertical ? t * width + u : u * width + t)]! === 1;
+          if (!on) break;
+          t++;
+        }
+        return Math.max(1, t - start);
+      };
+      const centres = runs.map((start) => start + runWidth(start) / 2);
+      const step = (centres[centres.length - 1]! - centres[0]!) / (centres.length - 1);
+      const unlit = patch(centres[0]!);
+      if (unlit) {
+        // the same unlit LED, with the background beside it across the chain (not just a large area of that colour)
+        const side = (t: number, offset: number): Rgb | undefined => {
+          const cx = Math.round(vertical ? across + offset : t), cy = Math.round(vertical ? t : across + offset);
+          return cx >= 0 && cy >= 0 && cx < width && cy < height ? pixel(rest, cx, cy) : undefined;
+        };
+        const reach = short / 2 + 3;
+        const sameLed = (t: number) => {
+          const at = patch(t), a = side(t, -reach), b = side(t, reach);
+          return at !== undefined && colorDistance(at, unlit) < 30 && [a, b].some((c) => c === undefined || colorDistance(c, unlit) > 30);
+        };
+        let lo = centres[0]!, hi = centres[centres.length - 1]!;
+        while (sameLed(lo - step)) lo -= step;
+        while (sameLed(hi + step)) hi += step;
+        const half = runWidth(runs[0]!) / 2;
+        const from = Math.floor(lo - half), to = Math.ceil(hi + half);
+        if (vertical) { box.y = from; box.h = to - from; } else { box.x = from; box.w = to - from; }
+        segments = Math.round((hi - lo) / step) + 1;
+        // round LEDs fill less of their square than rectangles do
+        const size = Math.min(runWidth(runs[0]!), short);
+        let filled = 0;
+        const c0 = Math.round(centres[0]!), a0 = Math.round(across - size / 2);
+        for (let a = 0; a < size; a++) for (let b = 0; b < size; b++) {
+          const x = vertical ? a0 + a : Math.round(c0 - size / 2) + b, y = vertical ? Math.round(c0 - size / 2) + b : a0 + a;
+          if (x >= 0 && y >= 0 && x < width && y < height && lastLit[y * width + x]) filled++;
+        }
+        round = filled < size * size * 0.85;
+      }
+    }
     // calibration: where the lit stretch ends against the level (input) or the expected gain reduction
     const ends = seen.map((s) => {
       const end = origin === "bottom" || origin === "right" ? s.e.lo : s.e.hi;
@@ -1682,8 +1735,43 @@ async function levelMetersOf(probe: GuiProbe, series: MeterShot[], turned: boole
     const valueAt = (pos: number) => (fit && Math.abs(fit.b) > 1e-6 ? (pos - fit.a) / fit.b : NaN);
     const fromDb = valueAt(startPos), toDb = valueAt(endPos);
     const plausible = Number.isFinite(fromDb) && Number.isFinite(toDb) && Math.abs(toDb - fromDb) >= 6 && Math.abs(toDb - fromDb) <= 200;
+    // From the film: the input level at which each LED first lights up, and how fast the meter falls once the
+    // signal stops. (Input meters on the plain film; their scales are often not linear – 40, 30, 20, 15, 10 …)
+    let ledDb: number[] | undefined, fallDbPerSecond: number | undefined;
+    if (film && source === "input" && segments && segments >= 3) {
+      const n = segments, along = vertical ? box.h : box.w;
+      const centreOf = (k: number) => {
+        const t = (k + 0.5) * (along / n);
+        const pos = origin === "bottom" ? box.y + box.h - t : origin === "top" ? box.y + t : origin === "left" ? box.x + t : box.x + box.w - t;
+        return vertical ? { x: Math.round(box.x + box.w / 2), y: Math.round(pos) } : { x: Math.round(pos), y: Math.round(box.y + box.h / 2) };
+      };
+      const litAt = (frame: FilmFrame, k: number) => {
+        const c = centreOf(k);
+        return c.x >= 0 && c.y >= 0 && c.x < width && c.y < height && colorDistance(pixel(frame.image, c.x, c.y), pixel(rest, c.x, c.y)) > 40;
+      };
+      const times = segmentTimes(METER_FILM);
+      const rampFrames = film.filter((f) => f.t >= times[1]!.from && f.t <= times[2]!.to);
+      const first = Array.from({ length: n }, (_, k) => rampFrames.find((f) => litAt(f, k))?.levelDb);
+      const known = first.map((db, k) => ({ db, k })).filter((x): x is { db: number; k: number } => x.db !== undefined && x.db > -150);
+      if (known.length >= 2 && known.every((x, i) => i === 0 || x.db >= known[i - 1]!.db - 0.5)) {
+        // LEDs that never lit (above the loudest level) continue at the spacing of the last two
+        const lastTwo = known.slice(-2);
+        const spacing = Math.max(0.5, (lastTwo[1]!.db - lastTwo[0]!.db) / Math.max(1, lastTwo[1]!.k - lastTwo[0]!.k));
+        const firstTwo = known.slice(0, 2);
+        const below = Math.max(0.5, (firstTwo[1]!.db - firstTwo[0]!.db) / Math.max(1, firstTwo[1]!.k - firstTwo[0]!.k));
+        ledDb = first.map((db, k) => (db !== undefined && db > -150 ? db : k < known[0]!.k ? known[0]!.db - (known[0]!.k - k) * below : lastTwo[1]!.db + (k - lastTwo[1]!.k) * spacing));
+        // fall: lit LEDs at the end of the held level, then the time until they are dark
+        const held = [...film].reverse().find((f) => f.t <= times[2]!.to);
+        const litCount = (f: FilmFrame) => Array.from({ length: n }, (_, k) => litAt(f, k)).filter(Boolean).length;
+        const top = held ? litCount(held) : 0;
+        const dark = film.find((f) => f.t > times[2]!.to && litCount(f) === 0);
+        if (held && top > 0 && dark) fallDbPerSecond = Math.max(5, (ledDb[top - 1]! - ledDb[0]! + 1) / Math.max(0.03, (dark.t - times[2]!.to) / 1000));
+      }
+    }
     const litPoints = maskPoints(changes[seen[seen.length - 1]!.k]!, width, box);
     const color = hex(dominantAt(shots[seen[seen.length - 1]!.k + 1]!, litPoints));
+    // what the lit pixels look like when the meter is off
+    const offColor = hex(dominantAt(rest, litPoints));
     displays.push({
       kind: "bar", ...box,
       background: hex(dominantColor(rest, box)), grid: color, curve: color, text: color,
@@ -1691,7 +1779,8 @@ async function levelMetersOf(probe: GuiProbe, series: MeterShot[], turned: boole
         source,
         fromDb: plausible ? fromDb : source === "input" ? -60 : 0,
         toDb: plausible ? toDb : source === "input" ? 0 : 20,
-        color, origin, ...(segments ? { segments } : {}),
+        color, origin, offColor, ...(segments ? { segments } : {}), ...(round !== undefined ? { round } : {}),
+        ...(ledDb ? { ledDb } : {}), ...(fallDbPerSecond ? { fallDbPerSecond } : {}),
       },
     });
   }
@@ -1742,6 +1831,19 @@ function ledChain(masks: Uint8Array[], width: number, box: Box): { box: Box; cou
   return undefined;
 }
 
+/** most frequent colour of a list (coarsely binned), averaged within its bin */
+function dominantColorOf(colors: Rgb[]): Rgb {
+  const bins = new Map<number, { n: number; sum: [number, number, number] }>();
+  for (const c of colors) {
+    const key = (c[0] >> 4) << 8 | (c[1] >> 4) << 4 | (c[2] >> 4);
+    const bin = bins.get(key) ?? { n: 0, sum: [0, 0, 0] };
+    bin.n++; bin.sum[0] += c[0]; bin.sum[1] += c[1]; bin.sum[2] += c[2];
+    bins.set(key, bin);
+  }
+  const best = [...bins.values()].sort((a, b) => b.n - a.n)[0]!;
+  return [Math.round(best.sum[0] / best.n), Math.round(best.sum[1] / best.n), Math.round(best.sum[2] / best.n)];
+}
+
 interface MeterShot {
   levelDb: number;
   image: Image;
@@ -1754,6 +1856,8 @@ interface MeterSeries {
   shots: MeterShot[];
   /** pixels that keep changing while the input level is held (graphs scroll, meters stand) – films only */
   moving?: Uint8Array;
+  /** all frames of the film, for timing (when each LED lights up, how fast meters fall) */
+  film?: FilmFrame[];
 }
 
 /** levels picked from the rising sine of a meter film (dBFS) */
@@ -1780,7 +1884,7 @@ async function meterSeries(probe: GuiProbe): Promise<MeterSeries[]> {
         const m = diffMask(held[i]!.image, held[i - 1]!.image, 30);
         for (let p = 0; p < m.length; p++) if (m[p]) moving[p] = 1;
       }
-      return { turned: Boolean(film.params), shots: [{ levelDb: -200, image: rest.image }, ...shots], moving };
+      return { turned: Boolean(film.params), shots: [{ levelDb: -200, image: rest.image }, ...shots], moving, film: frames };
     }));
   }
   if (!probe.meter) return [];
@@ -1951,7 +2055,9 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
       if (dist > 10 && dist < 70) subtle[y * width + x] = 1;
     }
     const curvePoints = d.frames.flatMap((f) => maskPoints(diffMask(f, base, 40, noise), width, box)).slice(0, 20000);
-    const curve = dominantAt(d.frames[0]!, curvePoints);
+    // the curve is where a changed pixel stands out from the background (where it moved away, the background shows)
+    const standing = d.frames.flatMap((f) => curvePoints.filter(([x, y]) => colorDistance(pixel(f, x, y), bg) > 60).map(([x, y]) => pixel(f, x, y)));
+    const curve = standing.length >= 10 ? dominantColorOf(standing) : dominantAt(d.frames[0]!, curvePoints);
     const grid = dominantColor(base, box, subtle);
     // a row of evenly spaced, equal lights a control switches on and off is an LED meter showing what it sets
     const leds = ledChain(d.frames.map((f) => diffMask(f, base, 30, noise)), width, box);
@@ -1966,8 +2072,15 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     }
     // a display that the threshold, ratio or knee of a compressor or gate bend is its transfer curve
     const curveLike = !d.eq && d.params.some((p) => /thresh|ratio|knee|reduction|range/i.test(p.name));
+    // a filled area below a compressor curve: the lower right differs from the upper left (both away from the curve)
+    let fill: string | undefined;
+    if (curveLike) {
+      const at = (fx: number, fy: number) => medianColor(base, clampBox({ x: Math.round(box.x + box.w * fx) - 2, y: Math.round(box.y + box.h * fy) - 2, w: 5, h: 5 }, base));
+      const below = at(0.85, 0.85), above = at(0.15, 0.15);
+      if (colorDistance(below, above) > 12) fill = hex(below);
+    }
     displays.push({
-      kind: d.eq ? "eq" : "generic", ...(curveLike ? { role: "curve" as const } : {}), ...box,
+      kind: d.eq ? "eq" : "generic", ...(curveLike ? { role: "curve" as const } : {}), ...(fill ? { fill } : {}), ...box,
       background: hex(bg), grid: hex(grid), curve: hex(curve), text: hex(luminance(bg) > 128 ? [40, 40, 40] : [170, 170, 170]),
     });
   }
