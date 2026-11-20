@@ -44,6 +44,7 @@ export function formatReverbVerify(report: ReverbVerifyReport): string[] {
   const lines = [`Clone vs. original (${report.renders} settings): ${db(report.overall.rmsDb)} (max ${report.overall.maxDb.toFixed(1)}) – ${reverbVerdict(report.overall.rmsDb)}`];
   if (report.validate) lines.push(`  of which unseen combinations: ${db(report.validate.rmsDb)}`);
   lines.push("Largest deviations:", ...report.worst.map((w) => `  ${w.label}: ${db(w.rmsDb)} (max ${w.maxDb.toFixed(1)})`));
+  if (report.widthDb !== undefined) lines.push(`  Stereo width: the tails' side signal deviates by ${report.widthDb.toFixed(1)} dB on average`);
   if (report.engineMaxDb > 1) lines.push(`Warning: the plugin deviates from the reference model (max ${report.engineMaxDb.toFixed(2)} dB, ${report.engineWorst})`);
   return lines;
 }

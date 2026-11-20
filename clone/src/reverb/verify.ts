@@ -6,7 +6,7 @@ import { decodeWav, encodeWav, type Profile } from "@vst-cloner/profile";
 import type { Logger } from "../build.ts";
 import type { Errors } from "../dynamics/fit.ts";
 import { cloneValue, dynamicsCloneParameters, modelValue } from "../dynamics/params.ts";
-import { compareReverbs, describeModel, describeResponse, predictReverb, reverbInput, reverbObservations, reverbResponse, type ReverbModel } from "./fit.ts";
+import { tailCorrelation, compareReverbs, describeModel, describeResponse, predictReverb, reverbInput, reverbObservations, reverbResponse, type ReverbModel } from "./fit.ts";
 
 export interface ReverbVerifyReport {
   clone: string;
@@ -19,6 +19,8 @@ export interface ReverbVerifyReport {
   /** clone vs. TypeScript model – differences between the C++ engine and the reference */
   engineMaxDb: number;
   engineWorst: string;
+  /** stereo width: mean difference of the tails' side-to-mid energy, clone against original (dB) */
+  widthDb?: number;
 }
 
 const mean = (rows: Errors[]): Errors | undefined =>
@@ -54,7 +56,8 @@ export async function verifyReverbClone(
     plugin: clonePath,
     sampleRate,
     blockSize: profile.manifest.capture.blockSize,
-    channels: 1,
+    // two channels (the same input on both): the stereo width of the tails is compared too
+    channels: 2,
     prerollSeconds: 0.1,
     tailSeconds: profile.manifest.capture.tailSeconds,
     input: "input.wav",
@@ -68,7 +71,7 @@ export async function verifyReverbClone(
   const workDir = await mkdtemp(join(tmpdir(), "vch-verify-"));
   try {
     const { audio } = regenerateTestSignal(profile.testSignals);
-    await writeFile(join(workDir, "input.wav"), encodeWav({ sampleRate: audio.sampleRate, channels: [audio.channels[0]!] }));
+    await writeFile(join(workDir, "input.wav"), encodeWav({ sampleRate: audio.sampleRate, channels: [audio.channels[0]!, audio.channels[0]!] }));
     await writeFile(join(workDir, "job.json"), JSON.stringify(job));
     log("info", `Measuring the clone with ${renders.length} measured settings …`);
     await runHost(["render", join(workDir, "job.json")], host);
@@ -76,9 +79,17 @@ export async function verifyReverbClone(
     const input = reverbInput(profile);
     const rows: { label: string; purpose: string; errors: Errors }[] = [];
     let engineMaxDb = 0, engineWorst = "";
+    const widths: number[] = [];
     for (const o of reverbObservations(profile, input)) {
-      const output = decodeWav(await readFile(join(workDir, "out", `${o.renderId}.wav`))).channels[0]!;
+      const outputs = decodeWav(await readFile(join(workDir, "out", `${o.renderId}.wav`))).channels;
+      const output = outputs[0]!;
       const response = reverbResponse(output, input);
+      if (outputs.length > 1 && o.measured.correlation !== undefined) {
+        // side-to-mid energy of a tail of this correlation (dB), clone against original
+        const sideDb = (r: number) => 10 * Math.log10(Math.max(1e-4, 1 - r) / Math.max(1e-4, 1 + r));
+        const own = tailCorrelation(response, reverbResponse(outputs[1]!, input), input.sampleRate, o.measured.onsetSeconds + 0.02);
+        widths.push(Math.abs(sideDb(own) - sideDb(o.measured.correlation)));
+      }
       if (response.some((x) => !Number.isFinite(x))) throw new Error(`The clone gives no valid signal (NaN/inf) at "${o.label}"`);
       const clone = describeResponse(response, sampleRate);
       rows.push({ label: o.label, purpose: o.purpose, errors: compareReverbs(clone, o.measured) });
@@ -103,6 +114,7 @@ export async function verifyReverbClone(
       worst: [...rows].sort((a, b) => b.errors.rmsDb - a.errors.rmsDb).slice(0, 5).map((r) => ({ label: r.label, ...r.errors })),
       engineMaxDb,
       engineWorst,
+      ...(widths.length ? { widthDb: widths.reduce((a, b) => a + b, 0) / widths.length } : {}),
     };
   } finally {
     await rm(workDir, { recursive: true, force: true });

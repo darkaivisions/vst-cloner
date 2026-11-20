@@ -72,6 +72,19 @@ export interface ReverbDescription {
   rt: [number, number, number];
   /** energy decay curve per band (dB re. the unit impulse), every STEP_SECONDS */
   decay: Float64Array[];
+  /** correlation of the two channels' tails (1 for a mono capture) */
+  correlation?: number;
+}
+
+/** Correlation of two tails from `from` seconds on (the dry impulse and the first reflections left out). */
+export function tailCorrelation(left: ArrayLike<number>, right: ArrayLike<number>, sampleRate: number, from: number): number {
+  let lr = 0, ll = 0, rr = 0;
+  for (let i = Math.round(from * sampleRate); i < Math.min(left.length, right.length); i++) {
+    lr += left[i]! * right[i]!;
+    ll += left[i]! ** 2;
+    rr += right[i]! ** 2;
+  }
+  return ll > 0 && rr > 0 ? lr / Math.sqrt(ll * rr) : 1;
 }
 
 export function describeResponse(h: ArrayLike<number>, sampleRate: number): ReverbDescription {
@@ -145,7 +158,14 @@ export function reverbObservations(profile: Profile, input: ReverbInput): Reverb
     params: r.params.map((p) => ({ index: p.index, value: p.value })),
     kind: r.kind,
     ...(r.sweepParameter !== undefined ? { sweepParameter: r.sweepParameter } : {}),
-    measured: describeResponse(reverbResponse(readCapture(profile, r).channels[0]!, input), input.sampleRate),
+    measured: ((): ReverbDescription => {
+      const channels = readCapture(profile, r).channels;
+      const left = reverbResponse(channels[0]!, input);
+      const description = describeResponse(left, input.sampleRate);
+      // how alike the channels' tails are (the stereo width), from 20 ms after the tail sets in
+      const correlation = channels.length < 2 ? 1 : tailCorrelation(left, reverbResponse(channels[1]!, input), input.sampleRate, description.onsetSeconds + 0.02);
+      return { ...description, correlation };
+    })(),
   }));
 }
 
@@ -222,6 +242,8 @@ export function fitReverbParams(measured: ReverbDescription, input: ReverbInput,
     dryDb: measured.dryDb,
     gainDb,
     rt,
+    // (VCH_REVERB_WIDTH_OFF: the tails as different as the network makes them, as before – for comparisons)
+    correlation: process.env.VCH_REVERB_WIDTH_OFF ? 0 : measured.correlation ?? fallback?.correlation ?? 0,
   };
   if (!present.some(Boolean)) return { params, structure };
   const loudest = measured.levelDb.indexOf(Math.max(...measured.levelDb));

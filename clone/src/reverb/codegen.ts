@@ -3,7 +3,7 @@ import { cppNumber, cppString, parameterLines } from "../eq/codegen.ts";
 import type { CloneParam } from "../eq/params.ts";
 import { dynamicsCloneParameters } from "../dynamics/params.ts";
 import type { ReverbModel } from "./fit.ts";
-import { packReverb } from "./model.ts";
+import { NUM_REVERB_PACKED, packReverb } from "./model.ts";
 
 /** Generates CloneModel.h for plugin-template/reverb. */
 export function generateReverbHeader(
@@ -32,7 +32,9 @@ export function generateReverbHeader(
   ];
   model.tables.forEach((t, i) => {
     lines.push(`inline const double tableValues${i}[] = { ${list(t.points.map((p) => p.value))} };`);
-    lines.push(`inline const double tablePacked${i}[] = { ${list(t.points.flatMap((p) => p.packed))} };`);
+    // (tables of models fitted before the stereo width have fewer values: the missing ones do not move)
+    const base = packReverb(model.base);
+    lines.push(`inline const double tablePacked${i}[] = { ${list(t.points.flatMap((p) => (p.packed.length >= NUM_REVERB_PACKED ? p.packed : [...p.packed, ...base.slice(p.packed.length)])))} };`);
   });
   if (model.tables.length === 0) {
     lines.push("inline const vch::ParamTable* const tables = nullptr;", "inline constexpr int numTables = 0;");

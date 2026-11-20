@@ -15,7 +15,7 @@ namespace vch
 
 /** packed model values: pre-delay (s), dry (dB), band gains (dB: lows, mids, highs), ln of the decay times (s)
     – see packReverb() in clone/src/reverb/model.ts */
-constexpr int numPacked = 8;
+constexpr int numPacked = 9;
 
 constexpr double reverbOffDb = -100.0, maxPredelaySeconds = 1.0, minRt = 0.05, maxRt = 30.0;
 constexpr int reverbLineCount = 8;
@@ -29,6 +29,7 @@ struct ReverbParams
     double predelaySeconds = 0, dryDb = 0;
     double gainDb[3] = { reverbOffDb, reverbOffDb, reverbOffDb };
     double rt[3] = { 1, 1, 1 };
+    double correlation = 0;   // of the two channels' tails (widthMix() in model.ts)
 };
 
 /** unpackReverb() in model.ts */
@@ -42,6 +43,7 @@ inline ReverbParams unpack (const double* x)
         p.gainDb[b] = std::clamp (x[2 + b], reverbOffDb, 40.0);
         p.rt[b] = std::clamp (std::exp (std::min (x[5 + b], 10.0)), minRt, maxRt);
     }
+    p.correlation = std::clamp (x[8], -1.0, 1.0);
     return p;
 }
 
@@ -85,6 +87,9 @@ public:
         for (int b = 0; b < 3; ++b)
             gains[b] = reverbGain (p.gainDb[b]);
         dry = drySign * reverbGain (p.dryDb);
+        const double theta = std::asin (p.correlation) / 2.0;
+        own = std::cos (theta);
+        cross = std::sin (theta);
         predelay = (int) std::lround (std::clamp (p.predelaySeconds, 0.0, maxPredelaySeconds) * sampleRate);
     }
 
@@ -119,18 +124,21 @@ public:
             lines[k][(size_t) position[k]] = d + g[0] * low[k] + g[1] * (high[k] - low[k]) + g[2] * (f - high[k]);
             position[k] = position[k] + 1 == lengths[k] ? 0 : position[k] + 1;
         }
+        // stereo width: each channel's tail with a share of the other's (widthMix() in model.ts)
+        const double mixed[2] = { own * raw[0] + cross * raw[1], own * raw[1] + cross * raw[0] };
         for (int ch = 0; ch < 2; ++ch)
         {
-            outLow[ch] += (1.0 - aLow) * (raw[ch] - outLow[ch]);
-            outHigh[ch] += (1.0 - aHigh) * (raw[ch] - outHigh[ch]);
-            wet[ch] = gains[0] * outLow[ch] + gains[1] * (outHigh[ch] - outLow[ch]) + gains[2] * (raw[ch] - outHigh[ch]);
+            const double raw_ = mixed[ch];
+            outLow[ch] += (1.0 - aLow) * (raw_ - outLow[ch]);
+            outHigh[ch] += (1.0 - aHigh) * (raw_ - outHigh[ch]);
+            wet[ch] = gains[0] * outLow[ch] + gains[1] * (outHigh[ch] - outLow[ch]) + gains[2] * (raw_ - outHigh[ch]);
         }
     }
 
     double dryGain() const { return dry; }
 
 private:
-    double sampleRate = 48000.0, aLow = 0, aHigh = 0, dry = 1;
+    double sampleRate = 48000.0, aLow = 0, aHigh = 0, dry = 1, own = 1, cross = 0;
     double gains[3] = { 0, 0, 0 };
     int predelay = 0, waitAt = 0;
     std::array<int, reverbLineCount> lengths {}, position {};

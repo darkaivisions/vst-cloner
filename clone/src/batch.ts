@@ -297,7 +297,8 @@ async function runOne(entry: Pick<PluginEntry, "path" | "name" | "format">, opti
       const v = result.verify;
       if (v) {
         const judged = result.model.report.tail ? reverbVerdict(v.overall.rmsDb) : "no reverb tail measured";
-        row.quality = { value: v.overall.rmsDb, verdict: judged, text: `${v.overall.rmsDb.toFixed(2)} dB (${judged})`, ...(v.validate ? { validate: v.validate.rmsDb } : {}) };
+        const width = v.widthDb !== undefined ? `, width ${v.widthDb.toFixed(1)} dB` : "";
+        row.quality = { value: v.overall.rmsDb, verdict: judged, text: `${v.overall.rmsDb.toFixed(2)} dB (${judged}${width})`, ...(v.validate ? { validate: v.validate.rmsDb } : {}) };
       }
     } else {
       const result = await cloneDistortionProfile(common);

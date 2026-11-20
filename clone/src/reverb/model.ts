@@ -17,6 +17,8 @@ export interface ReverbParams {
   gainDb: [number, number, number];
   /** decay time (RT60, seconds) per band */
   rt: [number, number, number];
+  /** correlation of the two channels' tails (0: as different as the network makes them, 1: the same – mono) */
+  correlation?: number;
 }
 
 export interface ReverbStructure {
@@ -43,13 +45,14 @@ export const MIN_RT = 0.05, MAX_RT = 30;
 export const REVERB_ENERGY: { a: [number, number, number]; b: [number, number, number] } = { a: [0.6418, 3.0555, 12.971], b: [0.1925, 0.9629, 4.0775] };
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-export const NUM_REVERB_PACKED = 8;
+export const NUM_REVERB_PACKED = 9;
 /**
  * Packed model values: additive changes of them are what single controls do (pre-delay in seconds, levels in dB,
  * decay times as logarithms).
  */
 export const packReverb = (p: ReverbParams): number[] => [
   p.predelaySeconds, p.dryDb, p.gainDb[0], p.gainDb[1], p.gainDb[2], Math.log(p.rt[0]), Math.log(p.rt[1]), Math.log(p.rt[2]),
+  p.correlation ?? 0,
 ];
 const fromLog = (x: number) => clamp(Math.exp(Math.min(x, 10)), MIN_RT, MAX_RT);
 export const unpackReverb = (x: number[]): ReverbParams => ({
@@ -57,7 +60,18 @@ export const unpackReverb = (x: number[]): ReverbParams => ({
   dryDb: clamp(x[1]!, REVERB_OFF_DB, 24),
   gainDb: [clamp(x[2]!, REVERB_OFF_DB, 40), clamp(x[3]!, REVERB_OFF_DB, 40), clamp(x[4]!, REVERB_OFF_DB, 40)],
   rt: [fromLog(x[5]!), fromLog(x[6]!), fromLog(x[7]!)],
+  // (models fitted before the stereo width have 8 values)
+  correlation: clamp(x[8] ?? 0, -1, 1),
 });
+
+/**
+ * Mix of the network's two tails for a channel: own · cos θ + other · sin θ with θ = asin(correlation) / 2 – two
+ * uncorrelated tails of the same energy then correlate as the original's did, at the same energy.
+ */
+export const widthMix = (correlation: number): [number, number] => {
+  const theta = Math.asin(clamp(correlation, -1, 1)) / 2;
+  return [Math.cos(theta), Math.sin(theta)];
+};
 
 const gainOf = (db: number) => (db <= REVERB_OFF_DB + 0.5 ? 0 : 10 ** (db / 20));
 const onePole = (frequency: number, sampleRate: number) => Math.exp((-2 * Math.PI * frequency) / sampleRate);
@@ -89,7 +103,8 @@ export function processReverb(
   // absorption per line and band: −60 dB after the band's decay time
   const absorb = lengths.map((n) => p.rt.map((rt) => 10 ** ((-3 * n) / (sampleRate * rt))));
   const low = new Float64Array(count), high = new Float64Array(count), tap = new Float64Array(count);
-  const signs = REVERB_SIGNS[channel]!;
+  const signs = REVERB_SIGNS[channel]!, others = REVERB_SIGNS[1 - channel]!;
+  const [own, cross] = widthMix(p.correlation ?? 0);
   const gains = reverbBandGains(p);
   const dry = s.drySign * gainOf(p.dryDb);
   const predelay = Math.round(clamp(p.predelaySeconds, 0, MAX_PREDELAY_SECONDS) * sampleRate);
@@ -101,13 +116,15 @@ export function processReverb(
     wait[waitAt] = x;
     waitAt = waitAt === predelay ? 0 : waitAt + 1;
     const d = wait[waitAt]!;
-    let sum = 0, wet = 0;
+    let sum = 0, wetOwn = 0, wetOther = 0;
     for (let i = 0; i < count; i++) {
       const o = lines[i]![position[i]!]!;
       tap[i] = o;
       sum += o;
-      wet += signs[i]! * o;
+      wetOwn += signs[i]! * o;
+      wetOther += others[i]! * o;
     }
+    const wet = own * wetOwn + cross * wetOther;
     const mix = (2 / count) * sum;
     for (let i = 0; i < count; i++) {
       const f = tap[i]! - mix;
