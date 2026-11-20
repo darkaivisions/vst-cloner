@@ -2,7 +2,7 @@ import type { CaptureRender, Parameter } from "@vst-cloner/profile";
 import { cppNumber, cppString, parameterLines } from "../eq/codegen.ts";
 import type { CloneParam } from "../eq/params.ts";
 import { dynamicsCloneParameters } from "../dynamics/params.ts";
-import type { DelayModel, DelayTables } from "./fit.ts";
+import { delayParamSource, type DelayModel, type DelayTables, type DelayVariant } from "./fit.ts";
 import { NUM_DELAY_PACKED, packDelay } from "./model.ts";
 
 /** Generates CloneModel.h for plugin-template/delay. */
@@ -12,7 +12,7 @@ export function generateDelayHeader(
   pluginName: string,
   renders: CaptureRender[] = [],
 ): { header: string; params: CloneParam[] } {
-  const params = dynamicsCloneParameters(model, parameters, renders);
+  const params = dynamicsCloneParameters(delayParamSource(model), parameters, renders);
   const cloneIndex = new Map(params.map((p, i) => [p.original, i]));
   const list = (values: number[]) => values.map(cppNumber).join(", ");
   const lines = [
@@ -27,40 +27,47 @@ export function generateDelayHeader(
     ...parameterLines(params),
   ];
 
-  // model 0 is the main one; the others apply while their switch is in their position
-  const models: { tables: DelayTables; condition: string; comment: string }[] = [
-    { tables: model, condition: "-1, 0.0, 0.0", comment: "main model" },
-    ...(model.variants ?? []).map((v) => ({
-      tables: v as DelayTables,
-      condition: `${cloneIndex.get(v.index)}, ${cppNumber(v.range[0])}, ${cppNumber(v.range[1])}`,
-      comment: v.name.replace(/[\r\n]/g, " "),
-    })),
-  ];
-  models.forEach((m, k) => {
-    const baseValue = new Map(m.tables.baseValues.map((v) => [v.index, v.value]));
-    // tables of models fitted before the LFO have fewer values: the missing ones do not move
-    const basePacked = packDelay(m.tables.base);
-    const full = (packed: number[]) => (packed.length >= NUM_DELAY_PACKED ? packed : [...packed, ...basePacked.slice(packed.length)]);
-    lines.push(`// model ${k}: ${m.comment}`, `inline constexpr double basePacked${k}[vch::numPacked] = { ${list(packDelay(m.tables.base))} };`);
-    m.tables.tables.forEach((t, i) => {
-      lines.push(`inline const double tableValues${k}_${i}[] = { ${list(t.points.map((p) => p.value))} };`);
-      lines.push(`inline const double tablePacked${k}_${i}[] = { ${list(t.points.flatMap((p) => full(p.packed)))} };`);
-    });
-    if (m.tables.tables.length === 0) lines.push(`inline const vch::ParamTable* const tables${k} = nullptr;`);
-    else {
-      lines.push(`inline const vch::ParamTable tables${k}[] =`, "{");
+  // model 0 is the main one; the others apply while their switch is in their position. A stereo original has a
+  // second set for the right channel (modelsRight; none: both channels use `models`).
+  const emit = (set: DelayTables & { variants?: DelayVariant[] }, prefix: string, name: string, count: string) => {
+    const models: { tables: DelayTables; condition: string; comment: string }[] = [
+      { tables: set, condition: "-1, 0.0, 0.0", comment: "main model" },
+      ...(set.variants ?? []).map((v) => ({
+        tables: v as DelayTables,
+        condition: `${cloneIndex.get(v.index)}, ${cppNumber(v.range[0])}, ${cppNumber(v.range[1])}`,
+        comment: v.name.replace(/[\r\n]/g, " "),
+      })),
+    ];
+    models.forEach((m, k) => {
+      const baseValue = new Map(m.tables.baseValues.map((v) => [v.index, v.value]));
+      // tables of models fitted before the LFO have fewer values: the missing ones do not move
+      const basePacked = packDelay(m.tables.base);
+      const full = (packed: number[]) => (packed.length >= NUM_DELAY_PACKED ? packed : [...packed, ...basePacked.slice(packed.length)]);
+      lines.push(`// ${name} ${k}: ${m.comment}`, `inline constexpr double ${prefix}basePacked${k}[vch::numPacked] = { ${list(basePacked)} };`);
       m.tables.tables.forEach((t, i) => {
-        lines.push(`    { ${cloneIndex.get(t.index)}, ${t.discrete}, ${t.points.length}, tableValues${k}_${i}, tablePacked${k}_${i}, ${cppNumber(baseValue.get(t.index) ?? 0)} }, // ${t.name.replace(/[\r\n]/g, " ")}`);
+        lines.push(`inline const double ${prefix}tableValues${k}_${i}[] = { ${list(t.points.map((p) => p.value))} };`);
+        lines.push(`inline const double ${prefix}tablePacked${k}_${i}[] = { ${list(t.points.flatMap((p) => full(p.packed)))} };`);
       });
-      lines.push("};");
-    }
-    lines.push("");
-  });
-  lines.push("inline const vch::DelayModelData models[] =", "{");
-  models.forEach((m, k) => {
-    const s = m.tables.structure;
-    lines.push(`    { ${m.condition}, basePacked${k}, tables${k}, ${m.tables.tables.length}, { ${cppNumber(s.drySign)}, ${cppNumber(s.wetSign)}, ${cppNumber(s.feedbackSign)}, ${cppNumber(s.modLead ?? 0)}, ${s.phaserStages ?? 0} }, ${m.tables.timeRule === "sum"} }, // ${m.comment}`);
-  });
-  lines.push("};", `inline constexpr int numModels = ${models.length};`, "} // namespace clonemodel", "");
+      if (m.tables.tables.length === 0) lines.push(`inline const vch::ParamTable* const ${prefix}tables${k} = nullptr;`);
+      else {
+        lines.push(`inline const vch::ParamTable ${prefix}tables${k}[] =`, "{");
+        m.tables.tables.forEach((t, i) => {
+          lines.push(`    { ${cloneIndex.get(t.index)}, ${t.discrete}, ${t.points.length}, ${prefix}tableValues${k}_${i}, ${prefix}tablePacked${k}_${i}, ${cppNumber(baseValue.get(t.index) ?? 0)} }, // ${t.name.replace(/[\r\n]/g, " ")}`);
+        });
+        lines.push("};");
+      }
+      lines.push("");
+    });
+    lines.push(`inline const vch::DelayModelData ${name}[] =`, "{");
+    models.forEach((m, k) => {
+      const st = m.tables.structure;
+      lines.push(`    { ${m.condition}, ${prefix}basePacked${k}, ${prefix}tables${k}, ${m.tables.tables.length}, { ${cppNumber(st.drySign)}, ${cppNumber(st.wetSign)}, ${cppNumber(st.feedbackSign)}, ${cppNumber(st.modLead ?? 0)}, ${st.phaserStages ?? 0} }, ${m.tables.timeRule === "sum"} }, // ${m.comment}`);
+    });
+    lines.push("};", `inline constexpr int ${count} = ${models.length};`);
+  };
+  emit(model, "", "models", "numModels");
+  if (model.right) emit(model.right, "r", "modelsRight", "numModelsRight");
+  else lines.push("inline const vch::DelayModelData* const modelsRight = models;", "inline constexpr int numModelsRight = 0;");
+  lines.push("} // namespace clonemodel", "");
   return { header: lines.join("\n"), params };
 }

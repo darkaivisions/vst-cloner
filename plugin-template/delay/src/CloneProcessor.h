@@ -55,16 +55,25 @@ private:
     static constexpr double smoothingSeconds = 0.02;
     static constexpr int chunkSize = 32;
 
-    void design();
+    /** One channel: its model values (smoothed), the coefficients designed from them. A stereo original has a
+        model of its own for the right channel (clonemodel::modelsRight); otherwise both use the same. */
+    struct Channel
+    {
+        double packed[vch::numPacked] {};   // current (smoothed) model values
+        double designed[vch::numPacked] {}; // values the coefficients belong to
+        vch::DelayStructure structure;
+        vch::DelayCoeffs coeffs;
+    };
+
+    void design (Channel& channel);
+    /** target model values of the current parameters for a set of models (main + switch positions) */
+    const vch::DelayModelData& targetOf (const vch::DelayModelData* models, int numModels, double* target) const;
 
     std::vector<juce::RangedAudioParameter*> parameters;
     double currentSampleRate = 48000.0;
     bool initialised = false;
 
-    double packed[vch::numPacked] {};   // current (smoothed) model values
-    double designed[vch::numPacked] {}; // values the coefficients belong to
-    vch::DelayStructure structure;
-    vch::DelayCoeffs coeffs;
+    std::array<Channel, 2> state;
     std::array<vch::DelayLine, 2> lines;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CloneProcessor)

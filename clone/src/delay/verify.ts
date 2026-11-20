@@ -6,7 +6,7 @@ import { decodeWav, encodeWav, type Profile } from "@vst-cloner/profile";
 import type { Logger } from "../build.ts";
 import type { Errors } from "../dynamics/fit.ts";
 import { cloneValue, dynamicsCloneParameters, modelValue } from "../dynamics/params.ts";
-import { clicksResponse, compareAnswers, delayInput, delayObservations, delayResponse, modelAnswer, predictDelayModel, type DelayModel } from "./fit.ts";
+import { channelModel, delayParamSource, isStereoCapture, clicksResponse, compareAnswers, delayInput, delayObservations, delayResponse, modelAnswer, predictDelayModel, type DelayModel } from "./fit.ts";
 
 export interface DelayVerifyReport {
   clone: string;
@@ -41,7 +41,7 @@ export async function verifyDelayClone(
   const convert = new Map<number, (value: number) => number>();
   const asModel = new Map<number, (value: number) => number>();
   const originals = new Map(profile.parameters.parameters.map((p) => [p.index, p]));
-  for (const param of dynamicsCloneParameters(model, profile.parameters.parameters, profile.captures.renders)) {
+  for (const param of dynamicsCloneParameters(delayParamSource(model), profile.parameters.parameters, profile.captures.renders)) {
     const index = cloneIndexByName.get(param.name);
     if (index === undefined) throw new Error(`The clone has no parameter "${param.name}"`);
     toClone.set(param.original, index);
@@ -50,11 +50,13 @@ export async function verifyDelayClone(
   }
 
   const renders = profile.captures.renders;
+  // a stereo model is rendered on two channels (the same input on both) and checked channel by channel
+  const stereo = Boolean(model.right) || isStereoCapture(profile);
   const job: RenderJob = {
     plugin: clonePath,
     sampleRate,
     blockSize: profile.manifest.capture.blockSize,
-    channels: 1,
+    channels: stereo ? 2 : 1,
     // the pre-roll of the capture: an LFO is then in the same phase as the original's when the input begins
     prerollSeconds: profile.manifest.capture.prerollSeconds,
     tailSeconds: profile.manifest.capture.tailSeconds,
@@ -69,7 +71,7 @@ export async function verifyDelayClone(
   const workDir = await mkdtemp(join(tmpdir(), "vch-verify-"));
   try {
     const { audio } = regenerateTestSignal(profile.testSignals);
-    await writeFile(join(workDir, "input.wav"), encodeWav({ sampleRate: audio.sampleRate, channels: [audio.channels[0]!] }));
+    await writeFile(join(workDir, "input.wav"), encodeWav({ sampleRate: audio.sampleRate, channels: stereo ? [audio.channels[0]!, audio.channels[0]!] : [audio.channels[0]!] }));
     await writeFile(join(workDir, "job.json"), JSON.stringify(job));
     log("info", `Measuring the clone with ${renders.length} measured settings …`);
     await runHost(["render", join(workDir, "job.json")], host);
@@ -77,21 +79,29 @@ export async function verifyDelayClone(
     const input = delayInput(profile);
     const rows: { label: string; purpose: string; errors: Errors }[] = [];
     let engineMaxDb = 0, engineWorst = "";
-    for (const o of delayObservations(profile, input)) {
-      const output = decodeWav(await readFile(join(workDir, "out", `${o.renderId}.wav`))).channels[0]!;
-      const response = delayResponse(output, input);
-      if (response.some((v) => !Number.isFinite(v))) throw new Error(`The clone gives no valid signal (NaN/inf) at "${o.label}"`);
-      const clicks = clicksResponse(output, input);
-      const answer = { response, ...(clicks ? { clicks } : {}) };
-      rows.push({ label: o.label, purpose: o.purpose, errors: compareAnswers(answer, o, input) });
+    const perChannel = (stereo ? [0, 1] : [0]).map((c) => delayObservations(profile, input, c));
+    for (let i = 0; i < perChannel[0]!.length; i++) {
+      const o = perChannel[0]![i]!;
+      const outputs = decodeWav(await readFile(join(workDir, "out", `${o.renderId}.wav`))).channels;
+      const errors: Errors[] = [];
+      for (let c = 0; c < perChannel.length; c++) {
+        const original = perChannel[c]![i]!;
+        const output = outputs[Math.min(c, outputs.length - 1)]!;
+        const response = delayResponse(output, input);
+        if (response.some((v) => !Number.isFinite(v))) throw new Error(`The clone gives no valid signal (NaN/inf) at "${o.label}"`);
+        const clicks = clicksResponse(output, input);
+        const answer = { response, ...(clicks ? { clicks } : {}) };
+        errors.push(compareAnswers(answer, original, input));
 
-      // reference: the TypeScript model (exactly what the plugin must do)
-      const predicted = predictDelayModel(model, new Map(o.params.map((p) => [p.index, asModel.get(p.index)?.(p.value) ?? p.value])));
-      const engine = compareAnswers(answer, modelAnswer(predicted.params, predicted.structure, input), input);
-      if (engine.maxDb > engineMaxDb) {
-        engineMaxDb = engine.maxDb;
-        engineWorst = o.label;
+        // reference: the TypeScript model of that channel (exactly what the plugin must do)
+        const predicted = predictDelayModel(channelModel(model, c), new Map(o.params.map((p) => [p.index, asModel.get(p.index)?.(p.value) ?? p.value])));
+        const engine = compareAnswers(answer, modelAnswer(predicted.params, predicted.structure, input), input);
+        if (engine.maxDb > engineMaxDb) {
+          engineMaxDb = engine.maxDb;
+          engineWorst = o.label;
+        }
       }
+      rows.push({ label: o.label, purpose: o.purpose, errors: mean(errors)! });
     }
 
     const train = mean(rows.filter((r) => r.purpose === "train").map((r) => r.errors));

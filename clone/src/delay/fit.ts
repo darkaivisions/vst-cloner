@@ -56,20 +56,41 @@ export function delayResponse(output: ArrayLike<number>, input: DelayInput): Flo
   return h;
 }
 
-export function delayObservations(profile: Profile, input: DelayInput): DelayObservation[] {
-  return profile.captures.renders.map((r) => ({
-    renderId: r.id,
-    label: r.label ?? r.id,
-    purpose: r.purpose === "validate" ? "validate" : "train",
-    params: r.params.map((p) => ({ index: p.index, value: p.value })),
-    kind: r.kind,
-    ...(r.sweepParameter !== undefined ? { sweepParameter: r.sweepParameter } : {}),
-    ...((): { response: Float32Array; clicks?: Float32Array } => {
-      const channel = readCapture(profile, r).channels[0]!;
-      const clicks = clicksResponse(channel, input);
-      return { response: delayResponse(channel, input), ...(clicks ? { clicks } : {}) };
-    })(),
-  }));
+/** Answers of the given channel (the second exists for stereo captures; mono ones repeat the first). */
+export function delayObservations(profile: Profile, input: DelayInput, channelIndex = 0): DelayObservation[] {
+  return profile.captures.renders.map((r) => {
+    const channels = readCapture(profile, r).channels;
+    const output = channels[Math.min(channelIndex, channels.length - 1)]!;
+    const clicks = clicksResponse(output, input);
+    return {
+      renderId: r.id,
+      label: r.label ?? r.id,
+      purpose: r.purpose === "validate" ? "validate" : "train",
+      params: r.params.map((p) => ({ index: p.index, value: p.value })),
+      kind: r.kind,
+      ...(r.sweepParameter !== undefined ? { sweepParameter: r.sweepParameter } : {}),
+      response: delayResponse(output, input),
+      ...(clicks ? { clicks } : {}),
+    };
+  });
+}
+
+/** side-to-mid energy (dB) above which a capture counts as stereo: the right channel gets a model of its own */
+export const STEREO_SIDE_DB = -30;
+
+/** Whether the original answers differently on its two channels (ping-pong, stereo chorus …), from a few renders. */
+export function isStereoCapture(profile: Profile): boolean {
+  let side = 0, mid = 0;
+  for (const r of profile.captures.renders.filter((x) => !x.mono).slice(0, 12)) {
+    const channels = readCapture(profile, r).channels;
+    if (channels.length < 2) continue;
+    const [left, right] = channels as [Float32Array, Float32Array];
+    for (let i = 0; i < left.length; i++) {
+      side += (left[i]! - right[i]!) ** 2;
+      mid += (left[i]! + right[i]!) ** 2;
+    }
+  }
+  return mid > 0 && 10 * Math.log10(side / mid + 1e-30) > STEREO_SIDE_DB;
 }
 
 // ---- comparison --------------------------------------------------------------------------------
@@ -376,6 +397,8 @@ export interface DelayModel extends DelayTables {
   version: 1;
   sampleRate: number;
   variants?: DelayVariant[];
+  /** stereo originals (ping-pong, stereo LFOs): the model of the right channel; the main one is the left */
+  right?: DelayTables & { variants?: DelayVariant[] };
   report: {
     /** repeats found in the base render */
     echoes: number;
@@ -663,9 +686,44 @@ function calibrateLfo(model: DelayTables & { variants?: DelayVariant[] }, observ
  * plugin parameter); a model of its own for switch positions the main model predicts badly; finally predicts
  * every render (validation renders – random combinations – were never used for fitting).
  */
+/**
+ * Fits the delay model; an original that answers differently on its two channels gets a second model for the right
+ * channel (fitted the same way on that channel), and the report covers both.
+ */
 export function fitDelay(profile: Profile, onProgress?: (done: number, total: number, label: string) => void): DelayModel {
+  const left = fitDelayChannel(profile, onProgress, 0);
+  // (VCH_DELAY_MONO: one model for both channels, as before – for comparisons)
+  if (process.env.VCH_DELAY_MONO || !isStereoCapture(profile)) return left;
+  const right = fitDelayChannel(profile, undefined, 1);
+  const { type: _t, version: _v, sampleRate: _s, report: rightReport, right: _r, ...rightTables } = right;
+  const byId = new Map(rightReport.renders.map((r) => [r.renderId, r]));
+  const renders = left.report.renders.map((r) => {
+    const other = byId.get(r.renderId);
+    return other ? { ...r, rmsDb: (r.rmsDb + other.rmsDb) / 2, maxDb: Math.max(r.maxDb, other.maxDb) } : r;
+  });
+  const model: DelayModel = { ...left, right: rightTables, report: { ...left.report, renders } };
+  delete model.report.train;
+  delete model.report.validate;
+  const trainStats = summarize(renders.filter((r) => r.purpose === "train"));
+  const validateStats = summarize(renders.filter((r) => r.purpose === "validate"));
+  if (trainStats) model.report.train = trainStats;
+  if (validateStats) model.report.validate = validateStats;
+  return model;
+}
+
+/** Every table and switch of both channels: the controls the clone needs (the right channel may use others). */
+export const delayParamSource = (model: DelayModel): { tables: { index: number }[]; variants?: { index: number; tables: { index: number }[] }[] } => ({
+  tables: [...model.tables, ...(model.right?.tables ?? [])],
+  variants: [...(model.variants ?? []), ...(model.right?.variants ?? [])],
+});
+
+/** The tables of the model for one channel: the right one where the original is stereo. */
+export const channelModel = (model: DelayModel, channel: number): DelayTables & { variants?: DelayVariant[] } =>
+  (channel === 1 && model.right ? model.right : model);
+
+function fitDelayChannel(profile: Profile, onProgress: ((done: number, total: number, label: string) => void) | undefined, channel: number): DelayModel {
   const input = delayInput(profile);
-  const observations = delayObservations(profile, input);
+  const observations = delayObservations(profile, input, channel);
   const parameters = profile.parameters.parameters;
   const working = new Map(((profile.manifest.capture.plan?.workingPoint as { index: number; value: number }[] | undefined) ?? []).map((w) => [w.index, w.value]));
   const baseValues = new Map(parameters.map((p) => [p.index, working.get(p.index) ?? p.value ?? p.default]));

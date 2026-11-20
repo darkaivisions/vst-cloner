@@ -37,7 +37,9 @@ function cloneTables(profile: Profile): Tables {
     const data = profile.files.get(file);
     if (!data) continue;
     const model = JSON.parse(strFromU8(data));
-    return file === "model/neural.json" ? { tables: (model.parameters as number[]).map((index) => ({ index })) } : model;
+    if (file === "model/neural.json") return { tables: (model.parameters as number[]).map((index) => ({ index })) };
+    // a stereo delay: the controls of both channels
+    return model.right ? { tables: [...model.tables, ...model.right.tables], variants: [...(model.variants ?? []), ...(model.right.variants ?? [])] } : model;
   }
   throw new Error(`${profile.manifest.plugin.name}: the profile holds no model of a clone that can be compared (neural, delay, reverb, dynamics, distortion)`);
 }

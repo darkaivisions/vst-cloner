@@ -40,23 +40,21 @@ void CloneProcessor::reset()
     initialised = false;
 }
 
-void CloneProcessor::design()
+void CloneProcessor::design (Channel& channel)
 {
-    coeffs.design (vch::unpack (packed), structure, currentSampleRate);
-    std::copy (std::begin (packed), std::end (packed), std::begin (designed));
+    channel.coeffs.design (vch::unpack (channel.packed), channel.structure, currentSampleRate);
+    std::copy (std::begin (channel.packed), std::end (channel.packed), std::begin (channel.designed));
 }
 
-void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+const vch::DelayModelData& CloneProcessor::targetOf (const vch::DelayModelData* models, int numModels, double* target) const
 {
-    juce::ScopedNoDenormals noDenormals;
-
     // model values of the current plugin parameters (normalised values of the original)
     const auto valueOf = [this] (int index) { return vch::originalValue (clonemodel::params[index], *parameters[(size_t) index]); };
     // predictDelayModel() in fit.ts: the model for the current switch position where there is one
-    const vch::DelayModelData* model = &clonemodel::models[0];
-    for (int m = 1; m < clonemodel::numModels; ++m)
+    const vch::DelayModelData* model = &models[0];
+    for (int m = 1; m < numModels; ++m)
     {
-        const auto& candidate = clonemodel::models[m];
+        const auto& candidate = models[m];
         const double value = valueOf (candidate.switchParam);
         if (value >= candidate.from && value < candidate.to)
         {
@@ -64,7 +62,6 @@ void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
             break;
         }
     }
-    double target[vch::numPacked];
     vch::predictPacked (model->basePacked, vch::numPacked, model->tables, model->numTables, valueOf, target);
     if (model->timeSum)
     {
@@ -79,39 +76,63 @@ void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
         }
         target[0] = std::log (std::max (seconds, 1e-4));
     }
-    const bool polarityChanged = structure.drySign != model->structure.drySign || structure.wetSign != model->structure.wetSign
-                                 || structure.feedbackSign != model->structure.feedbackSign;
-    structure = model->structure;
-    if (! initialised)
-    {
-        // first block after reset: no smoothing (offline renders must match the settings exactly)
-        std::copy (std::begin (target), std::end (target), std::begin (packed));
-        design();
-        initialised = true;
-    }
+    return *model;
+}
+
+void CloneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+{
+    juce::ScopedNoDenormals noDenormals;
 
     const int channels = std::min (buffer.getNumChannels(), 2);
     const int samples = buffer.getNumSamples();
+    double targets[2][vch::numPacked];
+    bool polarityChanged[2] = { false, false };
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        // the right channel has its own model where the original answered differently on it (stereo)
+        const bool own = ch == 1 && clonemodel::numModelsRight > 0;
+        const auto& model = own ? targetOf (clonemodel::modelsRight, clonemodel::numModelsRight, targets[ch])
+                                : targetOf (clonemodel::models, clonemodel::numModels, targets[ch]);
+        auto& c = state[(size_t) ch];
+        polarityChanged[ch] = c.structure.drySign != model.structure.drySign || c.structure.wetSign != model.structure.wetSign
+                              || c.structure.feedbackSign != model.structure.feedbackSign;
+        c.structure = model.structure;
+    }
+    if (! initialised)
+    {
+        // first block after reset: no smoothing (offline renders must match the settings exactly)
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            std::copy (std::begin (targets[ch]), std::end (targets[ch]), std::begin (state[(size_t) ch].packed));
+            design (state[(size_t) ch]);
+        }
+        initialised = true;
+    }
 
     for (int start = 0; start < samples; start += chunkSize)
     {
         const int n = std::min (chunkSize, samples - start);
         // a changed delay time glides (like a tape machine) instead of jumping
         const double k = 1.0 - std::exp (-n / (smoothingSeconds * currentSampleRate));
-        bool moved = false;
-        for (int i = 0; i < vch::numPacked; ++i)
+        for (int ch = 0; ch < 2; ++ch)
         {
-            packed[i] += k * (target[i] - packed[i]);
-            if (std::abs (target[i] - packed[i]) < 1e-6) packed[i] = target[i];
-            moved = moved || std::abs (packed[i] - designed[i]) > 1e-9;
+            auto& c = state[(size_t) ch];
+            bool moved = false;
+            for (int i = 0; i < vch::numPacked; ++i)
+            {
+                c.packed[i] += k * (targets[ch][i] - c.packed[i]);
+                if (std::abs (targets[ch][i] - c.packed[i]) < 1e-6) c.packed[i] = targets[ch][i];
+                moved = moved || std::abs (c.packed[i] - c.designed[i]) > 1e-9;
+            }
+            if (moved || (polarityChanged[ch] && start == 0))
+                design (c);
         }
-        if (moved || (polarityChanged && start == 0))
-            design();
 
         for (int ch = 0; ch < channels; ++ch)
         {
             auto* data = buffer.getWritePointer (ch) + start;
             auto& line = lines[(size_t) ch];
+            const auto& coeffs = state[(size_t) ch].coeffs;
             for (int i = 0; i < n; ++i)
                 data[i] = (float) line.process (data[i], coeffs);
         }
