@@ -273,8 +273,10 @@ vst-cloner/
        DirectionalCompressor 9.7, GxCompressor 7.7 dB); the worst combinations all have a long attack and a long
        release together. Limiting each control's sweep to the values it stands for helped by tenths only (and made
        single controls worse) – reverted. What it needs: attack × release measured together (a joint table)
-     - Open: ZynChorus 16.98 → 2.49 dB between two runs of the same code – capture not repeatable? (to check);
-       GxPhaser topology (the allpass model misses it); ducking delays (level-dependent wet path)
+     - ZynChorus 16.98 → 2.89 dB with the tremolo/phaser commit: the capture is repeatable (two runs, 2.89 dB
+       each) and the earlier capture refitted with the new code gives 2.89 dB too – the change is in the fit
+       (which line exactly is not pinned down)
+     - Open: GxPhaser topology (the allpass model misses it); ducking delays (level-dependent wet path)
 7. **Universal clone (path B)** ← in progress – first version in CLI and app ✔
    - Capture plan `neural`, training (`dsp/neural/train.py`, PyTorch, CUDA), C++ template with the same network
      (~5 % of a core per channel), sample-rate adapter (other host rates, anti-alias filters, latency reported),
