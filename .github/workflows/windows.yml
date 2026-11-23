@@ -37,6 +37,16 @@ jobs:
           key: juce-${{ runner.os }}-${{ hashFiles('host/CMakeLists.txt') }}
       - run: cmake -S host -B host/build
       - run: cmake --build host/build --config Release --parallel
+      # end to end: a clone built with CMake/JUCE, loaded by vch-host and compared with its model
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build a clone and verify it
+        env:
+          VCH_TEST_BUILD: "1"
+        run: node --test --test-name-pattern "built clone" clone/test/clone.test.ts
       - uses: actions/upload-artifact@v4
         with:
           name: vch-host-windows
