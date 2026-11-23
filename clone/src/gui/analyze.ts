@@ -1973,7 +1973,16 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
         }
       }
     }
-    const parts = allParts.filter((p) => !large.includes(p) && !(displayBox && contains(displayBox, p)));
+    const rest = allParts.filter((p) => !large.includes(p) && !(displayBox && contains(displayBox, p)));
+    // Parts that look like a display are not the control while others are left: a tall and wide area (a curve
+    // below the size of a "large" part), a wide band, or lines of the same width one below the other (a time
+    // graph's traces). A long narrow fader is none of these.
+    const strips = (p: Box) => rest.filter((q) =>
+      p.w > p.h * 4 ? Math.abs(q.x - p.x) <= 2 && Math.abs(q.w - p.w) <= 2 && q.w > q.h * 4 : Math.abs(q.y - p.y) <= 2 && Math.abs(q.h - p.h) <= 2 && q.h > q.w * 4).length;
+    const displayLike = (p: Box) =>
+      (p.h > height * 0.3 && p.w > width * 0.1) || (p.w > width * 0.3 && p.h > height * 0.1) || ((p.w > p.h * 4 || p.h > p.w * 4) && strips(p) >= 3);
+    const controlLike = rest.filter((p) => !displayLike(p));
+    const parts = controlLike.length ? controlLike : rest;
     if (!parts.length) continue;
     if (displayBox && !(parts[0]!.w <= width * 0.3 && parts[0]!.h <= height * 0.3)) continue;
     const pendingParam = { param, frames, parts, changed };
@@ -1996,6 +2005,10 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
       parts = own;
     }
     // only nearby parts belong to the control (a toggle may also change something far away)
+    // A value text that changes with the control may be larger than the knob itself: the knob is the control.
+    const textShaped = (p: Box) => p.h <= 24 && p.w >= p.h * 2.2 && p.w >= 28;
+    const knobShaped = !param.discrete && textShaped(parts[0]!) ? parts.find((p) => !textShaped(p) && area(p) >= area(parts[0]!) * 0.4) : undefined;
+    if (knobShaped) parts = [knobShaped, ...parts.filter((p) => p !== knobShaped)];
     const main0 = parts[0]!;
     const nearby = parts.filter((p) => Math.hypot(p.cx - main0.cx, p.cy - main0.cy) < Math.max(main0.w, main0.h) * 2.5 + 40);
     const region = union(nearby);

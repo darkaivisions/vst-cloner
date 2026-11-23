@@ -66,7 +66,7 @@ export interface BenchScore {
 }
 
 /** Labels against an analysed editor: a display is found where a detected one lies at least half inside it (or it inside that). */
-export function scoreGui(name: string, labels: BenchLabels, model: GuiModel): BenchScore {
+export function scoreGui(name: string, labels: BenchLabels, model: GuiModel, parameterNames: Map<number, string> = new Map()): BenchScore {
   const used = new Set<Display>();
   const displays: BenchScore["displays"] = { expected: labels.displays.length, found: 0, rightKind: 0, extra: 0, misses: [], wrong: [] };
   for (const expected of labels.displays) {
@@ -88,8 +88,10 @@ export function scoreGui(name: string, labels: BenchLabels, model: GuiModel): Be
 
   const controls: BenchScore["controls"] = { expected: labels.controls.length, found: 0, rightKind: 0, extra: 0, misses: [], wrong: [] };
   const named = new Set(labels.controls.map((c) => c.param));
+  // labels name the plugin's parameter; the control carries a name made readable ("MakeUp Gain" → "Make Up Gain")
+  const paramName = (c: GuiModel["controls"][number]) => parameterNames.get(c.param) ?? c.name;
   for (const expected of labels.controls) {
-    const control = model.controls.find((c) => c.name === expected.param);
+    const control = model.controls.find((c) => paramName(c) === expected.param);
     if (!control) {
       controls.misses.push(expected.param);
       continue;
@@ -98,7 +100,7 @@ export function scoreGui(name: string, labels: BenchLabels, model: GuiModel): Be
     if (control.kind === expected.kind) controls.rightKind++;
     else controls.wrong.push(`${expected.param}: ${control.kind} instead of ${expected.kind}`);
   }
-  controls.extra = model.controls.filter((c) => !named.has(c.name)).length;
+  controls.extra = model.controls.filter((c) => !named.has(paramName(c))).length;
   return { name, displays, controls };
 }
 
@@ -121,7 +123,7 @@ export async function runGuiBench(only?: string): Promise<{ scores: BenchScore[]
       for (const c of model.controls) console.error(`  ${name}: control ${c.name} ${c.kind} ${c.x},${c.y} ${c.w}x${c.h}`);
       for (const d of model.displays) console.error(`  ${name}: ${d.kind}${d.role ? `/${d.role}` : ""} ${d.x},${d.y} ${d.w}x${d.h}${d.bar ? ` ${d.bar.source} from ${d.bar.origin ?? "bottom"} ${d.bar.fromDb.toFixed(1)}…${d.bar.toDb.toFixed(1)} dB${d.bar.segments ? ` ${d.bar.segments} LEDs` : ""}` : ""}`);
     }
-    scores.push(scoreGui(name, labels, model));
+    scores.push(scoreGui(name, labels, model, new Map(parameters.map((p) => [p.index, p.name.trim()]))));
   }
   return { scores, missing };
 }
