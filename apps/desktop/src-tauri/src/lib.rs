@@ -16,22 +16,85 @@ struct Bridge {
     stdin: Mutex<Option<ChildStdin>>,
 }
 
-/// Repository root: $VCH_ROOT, otherwise relative to this crate (development layout).
-fn repo_root() -> PathBuf {
+/// Root of the runtime (bridge, packages, host, templates): $VCH_ROOT, the repository this crate was built in
+/// (development), or the runtime shipped with the app (AppImage), unpacked on the first start.
+fn repo_root(app: &AppHandle) -> Result<PathBuf, String> {
     if let Ok(root) = env::var("VCH_ROOT") {
-        return PathBuf::from(root);
+        return Ok(PathBuf::from(root));
+    }
+    // an installed app brings its runtime; `tauri dev` has none and runs from the repository
+    if let Some(shipped) = shipped_runtime(app)? {
+        return Ok(shipped);
     }
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     crate_dir
         .join("../../..")
         .canonicalize()
-        .unwrap_or_else(|_| crate_dir.to_path_buf())
+        .map_err(|e| format!("Repository not found: {e}"))
+}
+
+/// The runtime archive of an installed app (scripts/stage-runtime.ts), unpacked once per version into the app's
+/// data directory: an AppImage is read-only, and the archive keeps the symlinks of node_modules.
+fn shipped_runtime(app: &AppHandle) -> Result<Option<PathBuf>, String> {
+    let Ok(resources) = app.path().resource_dir() else { return Ok(None) };
+    let archive = resources.join("runtime").join("vch-runtime.tar.zst");
+    if !archive.is_file() {
+        return Ok(None);
+    }
+    let version = std::fs::read_to_string(resources.join("runtime").join("VERSION")).unwrap_or_default().trim().to_string();
+    let base = app.path().app_local_data_dir().map_err(|e| format!("No data directory: {e}"))?.join("runtime");
+    let target = base.join(if version.is_empty() { "current".to_string() } else { version.clone() });
+    if target.join("VERSION").is_file() {
+        return Ok(Some(target));
+    }
+    let partial = base.join(".unpacking");
+    let _ = std::fs::remove_dir_all(&partial);
+    std::fs::create_dir_all(&partial).map_err(|e| format!("Cannot create {}: {e}", partial.display()))?;
+    let status = clean_command("tar")
+        .arg("--zstd")
+        .arg("-xf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(&partial)
+        .status()
+        .map_err(|e| format!("Unpacking the runtime failed (tar with zstd needed): {e}"))?;
+    if !status.success() {
+        return Err("Unpacking the runtime failed (tar with zstd needed)".into());
+    }
+    let _ = std::fs::remove_dir_all(&target);
+    std::fs::rename(&partial, &target).map_err(|e| format!("Cannot move the runtime into place: {e}"))?;
+    // older versions are no longer used
+    if let Ok(entries) = std::fs::read_dir(&base) {
+        for entry in entries.flatten() {
+            if entry.path() != target {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+    Ok(Some(target))
+}
+
+/// A command without the environment an AppImage sets up for itself: its bundled libraries must not reach the
+/// system's compiler, CMake, Wine or the plugin hosts.
+fn clean_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    if env::var_os("APPIMAGE").is_some() {
+        for key in ["LD_LIBRARY_PATH", "LD_PRELOAD", "GDK_PIXBUF_MODULE_FILE", "GIO_MODULE_DIR", "GTK_PATH", "PYTHONHOME", "PYTHONPATH", "PERLLIB", "GSETTINGS_SCHEMA_DIR", "QT_PLUGIN_PATH"] {
+            command.env_remove(key);
+        }
+    }
+    command
 }
 
 /// Node.js: $VCH_NODE, PATH, then common install locations (desktop launchers often have a short PATH).
-fn find_node() -> Option<PathBuf> {
+fn find_node(root: &Path) -> Option<PathBuf> {
     if let Ok(node) = env::var("VCH_NODE") {
         return Some(PathBuf::from(node));
+    }
+    // the Node shipped with the runtime
+    let shipped = root.join("node").join("bin").join(if cfg!(windows) { "node.exe" } else { "node" });
+    if shipped.is_file() {
+        return Some(shipped);
     }
     let exe = if cfg!(windows) { "node.exe" } else { "node" };
     if let Some(paths) = env::var_os("PATH") {
@@ -57,14 +120,14 @@ fn find_node() -> Option<PathBuf> {
 }
 
 fn start_bridge(app: &AppHandle, bridge: &Bridge) -> Result<(), String> {
-    let node = find_node().ok_or("Node.js not found (set VCH_NODE)")?;
-    let root = repo_root();
+    let root = repo_root(app)?;
+    let node = find_node(&root).ok_or("Node.js not found (set VCH_NODE)")?;
     let script = root.join("bridge").join("bin").join("bridge.ts");
     if !script.is_file() {
         return Err(format!("Bridge not found: {}", script.display()));
     }
 
-    let mut command = Command::new(&node);
+    let mut command = clean_command(&node);
     command
         .arg(&script)
         .current_dir(&root)
