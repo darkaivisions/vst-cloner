@@ -272,10 +272,19 @@ vst-cloner/
      - Dynamics: not changed. The batch (0.36–3.62 dB) is weak on unseen combinations (GxExpander 10.2,
        DirectionalCompressor 9.7, GxCompressor 7.7 dB); the worst combinations all have a long attack and a long
        release together. Limiting each control's sweep to the values it stands for helped by tenths only (and made
-       single controls worse) – reverted. What it needs: attack × release measured together (a joint table)
+       single controls worse) – reverted. Checked on 23 Nov: an attack × release grid (3×3 renders, a correction
+       table in the engine) was kept for no compressor – the tables already explain the grid. The worst
+       GxCompressor combinations are a low threshold instead: the whole test signal lies above it, threshold and
+       makeup cannot be told apart in the sweep (only threshold·(1−1/ratio)+makeup is measured), and the split
+       chosen is wrong at another ratio (threshold + makeup refitted: 15.3 → 0.9 dB). Preferring "the control's own
+       values" as a tie-break made darc and dpl worse (2.12 → 2.61, 0.36 → 0.68 dB) – reverted. What it needs: a
+       threshold sweep with a quieter test signal part, or threshold × ratio measured together
      - ZynChorus 16.98 → 2.89 dB with the tremolo/phaser commit: the capture is repeatable (two runs, 2.89 dB
        each) and the earlier capture refitted with the new code gives 2.89 dB too – the change is in the fit
        (which line exactly is not pinned down)
+     - Editor (23 Nov): controls recognised 84 → 96 % (bench), scale numbers on curves and graphs (read from the
+       original where tesseract manages – only LSP's time axis so far – else the clone's own)
+     - GxPhaser: a wider search (16 stages, corners to 20 kHz) made it worse (7.8 → 18.1 dB) – the network stays
      - Open: GxPhaser topology (the allpass model misses it); ducking delays (level-dependent wet path)
 7. **Universal clone (path B)** ← in progress – first version in CLI and app ✔
    - Capture plan `neural`, training (`dsp/neural/train.py`, PyTorch, CUDA), C++ template with the same network
