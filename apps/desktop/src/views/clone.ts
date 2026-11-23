@@ -27,6 +27,8 @@ export class CloneView {
         h("input", { type: "checkbox", onchange: (e: Event) => { this.hideClones = (e.target as HTMLInputElement).checked; this.renderList(); } }), "Hide clones"),
       this.pending));
   private selected?: PluginEntry;
+  /** yabridge check of the selected Windows plugin (bridge: plugins.yabridge) */
+  private yabridge?: { path: string; result?: { runs: boolean; seconds: number; outputDb?: number; problem?: string } };
   private info?: PluginInfo;
   private profile?: { path: string; name: string; renders: number; planner: string };
   /** Python with PyTorch is set up (the universal clone trains with it) */
@@ -318,6 +320,35 @@ export class CloneView {
     }
     this.renderDetails();
     this.update();
+    if (plugin.source === "yabridge") void this.checkYabridge(plugin);
+  }
+
+  /** A Windows plugin may already run through yabridge – then a clone is a choice, not a necessity. */
+  private async checkYabridge(plugin: PluginEntry) {
+    this.yabridge = { path: plugin.path };
+    this.renderDetails();
+    try {
+      const result = await call<{ runs: boolean; seconds: number; outputDb?: number; problem?: string }>("plugins.yabridge", { path: plugin.path });
+      if (this.yabridge?.path === plugin.path) this.yabridge.result = result;
+    } catch (error) {
+      if (this.yabridge?.path === plugin.path) this.yabridge.result = { runs: false, seconds: 0, problem: (error as Error).message };
+    }
+    if (this.selected === plugin) this.renderDetails();
+  }
+
+  private yabridgeNote(): HTMLElement | undefined {
+    const check = this.yabridge;
+    if (!this.selected || this.selected.source !== "yabridge" || check?.path !== this.selected.path) return undefined;
+    if (!check.result) return h("div.note-box", {}, "Windows plugin via yabridge – checking whether it already runs on this system …");
+    const r = check.result;
+    return r.runs
+      ? h("div.note-box.good", {},
+          h("strong", {}, "It already runs through yabridge. "),
+          `One second of audio took ${r.seconds.toFixed(1)} s (loading through Wine included). Your DAW can use the original as it is; ` +
+          "a clone makes it native – no Wine, less CPU, and it keeps working when yabridge or Wine change.")
+      : h("div.note-box.warn", {},
+          h("strong", {}, "It does not run cleanly through yabridge"),
+          ` (${r.problem ?? "no sound"}). A clone is the way to use it on Linux – if it can be measured: the capture runs through yabridge too.`);
   }
 
   private renderDetails() {
@@ -326,6 +357,7 @@ export class CloneView {
     if (!info) return;
     this.details.append(
       h("div.detail-title", {}, info.name, h("span.muted", {}, ` · ${info.manufacturer} · ${info.format} ${info.version}`)),
+      this.yabridgeNote() ?? "",
       h("div.detail-facts", {},
         h("span", {}, `${info.parameters} parameters`),
         h("span", {}, `${info.inputs} → ${info.outputs} channels`),

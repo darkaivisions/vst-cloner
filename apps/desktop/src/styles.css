@@ -181,6 +181,9 @@ input:focus, select:focus { border-color: var(--accent); }
 .shape-table td.num { font-family: var(--mono); font-size: 13px; }
 .shape-table tr.muted td { color: var(--muted); }
 .result-files { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; }
+.note-box { margin: 10px 0; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font-size: 13px; line-height: 1.45; }
+.note-box.good { border-color: color-mix(in srgb, var(--good) 45%, var(--line)); }
+.note-box.warn { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
 .error-box { background: #2e1415; color: #ffb4b6; border: 1px solid #5a2326; padding: 10px 12px; border-radius: 8px; white-space: pre-wrap; font-family: var(--mono); font-size: 12px; }
 
 /* ---- library ---- */

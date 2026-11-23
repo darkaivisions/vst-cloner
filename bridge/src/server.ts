@@ -1,6 +1,7 @@
 import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
+import { checkYabridge } from "./yabridge.ts";
 import { basename, delimiter, join } from "node:path";
 import { unzipSync, strFromU8 } from "fflate";
 import {
@@ -453,6 +454,9 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
 
   /** What kind of effect each plugin is (cached per bundle; loading a plugin takes ~40 ms natively). */
   "plugins.kinds": (params) => pluginKinds(Array.isArray(params.paths) ? params.paths.filter((p): p is string => typeof p === "string") : []),
+
+  /** Whether a Windows plugin already runs through yabridge (one second of audio through it). */
+  "plugins.yabridge": (params) => checkYabridge(str(params, "path")),
 
   async "plugins.info"(params) {
     const path = str(params, "path");
