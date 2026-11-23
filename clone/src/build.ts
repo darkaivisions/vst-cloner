@@ -173,7 +173,10 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
     // always set: an earlier configure may have cached a checkout that no longer exists
     `-DVCH_JUCE_DIR=${juceDir ?? ""}`,
   ];
-  if (!existsSync(join(buildDir, "CMakeCache.txt")) && onPath("ninja")) configure.push("-G", "Ninja");
+  // Ninja is faster – but on Windows only inside a Visual Studio environment: otherwise it takes the first compiler
+  // on PATH (often MinGW, which JUCE does not support); CMake's default there is Visual Studio with MSVC
+  const ninja = onPath("ninja") && (process.platform !== "win32" || Boolean(process.env.VCINSTALLDIR));
+  if (!existsSync(join(buildDir, "CMakeCache.txt")) && ninja) configure.push("-G", "Ninja");
 
   log("info", "Preparing the plugin build (CMake) …");
   await run("cmake", configure, workDir, log, options.signal);

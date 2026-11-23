@@ -37,7 +37,7 @@ fn repo_root(app: &AppHandle) -> Result<PathBuf, String> {
 /// data directory: an AppImage is read-only, and the archive keeps the symlinks of node_modules.
 fn shipped_runtime(app: &AppHandle) -> Result<Option<PathBuf>, String> {
     let Ok(resources) = app.path().resource_dir() else { return Ok(None) };
-    let archive = resources.join("runtime").join("vch-runtime.tar.zst");
+    let archive = resources.join("runtime").join("vch-runtime.tar.gz");
     if !archive.is_file() {
         return Ok(None);
     }
@@ -51,18 +51,22 @@ fn shipped_runtime(app: &AppHandle) -> Result<Option<PathBuf>, String> {
     let _ = std::fs::remove_dir_all(&partial);
     std::fs::create_dir_all(&partial).map_err(|e| format!("Cannot create {}: {e}", partial.display()))?;
     let status = clean_command("tar")
-        .arg("--zstd")
-        .arg("-xf")
+        .arg("-xzf")
         .arg(&archive)
         .arg("-C")
         .arg(&partial)
         .status()
-        .map_err(|e| format!("Unpacking the runtime failed (tar with zstd needed): {e}"))?;
+        .map_err(|e| format!("Unpacking the runtime failed (tar not found): {e}"))?;
     if !status.success() {
-        return Err("Unpacking the runtime failed (tar with zstd needed)".into());
+        return Err("Unpacking the runtime failed (tar)".into());
     }
     let _ = std::fs::remove_dir_all(&target);
     std::fs::rename(&partial, &target).map_err(|e| format!("Cannot move the runtime into place: {e}"))?;
+    // links to their final place; without them the runtime is unusable and is unpacked again next time
+    if let Err(error) = link_workspace(&target) {
+        let _ = std::fs::remove_dir_all(&target);
+        return Err(error);
+    }
     // older versions are no longer used
     if let Ok(entries) = std::fs::read_dir(&base) {
         for entry in entries.flatten() {
@@ -72,6 +76,39 @@ fn shipped_runtime(app: &AppHandle) -> Result<Option<PathBuf>, String> {
         }
     }
     Ok(Some(target))
+}
+
+/// The workspace packages in node_modules (LINKS of the runtime, "link target" per line): symlinks on Linux and
+/// macOS, directory junctions on Windows, where plain users may not create symlinks.
+fn link_workspace(root: &Path) -> Result<(), String> {
+    let Ok(list) = std::fs::read_to_string(root.join("LINKS")) else { return Ok(()) };
+    for line in list.lines() {
+        let mut parts = line.split_whitespace();
+        let (Some(link), Some(target)) = (parts.next(), parts.next()) else { continue };
+        let link = root.join(link);
+        let target = root.join(target);
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("Cannot create {}: {e}", parent.display()))?;
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).map_err(|e| format!("Cannot link {}: {e}", link.display()))?;
+        #[cfg(windows)]
+        {
+            let status = Command::new("cmd")
+                .arg("/C")
+                .arg("mklink")
+                .arg("/J")
+                .arg(&link)
+                .arg(&target)
+                .stdout(Stdio::null())
+                .status()
+                .map_err(|e| format!("Cannot link {}: {e}", link.display()))?;
+            if !status.success() {
+                return Err(format!("Cannot link {}", link.display()));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A command without the environment an AppImage sets up for itself: its bundled libraries must not reach the

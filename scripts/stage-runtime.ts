@@ -5,10 +5,13 @@
  * on its first start (src-tauri/src/lib.rs): Tauri's resource copy would lose the workspace symlinks in node_modules,
  * and an AppImage is read-only.
  *
- *   node scripts/stage-runtime.ts      → apps/desktop/src-tauri/runtime/vch-runtime.tar.zst
+ * The workspace packages are linked into node_modules by the app after unpacking (LINKS: symlinks on Linux,
+ * directory junctions on Windows – plain users may not create symlinks there).
+ *
+ *   node scripts/stage-runtime.ts      → apps/desktop/src-tauri/runtime/vch-runtime.tar.gz (+ VERSION, LINKS)
  */
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,6 +19,7 @@ const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const OUT_DIR = join(ROOT, "apps", "desktop", "src-tauri", "runtime");
 const STAGE = join(ROOT, ".vch-work", "runtime-stage");
 const PACKAGES = ["profile", "capture", "agent", "clone", "bridge"];
+const EXE = process.platform === "win32" ? ".exe" : "";
 
 const version = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version as string;
 const log = (text: string) => console.log(`stage-runtime: ${text}`);
@@ -33,9 +37,11 @@ for (const name of PACKAGES) {
 }
 
 // production dependencies of the packages (hoisted in the root node_modules); workspace packages as symlinks
-const listed = execFileSync("npm", ["ls", "--all", "--omit=dev", "--parseable", ...PACKAGES.flatMap((p) => ["--workspace", p])], { cwd: ROOT, encoding: "utf8", maxBuffer: 64 << 20 })
+const listed = execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", ["ls", "--all", "--omit=dev", "--parseable", ...PACKAGES.flatMap((p) => ["--workspace", p])], { cwd: ROOT, encoding: "utf8", maxBuffer: 64 << 20, shell: process.platform === "win32" })
   .split("\n").map((line) => line.trim()).filter((line) => line.startsWith(join(ROOT, "node_modules")));
-const modules = [...new Set(listed)];
+// the workspace packages themselves are linked by the app (see LINKS)
+const workspace = (dir: string) => PACKAGES.some((p) => relative(join(ROOT, "node_modules", "@vst-cloner", p), dir) === "");
+const modules = [...new Set(listed)].filter((dir) => !workspace(dir));
 for (const dir of modules) {
   const target = join(STAGE, relative(ROOT, dir));
   if (existsSync(target)) continue;
@@ -46,10 +52,10 @@ log(`${modules.length} modules`);
 
 // host and editor host
 for (const exe of ["vch-host", "vch-gui"]) {
-  const file = join(ROOT, "host", "build", `${exe}_artefacts`, "Release", exe);
+  const file = join(ROOT, "host", "build", `${exe}_artefacts`, "Release", exe + EXE);
   if (!existsSync(file)) throw new Error(`${exe} is not built (npm run host:configure && npm run host:build)`);
   mkdirSync(join(STAGE, "host", "build", `${exe}_artefacts`, "Release"), { recursive: true });
-  cpSync(file, join(STAGE, "host", "build", `${exe}_artefacts`, "Release", exe));
+  cpSync(file, join(STAGE, "host", "build", `${exe}_artefacts`, "Release", exe + EXE));
 }
 
 // plugin templates, training script
@@ -69,11 +75,17 @@ copy(juce, join(STAGE, "host", "build", "_deps", "juce-src"), (path) => {
 
 // Node itself (the version running this script: ≥ 22.18, it runs TypeScript)
 mkdirSync(join(STAGE, "node", "bin"), { recursive: true });
-cpSync(process.execPath, join(STAGE, "node", "bin", "node"));
+cpSync(process.execPath, join(STAGE, "node", "bin", `node${EXE}`));
 writeFileSync(join(STAGE, "VERSION"), `${version}\n`);
 
+// links the app creates after unpacking: "link target" per line, relative to the runtime root
+const links = PACKAGES.map((p) => `node_modules/@vst-cloner/${p} ${p}`).join("\n") + "\n";
+writeFileSync(join(STAGE, "LINKS"), links);
+
+// gzip: the tar of every Windows 10/11 (bsdtar) and of every Linux reads it
 mkdirSync(OUT_DIR, { recursive: true });
-const archive = join(OUT_DIR, "vch-runtime.tar.zst");
-execFileSync("tar", ["--zstd", "-cf", archive, "-C", STAGE, "."], { stdio: "inherit" });
+rmSync(join(OUT_DIR, "vch-runtime.tar.zst"), { force: true });
+const archive = join(OUT_DIR, "vch-runtime.tar.gz");
+execFileSync("tar", ["-czf", archive, "-C", STAGE, "."], { stdio: "inherit" });
 writeFileSync(join(OUT_DIR, "VERSION"), `${version}\n`);
-log(`${archive} (${(Number(execFileSync("stat", ["-c", "%s", archive], { encoding: "utf8" })) / 1e6).toFixed(0)} MB)`);
+log(`${archive} (${(statSync(archive).size / 1e6).toFixed(0)} MB)`);

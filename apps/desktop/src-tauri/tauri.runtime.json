@@ -1,9 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
-    "targets": ["appimage"],
     "resources": {
-      "runtime/vch-runtime.tar.zst": "runtime/vch-runtime.tar.zst",
+      "runtime/vch-runtime.tar.gz": "runtime/vch-runtime.tar.gz",
       "runtime/VERSION": "runtime/VERSION"
     }
   }

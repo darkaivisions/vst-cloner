@@ -55,7 +55,8 @@ jobs:
             host/build/vch-gui_artefacts/Release/*.exe
 
   app:
-    name: Desktop app (Tauri, NSIS installer)
+    name: Desktop app (Tauri, NSIS installer with runtime)
+    needs: host
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,7 +69,19 @@ jobs:
         with:
           workspaces: apps/desktop/src-tauri
       - run: npm ci
-      - run: npm run tauri --workspace @vst-cloner/desktop -- build --bundles nsis
+      # the runtime brings JUCE (downloaded by configuring the host) and the host built in the job before
+      - name: JUCE download cache
+        uses: actions/cache@v4
+        with:
+          path: host/build/_deps/juce-src
+          key: juce-${{ runner.os }}-${{ hashFiles('host/CMakeLists.txt') }}
+      - run: cmake -S host -B host/build
+      - uses: actions/download-artifact@v4
+        with:
+          name: vch-host-windows
+          path: host/build
+      - run: node scripts/stage-runtime.ts
+      - run: npm run tauri --workspace @vst-cloner/desktop -- build --bundles nsis --config src-tauri/tauri.runtime.json
       - uses: actions/upload-artifact@v4
         with:
           name: vst-cloner-windows-installer
