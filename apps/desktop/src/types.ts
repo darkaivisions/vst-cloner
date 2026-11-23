@@ -8,8 +8,21 @@ export interface AppInfo {
   llmConfig: string;
   host: { found: boolean; path?: string; version?: string };
   tools: { cmake: boolean; compiler: boolean };
+  /** every tool with its install hint (bridge: system.toolchain) */
+  toolchain: ToolStatus[];
   /** Python with PyTorch for the universal clone (null: not set up yet) */
   neural: { python: string | null };
+}
+
+/** A tool clones are built with (bridge: system.toolchain). */
+export interface ToolStatus {
+  id: string;
+  name: string;
+  required: boolean;
+  found: boolean;
+  detail?: string;
+  purpose: string;
+  hint: string;
 }
 
 /** What kind of effect a plugin is (bridge: plugins.kinds). */

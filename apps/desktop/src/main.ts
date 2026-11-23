@@ -2,7 +2,7 @@ import "./styles.css";
 import { call, initBridge, onStatus, restartBridge } from "./bridge.ts";
 import { append, clear, h } from "./dom.ts";
 import { LogPanel } from "./log.ts";
-import type { AppInfo } from "./types.ts";
+import type { AppInfo, ToolStatus } from "./types.ts";
 import { AiView } from "./views/ai.ts";
 import { CloneView } from "./views/clone.ts";
 import { LibraryView } from "./views/library.ts";
@@ -56,6 +56,23 @@ async function main() {
     append(banner, h("span", {}, text), action && h("button.ghost.small", { onclick: action.run }, action.label));
   };
 
+  /** Missing build tools: what is missing, how to install it, and a check again after installing. */
+  const showToolchain = (tools: ToolStatus[]) => {
+    const missing = tools.filter((t) => t.required && !t.found);
+    if (!missing.length) {
+      banner.classList.add("hidden");
+      return;
+    }
+    clear(banner);
+    banner.classList.remove("hidden");
+    append(banner,
+      h("div.toolchain", {},
+        h("strong", {}, "Clones cannot be built yet – missing: "),
+        h("ul", {}, ...missing.map((t) => h("li", {}, h("b", {}, t.name), ` (${t.purpose}): `, h("code", {}, t.hint)))),
+        h("span.muted", {}, "Measuring works without them; building the clone needs them.")),
+      h("button.ghost.small", { onclick: async () => showToolchain(await call<ToolStatus[]>("system.toolchain")) }, "Check again"));
+  };
+
   let started = false;
   onStatus(async (status) => {
     statusPill.className = `status-pill ${status.state}`;
@@ -71,11 +88,9 @@ async function main() {
     const info = await call<AppInfo>("app.info");
     library.setProfilesDir(info.profilesDir);
     cloneView.setNeuralReady(Boolean(info.neural?.python));
-    const missing: string[] = [];
-    if (!info.host.found) missing.push("vch-host (npm run host:configure && npm run host:build)");
-    if (!info.tools.cmake) missing.push("CMake");
-    if (!info.tools.compiler) missing.push("C++ compiler");
-    if (missing.length) showBanner(`Missing: ${missing.join(", ")}. Measuring and cloning only work once it is there.`);
+    if (!info.host.found) showBanner("vch-host is missing (npm run host:configure && npm run host:build) – measuring only works once it is there.");
+    else showToolchain(info.toolchain);
+    for (const t of info.toolchain.filter((t) => !t.required && !t.found)) log.note("info", `Optional: ${t.name} is not installed – ${t.purpose}. ${t.hint}`);
     log.note("info", `vst-cloner ${info.version} ready – data in ${info.dataDir}`);
     await cloneView.refresh();
   });

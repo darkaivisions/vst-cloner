@@ -16,6 +16,7 @@ import {
   type CaptureProgress,
 } from "@vst-cloner/capture";
 import {
+  checkToolchain,
   cloneNeuralProfile,
   esrToDb,
   formatNeuralModel,
@@ -434,7 +435,8 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
     } catch {
       // reported below
     }
-    const compiler = process.platform === "win32" ? onPath("cl") || onPath("clang++") : onPath("c++") || onPath("g++") || onPath("clang++");
+    const toolchain = checkToolchain();
+    const found = (id: string) => toolchain.some((t) => t.id === id && t.found);
     return {
       version: "0.1.0",
       platform: process.platform,
@@ -444,11 +446,15 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
       clonesDir: clonesDir(),
       llmConfig: configPath(),
       host,
-      tools: { cmake: onPath("cmake"), compiler },
+      tools: { cmake: found("cmake"), compiler: found("compiler") },
+      toolchain,
       // Python with PyTorch for the universal clone
       neural: { python: neuralPython() ?? null },
     };
   },
+
+  /** The tools a clone is built with, with install hints (checked again after installing). */
+  "system.toolchain": () => checkToolchain(),
 
   "plugins.scan": () => scanPlugins(),
 

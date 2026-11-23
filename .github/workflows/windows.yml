@@ -43,6 +43,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Toolchain as the app sees it (Visual Studio via vswhere)
+        run: node -e "import('./clone/src/toolchain.ts').then((m) => { const t = m.checkToolchain(); console.table(t.map(({ name, required, found, detail }) => ({ name, required, found, detail }))); if (t.some((x) => x.required && !x.found)) process.exit(1); })"
       - name: Build a clone and verify it
         env:
           VCH_TEST_BUILD: "1"

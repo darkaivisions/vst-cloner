@@ -67,6 +67,11 @@ body { overflow: hidden; }
   padding: 10px 20px; background: #3a2e12; color: #f6d38a; border-bottom: 1px solid #5a4618;
 }
 
+.toolchain ul { margin: 6px 0; padding-left: 18px; }
+.toolchain li { margin: 2px 0; }
+.toolchain code { font-family: var(--mono); font-size: 12px; background: rgba(0, 0, 0, 0.25); padding: 1px 5px; border-radius: 4px; user-select: all; }
+.toolchain .muted { color: #d8b86a; font-size: 12px; }
+
 /* ---- content ---- */
 .content { overflow-y: auto; padding: 20px; }
 .view { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }

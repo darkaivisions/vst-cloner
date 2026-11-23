@@ -8,6 +8,7 @@ export * from "./eq/fit.ts";
 export * from "./eq/params.ts";
 export * from "./eq/codegen.ts";
 export * from "./build.ts";
+export { checkToolchain, findCmake, type ToolStatus } from "./toolchain.ts";
 export * from "./verify.ts";
 export * from "./workflow.ts";
 export * from "./dynamics/plan.ts";

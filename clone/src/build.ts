@@ -7,6 +7,7 @@ import { basename, delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CancelledError, throwIfCancelled } from "@vst-cloner/capture";
 import { generateGuiHeader } from "./gui/codegen.ts";
+import { requireToolchain } from "./toolchain.ts";
 
 export type LogLevel = "info" | "detail" | "warn";
 export type Logger = (level: LogLevel, message: string) => void;
@@ -150,6 +151,8 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
   await writeIfChanged(join(generated, "CloneModel.h"), options.modelHeader);
   await writeIfChanged(join(generated, "CloneGui.h"), options.guiHeader ?? generateGuiHeader(undefined, []));
 
+  // missing tools: one clear message with how to install them, before anything is prepared
+  const { cmake } = requireToolchain();
   const juceDir = await findJuceDir();
   log("detail", juceDir ? `JUCE: ${juceDir}` : "Downloading JUCE 9.0.5 (first build only)");
 
@@ -179,9 +182,9 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
   if (!existsSync(join(buildDir, "CMakeCache.txt")) && ninja) configure.push("-G", "Ninja");
 
   log("info", "Preparing the plugin build (CMake) …");
-  await run("cmake", configure, workDir, log, options.signal);
+  await run(cmake, configure, workDir, log, options.signal);
   log("info", "Compiling the plugin – about a minute the first time, seconds afterwards …");
-  await run("cmake", ["--build", buildDir, "--config", "Release", "--parallel"], workDir, log, options.signal);
+  await run(cmake, ["--build", buildDir, "--config", "Release", "--parallel"], workDir, log, options.signal);
 
   const artefacts = join(buildDir, "vch_clone_artefacts", "Release");
   const vst3Source = join(artefacts, "VST3", `${fileName}.vst3`);
