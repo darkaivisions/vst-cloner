@@ -12,9 +12,9 @@ interface SegmentSpec {
   params?: Record<string, number>;
 }
 
-export type SignalPreset = "full" | "eq" | "dynamics" | "distortion" | "delay" | "modulation" | "reverb" | "neural";
+export type SignalPreset = "full" | "eq" | "dynamics" | "gate" | "distortion" | "delay" | "modulation" | "reverb" | "neural";
 
-export const SIGNAL_PRESETS: SignalPreset[] = ["full", "eq", "dynamics", "distortion", "delay", "modulation", "reverb", "neural"];
+export const SIGNAL_PRESETS: SignalPreset[] = ["full", "eq", "dynamics", "gate", "distortion", "delay", "modulation", "reverb", "neural"];
 
 /** Short sequence for linear, time-invariant effects (EQs, filters): impulse response + sweep as cross-check. */
 export function eqSegmentSpecs(sampleRate: number): SegmentSpec[] {
@@ -38,8 +38,12 @@ export function eqSegmentSpecs(sampleRate: number): SegmentSpec[] {
  * level-dependent timing (smaller burst), harmonics of the saturation (100 Hz steps), noise as cross-check,
  * quiet sweep for the linear colouration.
  */
-export function dynamicsSegmentSpecs(sampleRate: number, seed = 1): SegmentSpec[] {
-  const levels = { frequency: 1000, fromDb: -60, toDb: 0, stepDb: 3, stepSeconds: 0.3 };
+export function dynamicsSegmentSpecs(sampleRate: number, seed = 1, gate = false): SegmentSpec[] {
+  // Compressors: the level staircase starts at −96 dB. With a threshold that low (GxCompressor) every step from −60
+  // on lies above it, threshold and makeup cannot be told apart, and the split found is wrong at another ratio
+  // (unseen combinations 7.8 → 5.5 dB). Gates and expanders keep −60 dB: their behaviour below is closing, and
+  // the longer quiet start made them worse (GxExpander 9.9 → 11.3 dB).
+  const levels = { frequency: 1000, fromDb: gate ? -60 : -96, toDb: 0, stepDb: 3, stepSeconds: 0.3 };
   const levelCount = Math.floor((levels.toDb - levels.fromDb) / levels.stepDb) + 1;
   const harmonics = { frequency: 100, fromDb: -30, toDb: 0, stepDb: 6, stepSeconds: 0.4 };
   const harmonicCount = Math.floor((harmonics.toDb - harmonics.fromDb) / harmonics.stepDb) + 1;
@@ -169,6 +173,7 @@ export function segmentSpecs(preset: SignalPreset, sampleRate: number, seed = 1)
   if (preset === "modulation") return modulationSegmentSpecs(seed);
   if (preset === "distortion") return distortionSegmentSpecs(sampleRate, seed);
   if (preset === "dynamics") return dynamicsSegmentSpecs(sampleRate, seed);
+  if (preset === "gate") return dynamicsSegmentSpecs(sampleRate, seed, true);
   return defaultSegmentSpecs(sampleRate, seed);
 }
 

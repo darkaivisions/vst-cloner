@@ -141,7 +141,7 @@ State of the batch runs (16 Nov with the rebuilt host; delay 15 Nov):
 
 | Class | Plugins | Result |
 |---|---|---|
-| Dynamics | 12 (9 compressors/limiters, 2 gates, 1 expander) | 0.34–3.55 dB; 3× excellent, 2× very good, 4× good, 2× usable (GxCompressor 2.37 dB, GxExpander 3.55 dB), 1× "no compression measured"; unseen combinations 0.41–9.97 dB |
+| Dynamics | 12 (9 compressors/limiters, 2 gates, 1 expander) | 0.34–3.62 dB (23 Nov); 3× excellent, 2× very good, 5× good, 1× usable (GxExpander 3.62 dB), 1× "no compression measured"; unseen combinations 0.43–10.2 dB |
 | Delay | 12 | 3× very good (ZamDelay 1.43 dB, Gxdigital_delay 1.95/1.94 dB), 2× good (Tal-Dub-3 2.87 dB, GxEcho-Stereo 3.12 dB), 2× usable, 4× inaccurate, 1× "no echo measured"; unseen combinations 0.78–10.5 dB for seven plugins, otherwise 15–26 dB |
 | Reverb | 19 | 1.48–6.97 dB; 5× very good, 7× good, 7× usable; unseen combinations 2–16 dB; 11 plugins not repeatable and measured in isolation (FdnReverb 13.0 → 4.08 dB, ZynReverb can now be measured) |
 | Distortion | 73 (+4 failures: 3× crash while measuring, 1× clone does not load) | 0.06–18.4 dB (GxFuzzFaceFuller 13.95 after the fix, still 58.7 in the run of 16 Nov); 12× excellent, 20× very good, 14× good, 14× usable, 13× inaccurate; 17 plugins not repeatable and measured in isolation (dRowAudio Distortion 3.30 → 1.96); unseen combinations mostly close to the overall value, otherwise up to 28 dB |
@@ -277,8 +277,13 @@ vst-cloner/
        GxCompressor combinations are a low threshold instead: the whole test signal lies above it, threshold and
        makeup cannot be told apart in the sweep (only threshold·(1−1/ratio)+makeup is measured), and the split
        chosen is wrong at another ratio (threshold + makeup refitted: 15.3 → 0.9 dB). Preferring "the control's own
-       values" as a tie-break made darc and dpl worse (2.12 → 2.61, 0.36 → 0.68 dB) – reverted. What it needs: a
-       threshold sweep with a quieter test signal part, or threshold × ratio measured together
+       values" as a tie-break made darc and dpl worse (2.12 → 2.61, 0.36 → 0.68 dB) – reverted.
+     - Dynamics ✔ (23 Nov): compressors get a test staircase from −96 dB instead of −60 dB, so a low threshold
+       lies inside the signal and threshold and makeup separate. Unseen combinations GxCompressor 7.79 → 5.50,
+       x42-comp 2.12 → 1.92, dpl 0.36 → 0.31, OmniCompressor 1.39 → 1.33 dB; ZamComp 1.02 → 1.22 (in the run-to-run
+       spread: GxExpander moved 9.92 → 10.23 with an unchanged signal). Gates and expanders keep the −60 dB
+       staircase (preset `gate`): with the quiet steps they got worse (GxExpander 9.9 → 11.3 dB). Also tried:
+       fitting the quiet windows too (noise floor as limit) – worse for all, reverted
      - ZynChorus 16.98 → 2.89 dB with the tremolo/phaser commit: the capture is repeatable (two runs, 2.89 dB
        each) and the earlier capture refitted with the new code gives 2.89 dB too – the change is in the fit
        (which line exactly is not pinned down)

@@ -63,6 +63,8 @@ export type CaptureProgress =
 export interface CapturePlanner {
   name: string;
   signalPreset: SignalPreset;
+  /** the test signal for this plugin, where it depends on it (else signalPreset) */
+  signalFor?(info: HostInfo): SignalPreset;
   plan(info: HostInfo, options: PlanOptions): CapturePlan;
   /**
    * Optional probe before planning: a few candidate settings are rendered with the test signal and the
@@ -147,7 +149,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
     sampleRate: options.sampleRate,
     channels: options.channels,
     seed: options.plan.seed,
-    preset: options.planner?.signalPreset ?? "full",
+    preset: options.planner?.signalFor?.(info) ?? options.planner?.signalPreset ?? "full",
   });
   const workDir = await mkdtemp(join(tmpdir(), "vch-capture-"));
   progress({ stage: "workdir", path: workDir });

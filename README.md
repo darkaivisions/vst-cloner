@@ -33,7 +33,7 @@ distortions and EQs 16 Nov):
 
 | Class | Plugins | Clone vs. original |
 |---|---|---|
-| Compressors, limiters, gates, expanders | 12 | 0.33–3.34 dB: 9 good or better, 2 usable, 1 without measurable compression (e.g. OmniCompressor 0.33 · x42-dpl 0.40 · ZamComp 0.45 · Open Optical 0.52 · ZamGate 1.92) |
+| Compressors, limiters, gates, expanders | 12 | 0.34–3.62 dB: 10 good or better, 1 usable, 1 without measurable compression (e.g. ZamComp 0.34 · OmniCompressor 0.35 · x42-dpl 0.40 · Open Optical 0.52 · GxCompressor 1.80 · ZamGate 1.84) |
 | Delays (both channels) | 12 | 1.43–21.3 dB: 3 very good (ZamDelay 1.43 · Gxdigital_delay 1.89), 2 good (Tal-Dub-3 2.88 · GxEcho-Stereo 3.46), 4 usable (GxDelay-Stereo 4.28 · DualDelay 7.81 …), 3 inaccurate (ducking delays, GxTubeDelay), 1 without a measurable echo |
 | Reverbs | 19 | 1.48–6.97 dB: 12 good or better, 7 usable (e.g. ZamVerb 1.48 · Dragonfly Hall 1.67 · Tal-Reverb-III 1.68 · FdnReverb 4.08); stereo width within 2.5 dB of the original for all |
 | Distortions | 73 | 0.06–18.4 dB: 46 good or better, 14 usable, 13 inaccurate (e.g. GxMicroAmp 0.06 · Wolf Shaper 0.44 · GxBoss DS1 1.15 · GxTubeScreamer 1.93) |

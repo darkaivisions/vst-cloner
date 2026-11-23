@@ -373,6 +373,8 @@ export function dynamicsProbe(parameters: Parameter[]): CaptureProbe | undefined
 export const dynamicsPlanner: CapturePlanner = {
   name: "dynamics",
   signalPreset: "dynamics",
+  // gates and expanders keep the staircase from −60 dB (see dynamicsSegmentSpecs)
+  signalFor: (info: HostInfo) => (/gate|expan/i.test(`${info.plugin.name} ${info.plugin.category ?? ""}`) ? "gate" : "dynamics"),
   plan: (info: HostInfo, options: PlanOptions) => planDynamics(info.parameters, { ...DEFAULT_PLAN, ...options }),
   probe: (info: HostInfo) => dynamicsProbe(info.parameters),
 };
