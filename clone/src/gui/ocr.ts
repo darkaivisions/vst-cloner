@@ -97,7 +97,7 @@ const toImage = (b: Box, origin: Box): Box => {
 export async function recognizeBlocks(
   img: Image,
   blocks: { box: Box; color: Rgb; background: Rgb }[],
-  options: { languages?: string; concurrency?: number } = {},
+  options: { languages?: string; concurrency?: number; /** only these characters (numbers of a scale) */ whitelist?: string } = {},
 ): Promise<(OcrResult | undefined)[]> {
   const exe = findTesseract();
   if (!exe || !blocks.length) return blocks.map(() => undefined);
@@ -112,7 +112,7 @@ export async function recognizeBlocks(
         const file = join(dir, `${i}.png`);
         await writeFile(file, encodePng(prepareTextImage(img, box, color, background)));
         const tsv = await new Promise<string>((resolve) => {
-          execFile(exe, [file, "stdout", "-l", options.languages ?? "eng+deu", "--psm", "7", "-c", "tessedit_do_invert=0", "tsv"],
+          execFile(exe, [file, "stdout", "-l", options.languages ?? "eng+deu", "--psm", "7", "-c", "tessedit_do_invert=0", ...(options.whitelist ? ["-c", `tessedit_char_whitelist=${options.whitelist}`] : []), "tsv"],
             { timeout: 15000, env: { ...process.env, OMP_THREAD_LIMIT: "1" } },
             (error, stdout) => resolve(error ? "" : stdout));
         });

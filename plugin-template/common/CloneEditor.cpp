@@ -831,14 +831,52 @@ namespace
         float shownDb = -120.0f;
     };
 
-    /** Transfer curve of the clone (generic area with role 1): output against input level, −60…0 dB on both axes,
-        drawn from the curve the clone computes now, with a dot at the current input level. */
+    /** The original's scale numbers, where they stood (the component lies at the display's box). */
+    void drawScaleLabels (juce::Graphics& g, const Display& d)
+    {
+        for (int i = 0; i < d.numScaleLabels; ++i)
+        {
+            const auto& l = d.scaleLabels[i];
+            g.setColour (colour (l.color));
+            g.setFont (makeFont (l.h * 1.05f, false));
+            g.drawText (juce::String::fromUTF8 (l.text), juce::Rectangle<float> (l.x - d.x - 4.0f, l.y - d.y, l.w + 8.0f, l.h), juce::Justification::centred, false);
+        }
+    }
+
+    /** a step of 1, 2, 3, 5, 6, 10, 12, 20 … dB that gives about `lines` grid lines over `range` */
+    float niceStep (float range, int lines)
+    {
+        static constexpr float steps[] = { 1, 2, 3, 5, 6, 10, 12, 20, 24, 30, 50 };
+        for (const float s : steps)
+            if (range / s <= (float) lines)
+                return s;
+        return 100.0f;
+    }
+
+    /** Transfer curve of the clone (generic area with role 1): output against input level on the original's scale
+        where it was read (else −60…0 dB on both axes, with numbers of its own), drawn from the curve the clone
+        computes now, with a dot at the current input level. */
     class TransferCurve final : public juce::Component, private juce::Timer
     {
     public:
         TransferCurve (CloneProcessor& p, const Display& d) : processor (p), display (d), source (p)
         {
             setInterceptsMouseClicks (false, false);
+            // the original's axes: dB at the left and right edge (x), at the bottom and top (y); a transfer
+            // curve is square, so one read axis serves for both
+            if (d.hasXAxis)
+            {
+                lowDb = d.xAxisA + d.xAxisB * d.x;
+                highDb = d.xAxisA + d.xAxisB * (d.x + d.w);
+            }
+            if (d.hasYAxis)
+            {
+                lowY = d.yAxisA + d.yAxisB * (d.y + d.h);
+                highY = d.yAxisA + d.yAxisB * d.y;
+                if (! d.hasXAxis) { lowDb = lowY; highDb = highY; }
+            }
+            else { lowY = lowDb; highY = highDb; }
+            if (! (highDb > lowDb + 1.0f && highY > lowY + 1.0f)) { lowDb = lowY = -60.0f; highDb = highY = 0.0f; }
             startTimerHz (30);
         }
 
@@ -847,18 +885,36 @@ namespace
             const auto b = getLocalBounds().toFloat();
             g.setColour (colour (display.background));
             g.fillRect (b);
-            const auto x = [&b] (float db) { return b.getX() + (db - lowDb) / (highDb - lowDb) * b.getWidth(); };
-            const auto y = [&b] (float db) { return b.getBottom() - (db - lowDb) / (highDb - lowDb) * b.getHeight(); };
+            const auto x = [this, &b] (float db) { return b.getX() + (db - lowDb) / (highDb - lowDb) * b.getWidth(); };
+            const auto y = [this, &b] (float db) { return b.getBottom() - (db - lowY) / (highY - lowY) * b.getHeight(); };
             const auto grid = [&] {
                 g.setColour (colour (display.grid));
-                for (float db = lowDb; db <= highDb + 0.1f; db += 10.0f)
-                {
+                const float step = niceStep (highDb - lowDb, 8);
+                for (float db = std::ceil (lowDb / step) * step; db <= highDb + 0.1f; db += step)
                     g.drawLine (x (db), b.getY(), x (db), b.getBottom(), 1.0f);
+                const float stepY = niceStep (highY - lowY, 8);
+                for (float db = std::ceil (lowY / stepY) * stepY; db <= highY + 0.1f; db += stepY)
                     g.drawLine (b.getX(), y (db), b.getRight(), y (db), 1.0f);
-                }
                 g.setColour (colour (display.text).withAlpha (0.5f));
                 const float dashes[] = { 3.0f, 3.0f };
-                g.drawDashedLine ({ x (lowDb), y (lowDb), x (highDb), y (highDb) }, dashes, 2, 1.0f);
+                const float from = std::max (lowDb, lowY), to = std::min (highDb, highY);
+                g.drawDashedLine ({ x (from), y (from), x (to), y (to) }, dashes, 2, 1.0f);
+                // numbers: the original's where they were read, else the clone's own along the left and bottom edge
+                if (display.numScaleLabels > 0)
+                    drawScaleLabels (g, display);
+                else
+                {
+                    g.setColour (colour (display.text).withAlpha (0.75f));
+                    g.setFont (makeFont (10.0f, false));
+                    const float labelStep = niceStep (highDb - lowDb, 4);
+                    for (float db = std::ceil (lowDb / labelStep) * labelStep; db < highDb - 0.1f; db += labelStep)
+                    {
+                        g.drawText (juce::String (juce::roundToInt (db)), juce::Rectangle<float> (x (db) + 2.0f, b.getBottom() - 13.0f, 28.0f, 12.0f), juce::Justification::centredLeft, false);
+                        // (the lowest value stands at the corner once, on the bottom axis)
+                        if (db > lowDb + 0.1f)
+                            g.drawText (juce::String (juce::roundToInt (db)), juce::Rectangle<float> (b.getX() + 2.0f, y (db) - 13.0f, 28.0f, 12.0f), juce::Justification::centredLeft, false);
+                    }
+                }
             };
 
             juce::Path curve;
@@ -899,7 +955,7 @@ namespace
             repaint();
         }
 
-        static constexpr float lowDb = -60.0f, highDb = 0.0f;
+        float lowDb = -60.0f, highDb = 0.0f, lowY = -60.0f, highY = 0.0f;
         CloneProcessor& processor;
         const Display& display;
         MeterSource source;
@@ -913,7 +969,9 @@ namespace
         LevelHistory (CloneProcessor& p, const Display& d) : processor (p), display (d), input (p)
         {
             setInterceptsMouseClicks (false, false);
-            history.assign (150, { -120.0f, 0.0f });
+            // as many seconds as the original's time axis spans (5 s where it was not read)
+            const float seconds = d.hasXAxis ? std::abs (d.xAxisB * d.w) : 5.0f;
+            history.assign ((size_t) juce::jlimit (30, 1800, juce::roundToInt (seconds * 30.0f)), { -120.0f, 0.0f });
             startTimerHz (30);
         }
 
@@ -925,7 +983,11 @@ namespace
             g.setColour (colour (display.grid));
             for (int k = 1; k < 6; ++k)
                 g.drawHorizontalLine (juce::roundToInt (b.getY() + b.getHeight() * (float) k / 6.0f), b.getX(), b.getRight());
-            const auto y = [&b] (float db) { return b.getY() + juce::jlimit (0.0f, 1.0f, -db / 72.0f) * b.getHeight(); };
+            // the original's level axis where it was read, else 0 … −72 dB
+            const auto y = [this, &b] (float db) {
+                const float at = display.hasYAxis && std::abs (display.yAxisB) > 1e-6f ? (db - display.yAxisA) / display.yAxisB - display.y : -db / 72.0f * b.getHeight();
+                return b.getY() + juce::jlimit (0.0f, b.getHeight(), at);
+            };
             juce::Path level, reduction;
             for (size_t i = 0; i < history.size(); ++i)
             {
@@ -938,6 +1000,15 @@ namespace
             g.strokePath (level, juce::PathStrokeType (1.5f));
             g.setColour (colour (display.text));
             g.strokePath (reduction, juce::PathStrokeType (1.5f));
+            if (display.numScaleLabels > 0)
+                drawScaleLabels (g, display);
+            else
+            {
+                g.setColour (colour (display.text).withAlpha (0.75f));
+                g.setFont (makeFont (10.0f, false));
+                for (int k = 1; k < 6; ++k)
+                    g.drawText (juce::String (-12 * k), juce::Rectangle<float> (b.getX() + 2.0f, b.getY() + b.getHeight() * (float) k / 6.0f - 12.0f, 28.0f, 11.0f), juce::Justification::centredLeft, false);
+            }
         }
 
     private:

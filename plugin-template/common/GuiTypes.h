@@ -50,6 +50,9 @@ struct Control
 /** Gain reduction needle (editor coordinates; angles in radians clockwise from 12 o'clock): angle = angleZero + radiansPerDb · reduction */
 struct Needle { float pivotX, pivotY, length, width; uint32_t color; float angleZero, radiansPerDb; float capRadius; uint32_t capColor; Ticks ticks; };
 
+/** a number of the original's scale, where it stands (editor coordinates) */
+struct ScaleLabel { const char* text; float x, y, w, h; uint32_t color; };
+
 /** kind 2: gain reduction meter (needle); kind 3: level bar or LED chain – dbBottom at its origin, dbTop at the far end;
     meterSource: 0 input, 1 output, 2 gain reduction; meterOrigin: 0 bottom, 1 top, 2 left, 3 right;
     segments: number of LEDs (0: a plain bar); offColor: unlit LED or empty bar;
@@ -65,6 +68,11 @@ struct Display
     float fallDbPerSecond;
     /** transfer curve: area below it filled with fill (hasFill) */
     bool hasFill; uint32_t fill;
+    /** scale of a curve or graph as read from the original: its numbers, and each axis as
+        value = a + b · position (editor pixels; hasXAxis/hasYAxis where one was read) */
+    int numScaleLabels; const ScaleLabel* scaleLabels;
+    bool hasXAxis; float xAxisA, xAxisB;
+    bool hasYAxis; float yAxisA, yAxisB;
 };
 
 } // namespace clonegui

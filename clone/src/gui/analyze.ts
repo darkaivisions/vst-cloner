@@ -1406,6 +1406,120 @@ function textBlocks(img: Image, exclude: Uint8Array): { box: Box; color: Rgb; ba
     });
 }
 
+/** a scale value: a plain number, with a sign or unit around it ("-24", "−12 dB", "+6") */
+export function scaleNumber(text: string): number | undefined {
+  const clean = text.replace(/[−–—]/g, "-").replace(/\s+/g, "").replace(/dB(FS)?$/i, "");
+  const m = clean.match(/[+-]?\d{1,3}(?:\.\d+)?/);
+  // a little junk around the number (a grid line read as "|", an axis name) is allowed, words are not
+  if (!m || clean.length - m[0].length > 2) return undefined;
+  return Number(m[0]);
+}
+
+/**
+ * Straight line through (position, value) of the numbers of one row or column: at least three, in order (the values
+ * rise or fall with the position) and fitting within a tenth of their spacing – else they are no scale (value
+ * readouts, misreadings). Up to a third of the numbers may be misread ("-48" as "-45", a lost minus).
+ */
+export function fitAxis<P extends { at: number; value: number }>(points: P[]): { a: number; b: number; inliers: P[] } | undefined {
+  const sorted = [...points].sort((x, y) => x.at - y.at);
+  const fits = (subset: typeof sorted) => {
+    if (subset.length < 3) return undefined;
+    const diffs = subset.slice(1).map((p, i) => p.value - subset[i]!.value);
+    if (!(diffs.every((d) => d > 0) || diffs.every((d) => d < 0))) return undefined;
+    const fit = linearFit(subset.map((p) => [p.at, p.value]));
+    if (!fit) return undefined;
+    const spacing = Math.min(...diffs.map(Math.abs));
+    // a scale goes in even steps: every gap is a whole number of the smallest
+    if (diffs.some((d) => Math.abs(Math.abs(d) / spacing - Math.round(Math.abs(d) / spacing)) > 0.05)) return undefined;
+    return subset.every((p) => Math.abs(fit.a + fit.b * p.at - p.value) <= spacing * 0.1) ? { ...fit, inliers: subset } : undefined;
+  };
+  const maxDrop = Math.floor(sorted.length / 3);
+  // fewest dropped first
+  const search = (from: number, kept: typeof sorted, dropped: number): ReturnType<typeof fits> => {
+    if (from === sorted.length) return dropped === target ? fits(kept) : undefined;
+    return search(from + 1, [...kept, sorted[from]!], dropped) ?? (dropped < target ? search(from + 1, kept, dropped + 1) : undefined);
+  };
+  let target = 0;
+  for (; target <= maxDrop; target++) {
+    const fit = search(0, [], 0);
+    if (fit) return fit;
+  }
+  return undefined;
+}
+
+/**
+ * The scale of a curve or graph: numbers inside its box (read with tesseract), grouped into rows (x axis) and
+ * columns (y axis), and the straight line value = a + b·position of each axis (editor pixels).
+ */
+async function readScale(img: Image, d: Box): Promise<Display["scale"]> {
+  const { width, height } = img;
+  const outside = new Uint8Array(width * height).fill(1);
+  const box = clampBox(d, img);
+  for (let y = box.y; y < box.y + box.h; y++) outside.fill(0, y * width + box.x, y * width + box.x + box.w);
+  // grid lines run longer than any stroke of a digit: left out, they no longer join the numbers next to them
+  const bg = dominantColor(img, box);
+  const ink = (x: number, y: number) => colorDistance(pixel(img, x, y), bg) > 25;
+  const LINE = 25;
+  for (let y = box.y; y < box.y + box.h; y++) {
+    for (let x = box.x; x < box.x + box.w;) {
+      let end = x;
+      while (end < box.x + box.w && ink(end, y)) end++;
+      if (end - x >= LINE) outside.fill(1, y * width + x, y * width + end);
+      x = end + 1;
+    }
+  }
+  for (let x = box.x; x < box.x + box.w; x++) {
+    for (let y = box.y; y < box.y + box.h;) {
+      let end = y;
+      while (end < box.y + box.h && ink(x, end)) end++;
+      if (end - y >= LINE) for (let k = y; k < end; k++) outside[k * width + x] = 1;
+      y = end + 1;
+    }
+  }
+  const blocks = textBlocks(img, outside).filter((b) => b.box.h <= 20 && b.box.w <= 60);
+  if (blocks.length < 3) return undefined;
+  // read without the grid lines: they are painted over in the background colour
+  const clean: Image = { width, height, data: img.data.slice() };
+  for (let y = box.y; y < box.y + box.h; y++) for (let x = box.x; x < box.x + box.w; x++) {
+    if (outside[y * width + x]) clean.data.set([bg[0], bg[1], bg[2], 255], (y * width + x) * 4);
+  }
+  const reads = await recognizeBlocks(clean, blocks.map((b) => ({ box: clampBox(grow(b.box, 1), img), color: b.color, background: b.background })));
+  const numbers = blocks.flatMap((b, i) => {
+    const r = reads[i];
+    const value = r && r.confidence >= 70 ? scaleNumber(r.text) : undefined;
+    const at = r?.box ?? b.box;
+    return value === undefined ? [] : [{ text: String(value), value, x: at.x, y: at.y, w: at.w, h: at.h, color: b.color }];
+  });
+  if (numbers.length < 3) return undefined;
+  // rows: numbers whose centres lie on one line; the largest group with a fitting line is the axis
+  const group = (key: (n: (typeof numbers)[number]) => number) => {
+    const groups: (typeof numbers)[] = [];
+    for (const n of [...numbers].sort((a, b) => key(a) - key(b))) {
+      const g = groups.find((g) => Math.abs(key(g[0]!) - key(n)) <= 3);
+      if (g) g.push(n);
+      else groups.push([n]);
+    }
+    return groups.sort((a, b) => b.length - a.length);
+  };
+  const axisOf = (groups: (typeof numbers)[], at: (n: (typeof numbers)[number]) => number) => {
+    for (const g of groups) {
+      const fit = fitAxis(g.map((n) => ({ at: at(n), value: n.value, n })));
+      if (fit) return { fit: { a: fit.a, b: fit.b }, labels: fit.inliers.map((p) => p.n) };
+    }
+    return undefined;
+  };
+  const xAxis = axisOf(group((n) => n.y + n.h / 2), (n) => n.x + n.w / 2);
+  // a column of right-aligned numbers lines up at their right edge
+  const yAxis = axisOf([...group((n) => n.x + n.w), ...group((n) => n.x + n.w / 2)], (n) => n.y + n.h / 2);
+  if (!xAxis && !yAxis) return undefined;
+  const labels = [...new Set([...(xAxis?.labels ?? []), ...(yAxis?.labels ?? [])])];
+  return {
+    labels: labels.map((n) => ({ text: n.text, x: n.x, y: n.y, w: n.w, h: n.h, color: hex(n.color) })),
+    ...(xAxis ? { x: xAxis.fit } : {}),
+    ...(yAxis ? { y: yAxis.fit } : {}),
+  };
+}
+
 /**
  * Font size (px) for a text whose ink is `inkHeight` px tall: capitals/digits reach ~0.72 of the font size,
  * lower case without ascenders ~0.53, descenders add ~0.22.
@@ -2123,6 +2237,13 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
       }
     }
     displays.push(...kept);
+  }
+
+  // scales of curves and graphs: the numbers along their axes, read where they stand
+  for (const d of displays) {
+    if (d.kind !== "generic" || !d.role) continue;
+    const scale = await readScale(base, d);
+    if (scale) d.scale = scale;
   }
 
   // exclusion mask for static analysis

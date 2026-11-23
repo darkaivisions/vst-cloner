@@ -177,6 +177,9 @@ export interface Display {
   role?: "curve" | "analyzer";
   /** transfer curve: colour of the area below the curve, where the original fills it */
   fill?: string;
+  /** numbers along the axes of a curve or graph, and each axis: value = a + b · position (editor pixels; x for the
+   *  horizontal axis, y for the vertical one) */
+  scale?: { labels: { text: string; x: number; y: number; w: number; h: number; color: string }[]; x?: { a: number; b: number }; y?: { a: number; b: number } };
 }
 
 /** Vertical level bar: filled from the bottom of the display box (`fromDb`) to the level, the top is `toDb`. */

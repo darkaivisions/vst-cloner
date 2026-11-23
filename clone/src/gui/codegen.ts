@@ -100,6 +100,9 @@ export function generateGuiHeader(gui: GuiModel | undefined, params: CloneParam[
   gui.displays.forEach((d, i) => {
     if (d.needle?.ticks) lines.push(`inline const float needleTicks${i}[] = { ${d.needle.ticks.angles.map(f).join(", ")} };`);
     if (d.bar?.ledDb && d.bar.segments) lines.push(`inline const float ledDb${i}[] = { ${d.bar.ledDb.slice(0, d.bar.segments).map(f).join(", ")} };`);
+    if (d.scale?.labels.length) {
+      lines.push(`inline const ScaleLabel scaleLabels${i}[] = { ${d.scale.labels.map((l) => `{ ${JSON.stringify(l.text)}, ${f(l.x)}, ${f(l.y)}, ${f(l.w)}, ${f(l.h)}, ${argb(l.color)} }`).join(", ")} };`);
+    }
   });
   array("displays", "Display", gui.displays.map((d, i) =>
     `{ ${d.kind === "eq" ? 0 : d.kind === "meter" ? 2 : d.kind === "bar" ? 3 : 1}, ${f(d.x)}, ${f(d.y)}, ${f(d.w)}, ${f(d.h)}, ${argb(d.backgroundTop ?? d.background)}, ${argb(d.backgroundBottom ?? d.background)}, ${argb(d.grid)}, ${argb(d.bar?.color ?? d.curve)}, ${argb(d.text)}, ` +
@@ -109,7 +112,9 @@ export function generateGuiHeader(gui: GuiModel | undefined, params: CloneParam[
     `{ ${d.needle?.ticks?.angles.length ?? 0}, ${d.needle?.ticks ? `needleTicks${i}` : "nullptr"}, ${f(d.needle?.ticks?.inner ?? 0)}, ${f(d.needle?.ticks?.outer ?? 0)}, ${f(d.needle?.ticks?.width ?? 1)}, ${argb(d.needle?.ticks?.color)} } }, ` +
     `${{ input: 0, output: 1, reduction: 2 }[d.bar?.source ?? "input"]}, ${{ bottom: 0, top: 1, left: 2, right: 3 }[d.bar?.origin ?? "bottom"]}, ${d.bar?.segments ?? 0}, ${d.bar?.round ? "true" : "false"}, ` +
     `${argb(d.bar?.offColor ?? d.background)}, ${d.role === "curve" ? 1 : d.role === "analyzer" ? 2 : 0}, ` +
-    `${d.bar?.ledDb && d.bar.segments ? `ledDb${i}` : "nullptr"}, ${f(d.bar?.fallDbPerSecond ?? 0)}, ${d.fill ? "true" : "false"}, ${argb(d.fill)} }`));
+    `${d.bar?.ledDb && d.bar.segments ? `ledDb${i}` : "nullptr"}, ${f(d.bar?.fallDbPerSecond ?? 0)}, ${d.fill ? "true" : "false"}, ${argb(d.fill)}, ` +
+    `${d.scale?.labels.length ?? 0}, ${d.scale?.labels.length ? `scaleLabels${i}` : "nullptr"}, ` +
+    `${d.scale?.x ? "true" : "false"}, ${f(d.scale?.x?.a ?? 0)}, ${f(d.scale?.x?.b ?? 0)}, ${d.scale?.y ? "true" : "false"}, ${f(d.scale?.y?.a ?? 0)}, ${f(d.scale?.y?.b ?? 0)} }`));
 
   lines.push("} // namespace clonegui", "");
   return lines.join("\n");
