@@ -6,6 +6,8 @@ on:
   push:
     branches: [master]
   workflow_dispatch:
+  # the release workflow runs it too and takes the installer from it
+  workflow_call:
 
 concurrency:
   group: windows-${{ github.ref }}
