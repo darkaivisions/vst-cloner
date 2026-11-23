@@ -28,13 +28,13 @@ with MSVC and checked end to end, installer) runs on GitHub Actions.
 | DirectionalCompressor Clone | IEM Directional Compressor | 0.71 dB level curve over 224 settings | 77 % structure, 96 % colour |
 | GxBoss DS1 Clone | GxBoss DS1 (Guitarix, LV2) | fundamental 0.68 dB, harmonics 1.8 dB, small signal 1.23 dB | still rough |
 
-Batch runs over all installed plugins of a class (without editor; dynamics 23 Nov, delays and reverbs 20 Nov,
+Batch runs over all installed plugins of a class (without editor; dynamics and delays 23 Nov, reverbs 20 Nov,
 distortions and EQs 16 Nov):
 
 | Class | Plugins | Clone vs. original |
 |---|---|---|
 | Compressors, limiters, gates, expanders | 12 | 0.34–3.62 dB: 10 good or better, 1 usable, 1 without measurable compression (e.g. ZamComp 0.34 · OmniCompressor 0.35 · x42-dpl 0.40 · Open Optical 0.52 · GxCompressor 1.80 · ZamGate 1.84) |
-| Delays (both channels) | 12 | 1.43–21.3 dB: 3 very good (ZamDelay 1.43 · Gxdigital_delay 1.89), 2 good (Tal-Dub-3 2.88 · GxEcho-Stereo 3.46), 4 usable (GxDelay-Stereo 4.28 · DualDelay 7.81 …), 3 inaccurate (ducking delays, GxTubeDelay), 1 without a measurable echo |
+| Delays (both channels) | 12 | 1.01–21.3 dB: 4 very good (Gxduck_delay 1.01 · ZamDelay 1.43 · Gxdigital_delay 1.89), 2 good (Tal-Dub-3 2.88 · GxEcho-Stereo 3.46), 3 usable (GxDelay-Stereo 4.28 · Gxduck_delay_st 4.60 · DualDelay 7.81), 2 inaccurate (GxTubeDelay, ZynEcho), 1 without a measurable echo |
 | Reverbs | 19 | 1.48–6.97 dB: 12 good or better, 7 usable (e.g. ZamVerb 1.48 · Dragonfly Hall 1.67 · Tal-Reverb-III 1.68 · FdnReverb 4.08); stereo width within 2.5 dB of the original for all |
 | Distortions | 73 | 0.06–18.4 dB: 46 good or better, 14 usable, 13 inaccurate (e.g. GxMicroAmp 0.06 · Wolf Shaper 0.44 · GxBoss DS1 1.15 · GxTubeScreamer 1.93) |
 | EQs | 5 | 0.04–0.83 dB: IEM MultiEQ 0.04 · x42-eq 0.50 · ZamGEQ31 0.66 · GxBarkGraphicEQ 0.62 · GxGraphicEQ 0.83 |
@@ -279,6 +279,11 @@ npm run vch -- clone my-delay.vcprofile -o ./my-delay-clone
   time controls multiply (tempo and note value) or add up (delay and offset). Before the measurement,
   a survey samples every control reported as continuous at 61 positions and so finds hidden selectors
   (note values, "x2", sync), which are then measured like real switches.
+- **Ducking delays** (the echo is turned down while the input is loud; recognised by name or by attack and
+  release controls): the impulse is quiet (−40 dB) so that it does not trigger the ducking, and a quiet probe tone
+  runs through the delay while tone bursts at rising levels and a loud impulse trigger it – the probe's echo shows
+  the echo's gain at every moment. The model adds a level detector (peak with release, then attack), a threshold
+  and a glide of the echo's gain; the loop itself is not ducked. Every render gets a fresh instance.
 - **Reverb:** an impulse and its decay are measured. The model is a feedback delay network behind
   a pre-delay that reproduces the decay as it sounds: level and decay time in three bands,
   dry level, onset of the decay. The comparison uses the decay curves per band.

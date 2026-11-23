@@ -1,8 +1,9 @@
-import { DEFAULT_PLAN, selectParameters, type CapturePlan, type CapturePlanner, type CaptureProbe, type CaptureSurvey, type FixedValue, type HostInfo, type MeasuredSteps, type PlanOptions } from "@vst-cloner/capture";
+import { DEFAULT_PLAN, generateTestSignal, selectParameters, type CapturePlan, type CapturePlanner, type CaptureProbe, type CaptureSurvey, type FixedValue, type HostInfo, type MeasuredSteps, type PlanOptions } from "@vst-cloner/capture";
 import type { Parameter } from "@vst-cloner/profile";
 import { IGNORED, parameterPositions, planSweeps } from "../dynamics/plan.ts";
 import { analyseResponse } from "./fit.ts";
 import { packDelay } from "./model.ts";
+import { DUCKS_DB, duckTrack, HOP_SECONDS, type DuckInput } from "./duck.ts";
 
 /** Roles of delay parameters, recognised by name. */
 export type DelayRole = "time" | "feedback" | "mix" | "filter";
@@ -129,7 +130,7 @@ const MAX_POSITIONS = 24;
  * Model values (packed, see packDelay) that differ by less are the same position: 0.1 % in time, 0.05 dB, 0.5 % in
  * frequency. Tight, because a position repeats its effect exactly while a slow control only nearly does.
  */
-const SAME = [0.001, 0.05, 0.05, 0.05, 0.005, 0.005, 0.005, 0.005, 0.01, 0.005, 0.05, 0.01, 0.005, 0.02, 0.01];
+const SAME = [0.001, 0.05, 0.05, 0.05, 0.005, 0.005, 0.005, 0.005, 0.01, 0.005, 0.05, 0.01, 0.005, 0.02, 0.01, 0.5, 0.05, 0.05];
 
 /**
  * Positions of a control from what it does at evenly spaced values: runs of values with the same effect. A
@@ -213,10 +214,73 @@ export const modulationPlanner: CapturePlanner = {
   probe: (info: HostInfo) => delayProbe(info.parameters, info.plugin.category, info.plugin.name, detectModulation),
 };
 
+/**
+ * A delay that turns its echo down while the input is loud: "duck" in its name or a control's, or a level
+ * detector's attack and release among its controls.
+ */
+export function isDuckingDelay(parameters: Parameter[], name = ""): boolean {
+  if (/duck/i.test(name) || parameters.some((p) => /duck/i.test(p.name))) return true;
+  return parameters.some((p) => /attack/i.test(p.name)) && parameters.some((p) => /rel(ease|ese)/i.test(p.name));
+}
+
+/** share of the duck track that is ducked which the working point aims at: some triggers duck, others do not */
+const DUCK_TARGET_SHARE = 0.25;
+
+/**
+ * Working point of a ducking delay: in its initial state it may not duck at all (Gxduck_delay: AMOUNT 0.5 of 56),
+ * and then its attack and release show nothing. The mix control and every control without a delay role (not attack
+ * or release)
+ * is tried at a few values; the setting whose echo is ducked for about a quarter of the duck segment is measured
+ * around – the threshold then lies among the trigger levels, and the detector's timing shows.
+ */
+export function duckProbe(parameters: Parameter[], category = "", name = ""): CaptureProbe | undefined {
+  let mapping: DelayMapping;
+  try {
+    mapping = detectDelay(parameters, category, name);
+  } catch {
+    return undefined;
+  }
+  // the mix role is among them: "amount" names the ducking's depth as often as a mix
+  const controls = parameters.filter((p) => (mapping.other.includes(p.index) || p.index === mapping.roles.mix) && !p.discrete && !/attack|rel(ease|ese)|hold/i.test(p.name));
+  const candidates: FixedValue[][] = [[], ...controls.flatMap((p) => [0.25, 0.5, 0.75, 1].map((value) => [{ index: p.index, value }]))];
+  if (candidates.length < 2) return undefined;
+  return {
+    candidates,
+    choose(outputs, input, sampleRate) {
+      const set = generateTestSignal({ sampleRate, channels: 1, preset: "duck" }).set;
+      const segment = set.segments.find((s) => s.kind === "duck");
+      const impulse = set.segments.find((s) => s.kind === "impulse");
+      if (!segment || !impulse || set.length !== input.length) return 0;
+      const duck: DuckInput = {
+        sampleRate, signal: input, start: segment.start, length: segment.length, probeFrequency: segment.params!.probeFrequency!,
+        probeAmplitude: 10 ** (segment.params!.probeDb! / 20), triggerAt: Math.round(Math.min(segment.params!.impulseSeconds!, segment.params!.burstsSeconds!) * sampleRate),
+      };
+      // the share up to the end of the bursts (the long tail after them would weigh in a long release)
+      const p = segment.params!;
+      const end = Math.round(((p.burstsSeconds! + p.count! * (p.burstSeconds! + p.gapSeconds!) - Math.min(p.impulseSeconds!, p.burstsSeconds!)) / HOP_SECONDS));
+      const shares = outputs.map((o) => {
+        const track = duckTrack(o, duck, (o[impulse.start] ?? 0) / (impulse.params?.amplitude ?? 1))?.subarray(0, end);
+        return track ? track.filter((v) => v < DUCKS_DB).length / track.length : 0;
+      });
+      // the initial state where it already ducks for a fair share; else the candidate closest to the target
+      if (shares[0]! >= 0.1 && shares[0]! <= 0.6) return 0;
+      let best = 0;
+      shares.forEach((share, i) => {
+        if (share > 0.02 && Math.abs(share - DUCK_TARGET_SHARE) < Math.abs(shares[best]! - DUCK_TARGET_SHARE)) best = i;
+      });
+      return best;
+    },
+  };
+}
+
 export const delayPlanner: CapturePlanner = {
   name: "delay",
   signalPreset: "delay",
+  signalFor: (info: HostInfo) => (isDuckingDelay(info.parameters, info.plugin.name) ? "duck" : "delay"),
+  // the duck signal's loud bursts and long tail reach into the next render where a reset does not clear the
+  // delay line (Gxduck_delay: −35 dBFS before the impulse) – against the quiet impulse that reads as echoes
+  isolate: (info: HostInfo) => isDuckingDelay(info.parameters, info.plugin.name),
   plan: (info: HostInfo, options: PlanOptions) => planDelay(info.parameters, { ...DEFAULT_PLAN, ...options }, info.plugin.category, info.plugin.name),
-  probe: (info: HostInfo) => delayProbe(info.parameters, info.plugin.category, info.plugin.name),
+  probe: (info: HostInfo) => (isDuckingDelay(info.parameters, info.plugin.name) ? duckProbe : delayProbe)(info.parameters, info.plugin.category, info.plugin.name),
   survey: (info: HostInfo, options: PlanOptions) => delaySurvey(info.parameters, { ...DEFAULT_PLAN, ...options }, info.plugin.category, info.plugin.name),
 };

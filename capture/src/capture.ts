@@ -78,6 +78,11 @@ export interface CapturePlanner {
    * options).
    */
   survey?(info: HostInfo, options: PlanOptions): CaptureSurvey | undefined;
+  /**
+   * A fresh instance for every render from the start (else only when the repeatability check asks for it): for
+   * signals whose loud, long parts would otherwise reach into the next render through state a reset leaves.
+   */
+  isolate?(info: HostInfo): boolean;
 }
 
 export interface CaptureSurvey {
@@ -165,6 +170,7 @@ export async function capture(options: CaptureOptions): Promise<Profile> {
       prerollSeconds: options.prerollSeconds,
       tailSeconds: options.tailSeconds,
       input: "input.wav",
+      ...(options.planner?.isolate?.(info) ? { isolate: true } : {}),
     };
 
     // With a fresh instance per render a job loads and unloads the plugin hundreds of times, and some plugins

@@ -6,7 +6,7 @@ import { decodeWav, encodeWav, type Profile } from "@vst-cloner/profile";
 import type { Logger } from "../build.ts";
 import type { Errors } from "../dynamics/fit.ts";
 import { cloneValue, dynamicsCloneParameters, modelValue } from "../dynamics/params.ts";
-import { channelModel, delayParamSource, isStereoCapture, clicksResponse, compareAnswers, delayInput, delayObservations, delayResponse, modelAnswer, predictDelayModel, type DelayModel } from "./fit.ts";
+import { answerOf, channelModel, delayParamSource, isStereoCapture, compareAnswers, delayInput, delayObservations, modelAnswer, predictDelayModel, type DelayModel } from "./fit.ts";
 
 export interface DelayVerifyReport {
   clone: string;
@@ -87,10 +87,8 @@ export async function verifyDelayClone(
       for (let c = 0; c < perChannel.length; c++) {
         const original = perChannel[c]![i]!;
         const output = outputs[Math.min(c, outputs.length - 1)]!;
-        const response = delayResponse(output, input);
-        if (response.some((v) => !Number.isFinite(v))) throw new Error(`The clone gives no valid signal (NaN/inf) at "${o.label}"`);
-        const clicks = clicksResponse(output, input);
-        const answer = { response, ...(clicks ? { clicks } : {}) };
+        const answer = answerOf(output, input);
+        if (answer.response.some((v) => !Number.isFinite(v))) throw new Error(`The clone gives no valid signal (NaN/inf) at "${o.label}"`);
         errors.push(compareAnswers(answer, original, input));
 
         // reference: the TypeScript model of that channel (exactly what the plugin must do)

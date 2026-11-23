@@ -243,7 +243,7 @@ vst-cloner/
      - Open for delays: modulation (LFO in GxEcho/GxDelay), filter slopes steeper than one pole
        (Gxdigital_delay), self-oscillation and resonant filters (Tal-Dub-3); outside the model: two
        lines with crosstalk (ZynEcho, "L/R Delay"), tape echo with several heads (GxEchoCat),
-       tube saturation (GxTubeDelay), ducking (Gxduck_delay), DualDelay
+       tube saturation (GxTubeDelay), DualDelay
      - Open: editor for delay and reverb
      - EQ detection extended ✔ – band groups with their own shapes (MultiEQ), named bands with a fixed shape
        (lowshelf, highpass, L/H), sliders of graphic EQs, switches reported as continuous; spatial effects
@@ -291,7 +291,16 @@ vst-cloner/
      - Editor (23 Nov): controls recognised 84 → 96 % (bench), scale numbers on curves and graphs (read from the
        original where tesseract manages – only LSP's time axis so far – else the clone's own)
      - GxPhaser: a wider search (16 stages, corners to 20 kHz) made it worse (7.8 → 18.1 dB) – the network stays
-     - Open: GxPhaser topology (the allpass model misses it); ducking delays (level-dependent wet path)
+     - Ducking delays ✔ (23 Nov) – signal `duck`: impulse at −40 dB (does not trigger), then a probe tone at
+       −80 dB through the delay with bursts at rising levels (6 dB apart) and a loud impulse; the probe's echo is
+       the echo's gain over time. Model: peak detector (release), one-pole (attack), threshold, gain glide (0.1 s
+       for Guitarix), wet path only. Fit per render with a grid (attack and release trade places on an impulse),
+       start values kept where they explain a render nearly as well, a table keeps only the detector values its
+       control clearly moves; working point probe (AMOUNT 0.5/56 does not duck); fresh instance per render (the
+       duck signal reached into the next render). Batch: Gxduck_delay 6.84 → 1.01 dB (unseen 15.5 → 1.2),
+       Gxduck_delay_st 10.20 → 4.60 dB (unseen 17.9 → 5.3); on the old captures (impulse at −6 dB, never seen)
+       15.5 → 2.1 and 17.9 → 8.2 dB unseen. Other delays unchanged
+     - Open: GxPhaser topology (the allpass model misses it); Gxduck_delay_st's echo itself (EFFECT/COLORATION)
 7. **Universal clone (path B)** ← in progress – first version in CLI and app ✔
    - Capture plan `neural`, training (`dsp/neural/train.py`, PyTorch, CUDA), C++ template with the same network
      (~5 % of a core per channel), sample-rate adapter (other host rates, anti-alias filters, latency reported),

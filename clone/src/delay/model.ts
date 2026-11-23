@@ -6,7 +6,11 @@
  * restarted by a reset).
  *   tap  = line[n − delay(n)]
  *   line[n] = x + feedback · loopFilter(tap)
- *   y    = dry · x + wet · wetFilter(tap)
+ *   y    = dry · x + wet · duck · wetFilter(tap)
+ * Ducking (ducking delays): the input's level, as a peak that falls with the release time and then a one-pole
+ * with the attack time, keys the echo off while it is above the threshold; the echo's gain glides to 0 and back
+ * to 1 with a fixed time constant (structure.duckSmoothSeconds). The loop itself is not ducked.
+ *   peak = max(|x|, peak · r)     env += (1 − a) · (peak − env)     duck += (1 − s) · ((env > threshold ? 0 : 1) − duck)
  * IMPORTANT: plugin-template/delay must implement exactly the same steps.
  */
 
@@ -31,6 +35,10 @@ export interface DelayParams {
   phaserCentre?: number;
   phaserOctaves?: number;
   phaserFeedback?: number;
+  /** ducking: threshold (dB; DUCK_OFF_DB and above: none), attack and release of the level detector (seconds) */
+  duckThresholdDb?: number;
+  duckAttack?: number;
+  duckRelease?: number;
 }
 
 /** Polarities (±1): they do not change with the controls of the plugins measured so far. */
@@ -48,6 +56,8 @@ export interface DelayStructure {
    * fed directly by the input – the delay line is not used.
    */
   phaserStages?: number;
+  /** ducking: time constant (seconds) with which the echo's gain follows the key (0 or missing: no ducking) */
+  duckSmoothSeconds?: number;
 }
 
 export const OFF_DB = -80;
@@ -61,17 +71,21 @@ export const MAX_DELAY_SECONDS = 10;
 /** an LFO depth at or below this is none */
 export const MOD_OFF = 1e-6;
 export const modActive = (p: DelayParams) => (p.modDepthSeconds ?? 0) > MOD_OFF * 1.01;
+/** a ducking threshold at or above this is none */
+export const DUCK_OFF_DB = 6;
+export const duckActive = (p: DelayParams, s: DelayStructure) => (s.duckSmoothSeconds ?? 0) > 0 && (p.duckThresholdDb ?? DUCK_OFF_DB) < DUCK_OFF_DB - 0.01;
 /** the loop stays stable below 0 dB of feedback */
 export const MAX_FEEDBACK_DB = -0.1;
 
 export const delayGain = (db: number) => (db <= OFF_DB + 0.5 ? 0 : 10 ** (db / 20));
 
 /** Packed model values: additive changes of them are what single controls do (times and levels multiply). */
-export const NUM_DELAY_PACKED = 15;
+export const NUM_DELAY_PACKED = 18;
 export const packDelay = (p: DelayParams): number[] => [
   Math.log(p.delaySeconds), p.dryDb, p.wetDb, p.feedbackDb, Math.log(p.loopLp), Math.log(p.loopHp), Math.log(p.wetLp), Math.log(p.wetHp),
   Math.log(Math.max(p.modDepthSeconds ?? MOD_OFF, MOD_OFF)), Math.log(Math.max(p.modRate ?? 1, 0.01)), p.modPhase ?? 0,
   p.tremDepth ?? 0, Math.log(Math.max(p.phaserCentre ?? 1000, 20)), p.phaserOctaves ?? 0, p.phaserFeedback ?? 0,
+  p.duckThresholdDb ?? DUCK_OFF_DB, Math.log(p.duckAttack ?? 0.1), Math.log(p.duckRelease ?? 0.1),
 ];
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 export const unpackDelay = (x: number[]): DelayParams => ({
@@ -92,6 +106,10 @@ export const unpackDelay = (x: number[]): DelayParams => ({
   phaserCentre: clamp(Math.exp(x[12] ?? Math.log(1000)), 20, 18000),
   phaserOctaves: clamp(x[13] ?? 0, 0, 6),
   phaserFeedback: clamp(x[14] ?? 0, -0.95, 0.95),
+  // (models fitted before ducking have 15 values)
+  duckThresholdDb: clamp(x[15] ?? DUCK_OFF_DB, -120, DUCK_OFF_DB),
+  duckAttack: clamp(Math.exp(x[16] ?? Math.log(0.1)), 1e-4, 10),
+  duckRelease: clamp(Math.exp(x[17] ?? Math.log(0.1)), 1e-4, 10),
 });
 /** deepest LFO the engine provides (seconds) */
 export const MAX_MOD_DEPTH_SECONDS = 0.05;
@@ -121,8 +139,18 @@ export function processDelay(signal: ArrayLike<number>, p: DelayParams, s: Delay
   const stages = s.phaserStages ?? 0;
   const apX = new Float64Array(stages), apY = new Float64Array(stages);
   let apOut = 0;
+  const ducking = duckActive(p, s);
+  const duckThreshold = 10 ** ((p.duckThresholdDb ?? DUCK_OFF_DB) / 20);
+  const peakFall = ducking ? Math.exp(-1 / (p.duckRelease! * sampleRate)) : 0, envRise = ducking ? 1 - Math.exp(-1 / (p.duckAttack! * sampleRate)) : 0;
+  const duckGlide = ducking ? 1 - Math.exp(-1 / (s.duckSmoothSeconds! * sampleRate)) : 0;
+  let peak = 0, env = 0, duck = 1;
   for (let n = 0; n < length; n++) {
     const x = n < signal.length ? signal[n]! : 0;
+    if (ducking) {
+      peak = Math.max(Math.abs(x), peak * peakFall);
+      env += envRise * (peak - env);
+      duck += duckGlide * ((env > duckThreshold ? 0 : 1) - duck);
+    }
     const lfo = Math.sin(phase + omega * (n + start + (s.modLead ?? 0)));
     if (stages > 0) {
       // phaser: allpass chain swept by the LFO, its output fed back to its input
@@ -151,7 +179,7 @@ export function processDelay(signal: ArrayLike<number>, p: DelayParams, s: Delay
     if (wetLp >= 0) { wetLow += (1 - wetLp) * (g - wetLow); g = wetLow; }
     if (wetHp >= 0) { wetHigh += (1 - wetHp) * (g - wetHigh); g -= wetHigh; }
     // tremolo: the LFO moves the level, from full (LFO at −1) down by its depth (LFO at +1)
-    out[n] = (dry * x + wet * g) * (1 - trem * (0.5 + 0.5 * lfo));
+    out[n] = (dry * x + wet * duck * g) * (1 - trem * (0.5 + 0.5 * lfo));
     write = write + 1 === size ? 0 : write + 1;
   }
   return out;

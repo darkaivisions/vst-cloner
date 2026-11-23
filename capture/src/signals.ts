@@ -12,9 +12,9 @@ interface SegmentSpec {
   params?: Record<string, number>;
 }
 
-export type SignalPreset = "full" | "eq" | "dynamics" | "gate" | "distortion" | "delay" | "modulation" | "reverb" | "neural";
+export type SignalPreset = "full" | "eq" | "dynamics" | "gate" | "distortion" | "delay" | "duck" | "modulation" | "reverb" | "neural";
 
-export const SIGNAL_PRESETS: SignalPreset[] = ["full", "eq", "dynamics", "gate", "distortion", "delay", "modulation", "reverb", "neural"];
+export const SIGNAL_PRESETS: SignalPreset[] = ["full", "eq", "dynamics", "gate", "distortion", "delay", "duck", "modulation", "reverb", "neural"];
 
 /** Short sequence for linear, time-invariant effects (EQs, filters): impulse response + sweep as cross-check. */
 export function eqSegmentSpecs(sampleRate: number): SegmentSpec[] {
@@ -113,6 +113,34 @@ export function delaySegmentSpecs(seed = 1): SegmentSpec[] {
   ];
 }
 
+/** the ducking probe: a tone far below any threshold, and bursts at frequencies that do not leak into its band */
+export const DUCK_SIGNAL = {
+  probeDb: -80, probeFrequency: 3100, impulseSeconds: 22, impulseAmplitude: 0.5,
+  // 6 dB apart and half a second long: a slow attack cannot pass for another threshold
+  burstsSeconds: 3, burstFrequency: 400, fromDb: -63, stepDb: 6, count: 11, burstSeconds: 0.5, gapSeconds: 0.3,
+  fadeSeconds: 0.01,
+};
+
+/**
+ * Sequence for delays with ducking (the echo is turned down while the input is loud). The impulse is quiet
+ * (−40 dB) so that it does not trigger the ducking: its answer is the plain delay. (Quieter still, what some
+ * plugins circulate at high feedback from the start of a render – Gxduck_delay: −64 dBFS at 0.9 – would drown it.) Then a probe tone at −80 dB
+ * runs through the delay – its echo shows the echo's gain at every moment – while tone bursts at rising levels
+ * and, after a long pause, a loud impulse trigger the ducking. The bursts come first: those below the threshold
+ * do not trigger, which pins the threshold even when a long release then keeps the echo down for many seconds
+ * (attack: how soon the first loud enough burst ducks; release: how long the echo stays down after the last one).
+ */
+export function duckSegmentSpecs(): SegmentSpec[] {
+  return [
+    // a long lead: what the plugin plays before the impulse (a loop at full feedback that circulates a switch-on
+    // click) shows there – against a quiet impulse it would be read as echoes
+    { id: "lead", kind: "silence", seconds: 1 },
+    { id: "impulse", kind: "impulse", seconds: 6, params: { amplitude: 0.01 } },
+    // after the last burst a long tail: at a low threshold a long release keeps the echo down for many seconds
+    { id: "duck", kind: "duck", seconds: 29.5, params: DUCK_SIGNAL },
+  ];
+}
+
 /** spacing of the clicks for modulated delays: longer than the longest chorus delay, short enough to follow an LFO */
 export const CLICK_PERIOD_SECONDS = 0.04;
 
@@ -170,6 +198,7 @@ export function segmentSpecs(preset: SignalPreset, sampleRate: number, seed = 1)
   if (preset === "eq") return eqSegmentSpecs(sampleRate);
   if (preset === "reverb") return reverbSegmentSpecs();
   if (preset === "delay") return delaySegmentSpecs(seed);
+  if (preset === "duck") return duckSegmentSpecs();
   if (preset === "modulation") return modulationSegmentSpecs(seed);
   if (preset === "distortion") return distortionSegmentSpecs(sampleRate, seed);
   if (preset === "dynamics") return dynamicsSegmentSpecs(sampleRate, seed);
@@ -230,6 +259,23 @@ function renderSegment(segment: Segment, sampleRate: number, out: Float32Array):
       const period = Math.max(1, Math.round(param(segment, "periodSeconds") * sampleRate));
       const amplitude = param(segment, "amplitude");
       for (let i = 0; i < n; i += period) out[o + i] = amplitude;
+      return;
+    }
+
+    case "duck": {
+      const probe = dbToGain(param(segment, "probeDb")), fp = param(segment, "probeFrequency");
+      const fade = Math.max(1, Math.round(param(segment, "fadeSeconds") * sampleRate));
+      const ramp = (i: number, length: number) => (i < fade ? 0.5 - 0.5 * Math.cos((Math.PI * i) / fade) : i >= length - fade ? 0.5 - 0.5 * Math.cos((Math.PI * (length - i)) / fade) : 1);
+      for (let i = 0; i < n; i++) out[o + i] = probe * ramp(i, n) * Math.sin((2 * Math.PI * fp * i) / sampleRate);
+      const fb = param(segment, "burstFrequency"), burst = Math.round(param(segment, "burstSeconds") * sampleRate);
+      // the loud transient: a single sample (a detector's peak hold catches it in full, smoothing only in part)
+      out[o + Math.round(param(segment, "impulseSeconds") * sampleRate)]! += param(segment, "impulseAmplitude");
+      const every = burst + Math.round(param(segment, "gapSeconds") * sampleRate);
+      const first = Math.round(param(segment, "burstsSeconds") * sampleRate);
+      for (let k = 0; k < param(segment, "count"); k++) {
+        const gain = dbToGain(param(segment, "fromDb") + k * param(segment, "stepDb"));
+        for (let i = 0; i < burst && first + k * every + i < n; i++) out[o + first + k * every + i]! += gain * ramp(i, burst) * Math.sin((2 * Math.PI * fb * i) / sampleRate);
+      }
       return;
     }
 

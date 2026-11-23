@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { Parameter } from "@vst-cloner/profile";
 import { renderTestSignal, segmentSpecs } from "@vst-cloner/capture";
 import { classifyPlugin } from "../src/batch.ts";
-import { HP_OFF, LP_OFF, MOD_OFF, OFF_DB, packDelay, processDelay, unpackDelay, type DelayParams } from "../src/delay/model.ts";
+import { HP_OFF, LP_OFF, MOD_OFF, NUM_DELAY_PACKED, OFF_DB, packDelay, processDelay, unpackDelay, type DelayParams } from "../src/delay/model.ts";
 import { measureModulation } from "../src/delay/modulation.ts";
 import { detectModulation, NotDelayError } from "../src/delay/plan.ts";
 import { delayReading, lfoDeviation, lfoStart } from "../src/delay/fit.ts";
@@ -50,7 +50,7 @@ test("old delay models (8 packed values) unpack without an LFO", () => {
   const packed = packDelay(chorus()).slice(0, 8);
   const p = unpackDelay(packed);
   assert.ok(Math.abs(p.modDepthSeconds! - MOD_OFF) < 1e-12);
-  assert.equal(packDelay(chorus()).length, 15);
+  assert.equal(packDelay(chorus()).length, NUM_DELAY_PACKED);
 });
 
 test("two LFOs are compared with their phases aligned", () => {

@@ -79,7 +79,11 @@ Segments of generator version 1, preset `full` (all channels identical):
 
 The other presets (`dynamics`, `distortion`, `delay`, `modulation`, `reverb`, `neural`) use the same kinds of
 segment. `modulation` adds the kind `clicks`: an impulse of `amplitude` every `periodSeconds` (0.04 s) from the
-start of the segment – the times of their repeats trace the LFO of a chorus or flanger.
+start of the segment – the times of their repeats trace the LFO of a chorus or flanger. `duck` (delays with
+ducking) takes the impulse at −40 dBFS (it must not trigger the ducking) and adds the kind `duck`: a quiet probe tone
+(`probeDb`, `probeFrequency`) through the whole segment – its echo shows the echo's gain at every moment – with a
+loud impulse (`impulseAmplitude`) at `impulseSeconds` and `count` tone bursts (`burstFrequency`, from `fromDb` in steps of `stepDb`,
+`burstSeconds` long with `gapSeconds` between them, faded in and out) from `burstsSeconds` on.
 
 ## Versioning
 

@@ -14,12 +14,14 @@ namespace vch
 
 /** packed model values: ln delay (s), dry, wet, feedback (dB), ln of loop low-pass, loop high-pass, wet low-pass,
     wet high-pass (Hz), ln LFO depth (s), ln LFO rate (Hz), LFO phase (rad), tremolo depth, ln phaser corner (Hz),
-    phaser sweep (octaves), phaser feedback – see packDelay() in clone/src/delay/model.ts */
-constexpr int numPacked = 15;
+    phaser sweep (octaves), phaser feedback, ducking threshold (dB), ln ducking attack, ln ducking release (s) – see
+    packDelay() in clone/src/delay/model.ts */
+constexpr int numPacked = 18;
 constexpr int maxPhaserStages = 16;
 
 constexpr double offDb = -80.0, lpOff = 20000.0, hpOff = 20.0, maxDelaySeconds = 10.0, maxFeedbackDb = -0.1;
 constexpr double modOff = 1e-6, maxModDepthSeconds = 0.05;
+constexpr double duckOffDb = 6.0;
 
 struct DelayParams
 {
@@ -27,14 +29,16 @@ struct DelayParams
     double loopLp = lpOff, loopHp = hpOff, wetLp = lpOff, wetHp = hpOff;
     double modDepthSeconds = modOff, modRate = 1, modPhase = 0;
     double tremDepth = 0, phaserCentre = 1000, phaserOctaves = 0, phaserFeedback = 0;
+    double duckThresholdDb = duckOffDb, duckAttack = 0.1, duckRelease = 0.1;
 };
 
 /** polarities (±1); modLead: samples the LFO ran before its reset point; phaserStages: allpass stages of a phaser
-    (0: none) – DelayStructure in model.ts */
+    (0: none); duckSmoothSeconds: time constant of the echo's ducking gain (0: no ducking) – DelayStructure in model.ts */
 struct DelayStructure
 {
     double drySign = 1, wetSign = 1, feedbackSign = 1, modLead = 0;
     int phaserStages = 0;
+    double duckSmoothSeconds = 0;
 };
 
 /** One model: the main one (switchParam −1) or the model for one position of a switch (see DelayVariant in
@@ -70,6 +74,9 @@ inline DelayParams unpack (const double* x)
     p.phaserCentre = std::clamp (std::exp (x[12]), 20.0, 18000.0);
     p.phaserOctaves = std::clamp (x[13], 0.0, 6.0);
     p.phaserFeedback = std::clamp (x[14], -0.95, 0.95);
+    p.duckThresholdDb = std::clamp (x[15], -120.0, duckOffDb);
+    p.duckAttack = std::clamp (std::exp (x[16]), 1e-4, 10.0);
+    p.duckRelease = std::clamp (std::exp (x[17]), 1e-4, 10.0);
     return p;
 }
 
@@ -84,6 +91,8 @@ struct DelayCoeffs
     int phaserStages = 0;
     double dry = 1, wet = 0, feedback = 0;
     double loopLp = -1, loopHp = -1, wetLp = -1, wetHp = -1; // one-pole coefficients, −1 = bypassed
+    bool ducking = false; // the level detector and the echo's gain of processDelay() in model.ts
+    double duckThreshold = 1, peakFall = 0, envRise = 0, duckGlide = 0;
 
     void design (const DelayParams& p, const DelayStructure& s, double sampleRate)
     {
@@ -107,6 +116,11 @@ struct DelayCoeffs
         loopHp = p.loopHp > hpOff * 1.001 ? onePole (p.loopHp) : -1.0;
         wetLp = p.wetLp < lpOff * 0.999 ? onePole (p.wetLp) : -1.0;
         wetHp = p.wetHp > hpOff * 1.001 ? onePole (p.wetHp) : -1.0;
+        ducking = s.duckSmoothSeconds > 0 && p.duckThresholdDb < duckOffDb - 0.01;
+        duckThreshold = std::pow (10.0, p.duckThresholdDb / 20.0);
+        peakFall = ducking ? std::exp (-1.0 / (p.duckRelease * sampleRate)) : 0.0;
+        envRise = ducking ? 1.0 - std::exp (-1.0 / (p.duckAttack * sampleRate)) : 0.0;
+        duckGlide = ducking ? 1.0 - std::exp (-1.0 / (s.duckSmoothSeconds * sampleRate)) : 0.0;
     }
 };
 
@@ -127,6 +141,8 @@ public:
         write = 0;
         lfo = 0.0;
         apOut = 0.0;
+        peak = env = 0.0;
+        duck = 1.0;
         std::fill (std::begin (apX), std::end (apX), 0.0);
         std::fill (std::begin (apY), std::end (apY), 0.0);
     }
@@ -134,6 +150,12 @@ public:
     double process (double x, const DelayCoeffs& c)
     {
         const int size = (int) line.size();
+        if (c.ducking)
+        {
+            peak = std::max (std::abs (x), peak * c.peakFall);
+            env += c.envRise * (peak - env);
+            duck += c.duckGlide * ((env > c.duckThreshold ? 0.0 : 1.0) - duck);
+        }
         // the LFO moves the delay time; `lfo` is ω · (samples since the reset), so a changed rate does not jump
         const double lfoValue = std::sin (c.phase + lfo);
         lfo += c.omega;
@@ -172,12 +194,12 @@ public:
         if (c.wetLp >= 0) { wetLow += (1.0 - c.wetLp) * (g - wetLow); g = wetLow; }
         if (c.wetHp >= 0) { wetHigh += (1.0 - c.wetHp) * (g - wetHigh); g -= wetHigh; }
         write = write + 1 == size ? 0 : write + 1;
-        return (c.dry * x + c.wet * g) * level;
+        return (c.dry * x + c.wet * duck * g) * level;
     }
 
 private:
     std::vector<double> line;
-    double loopLow = 0, loopHigh = 0, wetLow = 0, wetHigh = 0, lfo = 0, apOut = 0;
+    double loopLow = 0, loopHigh = 0, wetLow = 0, wetHigh = 0, lfo = 0, apOut = 0, peak = 0, env = 0, duck = 1;
     double apX[maxPhaserStages] = {}, apY[maxPhaserStages] = {};
     int write = 0;
 };

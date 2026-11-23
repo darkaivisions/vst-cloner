@@ -211,7 +211,7 @@ async function imageDataUrl(path: string | undefined): Promise<string | undefine
 const svgDataUrl = (svg: string) => `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 
 const SEGMENT_NAMES: Record<string, string> = {
-  silence: "Silence", impulse: "Impulse", logSweep: "Sweep", noise: "Noise", levelSteps: "Level steps", toneBurst: "Tone burst",
+  silence: "Silence", impulse: "Impulse", logSweep: "Sweep", noise: "Noise", levelSteps: "Level steps", toneBurst: "Tone burst", clicks: "Clicks", duck: "Ducking probe",
 };
 async function guiResult(gui: { controls: number; comparison?: { similarity: number; colorSimilarity: number; comparePng?: string } } | undefined) {
   if (!gui) return undefined;

@@ -3,8 +3,9 @@ import { fft, nextPowerOfTwo } from "../dsp/fft.ts";
 import { nelderMead } from "../dsp/optimize.ts";
 import { pchip, tableAt, type Errors, type ParamTable } from "../dynamics/fit.ts";
 import { parameterPositions, positionOf, renderCondition, steppedParameter, SWITCH_STATES } from "../dynamics/plan.ts";
-import type { MeasuredSteps } from "@vst-cloner/capture";
-import { HP_OFF, hpActive, LP_OFF, lpActive, MAX_FEEDBACK_DB, MOD_OFF, OFF_DB, onePole, packDelay, processDelay, unpackDelay, type DelayParams, type DelayStructure } from "./model.ts";
+import { renderTestSignal, type MeasuredSteps } from "@vst-cloner/capture";
+import { compareTracks, duckTrack, fitDuck, showsDucking, type DuckInput } from "./duck.ts";
+import { DUCK_OFF_DB, HP_OFF, hpActive, LP_OFF, lpActive, MAX_FEEDBACK_DB, MOD_OFF, OFF_DB, onePole, packDelay, processDelay, unpackDelay, type DelayParams, type DelayStructure } from "./model.ts";
 import { clickTaps, measureModulation, measurePhaser, measureTremolo, wrapPhase, type MeasuredModulation, type MeasuredPhaser, type MeasuredTremolo } from "./modulation.ts";
 
 export interface DelayInput {
@@ -17,6 +18,8 @@ export interface DelayInput {
   preroll: number;
   /** the train of clicks of a modulation measurement (see modulationSegmentSpecs) */
   clicks?: { start: number; length: number; amplitude: number; period: number };
+  /** the ducking probe (delays with ducking, see duck.ts) */
+  duck?: DuckInput;
 }
 
 export interface DelayObservation {
@@ -30,6 +33,23 @@ export interface DelayObservation {
   response: Float32Array;
   /** answer to the clicks, scaled to unit clicks (modulation measurements) */
   clicks?: Float32Array;
+  /** gain of the echo over the duck segment (dB, see duckTrack) */
+  duck?: Float32Array;
+  /** level of what the plugin plays before the impulse, relative to the impulse (dB) */
+  residualDb?: number;
+}
+
+/**
+ * A render whose output before the impulse is this loud relative to the impulse cannot be read: what circulates
+ * there (a loop at full feedback keeping a switch-on click) would be taken for echoes. Its sweep point is left out.
+ */
+export const MAX_RESIDUAL_DB = -40;
+
+/** RMS of an output before the impulse, relative to the impulse (dB). */
+export function residualDb(output: ArrayLike<number>, input: DelayInput): number {
+  let sum = 0;
+  for (let i = 0; i < input.start; i++) sum += (output[i] ?? 0) ** 2;
+  return 10 * Math.log10(sum / Math.max(input.start, 1) + 1e-30) - 20 * Math.log10(input.amplitude);
 }
 
 export function delayInput(profile: Profile): DelayInput {
@@ -37,11 +57,27 @@ export function delayInput(profile: Profile): DelayInput {
   if (!segment) throw new Error("The profile holds no delay measurement (impulse segment missing)");
   const sampleRate = profile.manifest.capture.sampleRate;
   const clicks = profile.testSignals.segments.find((s) => s.kind === "clicks");
+  const duck = profile.testSignals.segments.find((s) => s.kind === "duck");
   return {
     sampleRate, start: segment.start, length: segment.length, amplitude: segment.params?.amplitude ?? 1,
     preroll: Math.floor(profile.manifest.capture.prerollSeconds * sampleRate),
     ...(clicks ? { clicks: { start: clicks.start, length: clicks.length, amplitude: clicks.params?.amplitude ?? 1, period: Math.max(1, Math.round((clicks.params?.periodSeconds ?? 0.04) * sampleRate)) } } : {}),
+    ...(duck ? {
+      duck: {
+        sampleRate, signal: renderTestSignal({ ...profile.testSignals, channels: 1 }).channels[0]!, start: duck.start, length: duck.length,
+        probeFrequency: duck.params!.probeFrequency!, probeAmplitude: 10 ** (duck.params!.probeDb! / 20),
+        triggerAt: Math.round(Math.min(duck.params!.impulseSeconds!, duck.params!.burstsSeconds!) * sampleRate),
+      },
+    } : {}),
   };
+}
+
+/** The answer of a plugin (original or clone) to the test signal: impulse response, clicks, ducking. */
+export function answerOf(output: ArrayLike<number>, input: DelayInput): DelayAnswer {
+  const response = delayResponse(output, input);
+  const clicks = clicksResponse(output, input);
+  const duck = input.duck ? duckTrack(output, input.duck, response[0] ?? 0) : undefined;
+  return { response, ...(clicks ? { clicks } : {}), ...(duck ? { duck } : {}) };
 }
 
 export function clicksResponse(output: ArrayLike<number>, input: DelayInput): Float32Array | undefined {
@@ -61,7 +97,7 @@ export function delayObservations(profile: Profile, input: DelayInput, channelIn
   return profile.captures.renders.map((r) => {
     const channels = readCapture(profile, r).channels;
     const output = channels[Math.min(channelIndex, channels.length - 1)]!;
-    const clicks = clicksResponse(output, input);
+    const answer = answerOf(output, input);
     return {
       renderId: r.id,
       label: r.label ?? r.id,
@@ -69,8 +105,8 @@ export function delayObservations(profile: Profile, input: DelayInput, channelIn
       params: r.params.map((p) => ({ index: p.index, value: p.value })),
       kind: r.kind,
       ...(r.sweepParameter !== undefined ? { sweepParameter: r.sweepParameter } : {}),
-      response: delayResponse(output, input),
-      ...(clicks ? { clicks } : {}),
+      ...answer,
+      residualDb: residualDb(output, input),
     };
   });
 }
@@ -478,6 +514,23 @@ export function refineTimeTable(table: ParamTable, visible: (value: number) => b
   table.points = dense;
 }
 
+/**
+ * Ducking: a control's table keeps only the detector values it clearly moves (threshold by more than 6 dB, attack
+ * or release by more than a factor of 2, not counting the outermost point at either end); smaller moves along a sweep make up for what the model misses (a long
+ * attack) and add up wrongly in combinations (Gxduck_delay: the attack sweep stretched the release by 35 %, an
+ * echo then stayed ducked). The others are set to the base render's.
+ */
+const DUCK_OWN = [[15, 6], [16, Math.log(2)], [17, Math.log(2)]] as const;
+export function ownDuckValues(table: ParamTable, base: number[]): void {
+  for (const [k, range] of DUCK_OWN) {
+    // the spread without the outermost point at either end: one failed fit does not make a control move a value
+    const values = table.points.map((pt) => pt.packed[k] ?? base[k]!).sort((x, y) => x - y);
+    const inner = values.length >= 4 ? values.slice(1, -1) : values;
+    if (inner[inner.length - 1]! - inner[0]! > range) continue;
+    for (const pt of table.points) if (pt.packed.length > k) pt.packed[k] = base[k]!;
+  }
+}
+
 const summarize = (rows: DelayRenderReport[]): Errors | undefined =>
   rows.length ? { rmsDb: rows.reduce((s, r) => s + r.rmsDb, 0) / rows.length, maxDb: Math.max(...rows.map((r) => r.maxDb)) } : undefined;
 
@@ -516,8 +569,9 @@ export function predictDelayModel(model: DelayTables & { variants?: DelayVariant
 }
 export const predictDelay = (model: DelayTables & { variants?: DelayVariant[] }, values: Map<number, number>): DelayParams => predictDelayModel(model, values).params;
 
-/** Impulse response of the model, as long as the measured ones. */
-export const modelResponse = (p: DelayParams, s: DelayStructure, input: DelayInput) => processDelay([1], p, s, input.sampleRate, input.length, input.preroll + input.start);
+/** Impulse response of the model, as long as the measured ones (to an impulse as loud as the measured one: ducking depends on it). */
+export const modelResponse = (p: DelayParams, s: DelayStructure, input: DelayInput) =>
+  processDelay([input.amplitude], p, s, input.sampleRate, input.length, input.preroll + input.start).map((v) => v / input.amplitude);
 
 /** Answer of the model to the clicks (modulation measurements). */
 export function modelClicks(p: DelayParams, s: DelayStructure, input: DelayInput): Float32Array | undefined {
@@ -531,17 +585,27 @@ export function modelClicks(p: DelayParams, s: DelayStructure, input: DelayInput
 export interface DelayAnswer {
   response: Float32Array;
   clicks?: Float32Array;
+  duck?: Float32Array;
 }
 
 /** The model's answer to the measurement signal: impulse response and, for modulation measurements, the clicks. */
 export function modelAnswer(p: DelayParams, s: DelayStructure, input: DelayInput): DelayAnswer {
   const clicks = modelClicks(p, s, input);
-  return { response: modelResponse(p, s, input), ...(clicks ? { clicks } : {}) };
+  const response = modelResponse(p, s, input);
+  // ducking: the model over the whole test signal, read like the original
+  const duck = input.duck ? duckTrack(processDelay(input.duck.signal, p, s, input.sampleRate, input.duck.start + input.duck.length, input.preroll), input.duck, response[0] ?? 0) : undefined;
+  return { response, ...(clicks ? { clicks } : {}), ...(duck ? { duck } : {}) };
 }
 
 /** Two answers against each other: the impulse response and, where measured, the answer to the clicks (the LFO). */
 export function compareAnswers(a: DelayAnswer, b: DelayAnswer, input: DelayInput): Errors {
   const impulse = compareResponses(a.response, b.response, input.sampleRate);
+  if (input.duck && (a.duck || b.duck)) {
+    // ducking: the gain tracks; one side without a readable echo is compared with an open echo (0 dB)
+    const open = new Float32Array((a.duck ?? b.duck)!.length);
+    const duck = compareTracks(a.duck ?? open, b.duck ?? open);
+    return { rmsDb: (impulse.rmsDb + duck.rmsDb) / 2, maxDb: Math.max(impulse.maxDb, duck.maxDb) };
+  }
   if (!a.clicks || !b.clicks || !input.clicks) return impulse;
   const lfo = compareClicks(a.clicks, b.clicks, input.sampleRate, input.clicks.period);
   return { rmsDb: (impulse.rmsDb + lfo.rmsDb) / 2, maxDb: Math.max(impulse.maxDb, lfo.maxDb) };
@@ -824,17 +888,36 @@ function fitDelayChannel(profile: Profile, onProgress: ((done: number, total: nu
     return { ...analysis, params, structure: { ...structure, modLead: lfo.lead }, echoes: m ? Math.max(1, analysis.echoes) : analysis.echoes };
   };
 
+  // Ducking: the time constant with which the echo's gain glides is the plugin's – fitted on a few renders that
+  // duck – and the detector (threshold, attack, release) is fitted per render with it.
+  let duckSmooth: number | undefined;
+  if (input.duck) {
+    const ducking = observations.filter((o) => o.purpose === "train" && o.duck && showsDucking(o.duck)).slice(0, 3);
+    const smooths = ducking.map((o) => fitDuck(o.duck!, input.duck!).smooth).sort((x, y) => x - y);
+    if (smooths.length) duckSmooth = smooths[smooths.length >> 1];
+  }
+  const analyseRender = (o: DelayObservation, fallback?: DelayParams): DelayAnalysis => {
+    const analysis = analyse(o, fallback);
+    if (!duckSmooth || !input.duck) return analysis;
+    const fitted = o.duck ? fitDuck(o.duck, input.duck, duckSmooth, fallback) : undefined;
+    const duck: Partial<DelayParams> = fitted
+      ? { duckThresholdDb: fitted.thresholdDb, duckAttack: fitted.attack, duckRelease: fitted.release }
+      : { duckThresholdDb: fallback?.duckThresholdDb ?? DUCK_OFF_DB, duckAttack: fallback?.duckAttack ?? 0.1, duckRelease: fallback?.duckRelease ?? 0.1 };
+    return { ...analysis, params: { ...analysis.params, ...duck }, structure: { ...analysis.structure, duckSmoothSeconds: duckSmooth } };
+  };
+
   /** tables from the sweeps around one base render */
   const fitTables = (baseObservation: DelayObservation, sweeps: DelayObservation[], fallback?: DelayParams): DelayTables & { echoes: number } => {
-    const baseFit = analyse(baseObservation, fallback);
+    const baseFit = analyseRender(baseObservation, fallback);
     const tables = new Map<number, ParamTable>();
     /** per table: plugin values whose render shows a repeat */
     const visible = new Map<number, Set<number>>();
     for (const o of sweeps) {
       onProgress?.(done++, train.length, o.label);
+      if ((o.residualDb ?? -Infinity) > MAX_RESIDUAL_DB) continue;
       const p = swept(o)!;
       const info = parameters.find((x) => x.index === p.index)!;
-      const fit = analyse(o, baseFit.params);
+      const fit = analyseRender(o, baseFit.params);
       const table = tables.get(p.index)
         ?? { index: p.index, name: info.name, discrete: stepped.has(p.index), points: [{ value: baseValues.get(p.index)!, packed: packDelay(baseFit.params) }] };
       table.points.push({ value: p.value, packed: packDelay(fit.params) });
@@ -861,6 +944,7 @@ function fitDelayChannel(profile: Profile, onProgress: ((done: number, total: nu
         }
         table.points.sort((a, b) => a.value - b.value);
         refineTimeTable(table, (value) => visible.get(index)!.has(value));
+        if (duckSmooth) ownDuckValues(table, packDelay(baseFit.params));
       }
     }
     return {

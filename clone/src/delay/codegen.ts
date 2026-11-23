@@ -61,7 +61,7 @@ export function generateDelayHeader(
     lines.push(`inline const vch::DelayModelData ${name}[] =`, "{");
     models.forEach((m, k) => {
       const st = m.tables.structure;
-      lines.push(`    { ${m.condition}, ${prefix}basePacked${k}, ${prefix}tables${k}, ${m.tables.tables.length}, { ${cppNumber(st.drySign)}, ${cppNumber(st.wetSign)}, ${cppNumber(st.feedbackSign)}, ${cppNumber(st.modLead ?? 0)}, ${st.phaserStages ?? 0} }, ${m.tables.timeRule === "sum"} }, // ${m.comment}`);
+      lines.push(`    { ${m.condition}, ${prefix}basePacked${k}, ${prefix}tables${k}, ${m.tables.tables.length}, { ${cppNumber(st.drySign)}, ${cppNumber(st.wetSign)}, ${cppNumber(st.feedbackSign)}, ${cppNumber(st.modLead ?? 0)}, ${st.phaserStages ?? 0}, ${cppNumber(st.duckSmoothSeconds ?? 0)} }, ${m.tables.timeRule === "sum"} }, // ${m.comment}`);
     });
     lines.push("};", `inline constexpr int ${count} = ${models.length};`);
   };
