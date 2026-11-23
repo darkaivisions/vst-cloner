@@ -11,13 +11,15 @@ Overall plan and milestones: [PLAN.md](PLAN.md) · Profile format: [docs/profile
 **Status: milestones 6 and 7 in progress** – desktop app, capture host, profile format and LLM integration work.
 Clones (VST3/LV2) exist for **parametric EQs**, **compressors/limiters**, **gates/expanders** and
 **distortions** (overdrive/distortion), each with a rebuilt editor of the original.
-**Delays**, **reverbs** and **chorus/flanger/vibrato** (a delay moved by an LFO) can be cloned in a first version
-(no rebuilt editor yet).
+**Delays** (stereo and ping-pong with a model per channel), **reverbs** (with the original's stereo width) and
+**chorus/flanger/vibrato, tremolo and phaser** (an LFO moving the delay, the level or an allpass chain) can be cloned
+in a first version (no rebuilt editor yet).
 **Any other plugin** becomes a **universal clone**: a neural network, conditioned on all of its controls, is trained
 on the GPU from the measurements (see below). Long reverb tails, long delays and modulated delays are its weak spots –
 for a plugin with a class of its own, **Engine vs. network** builds both clones, compares them on the same settings
 and keeps the one that sounds closer (see below).
-Tested on Linux with native VST3/LV2 plugins and Windows plugins via yabridge.
+Tested on Linux with native VST3/LV2 plugins and Windows plugins via yabridge; the Windows build (host, a clone built
+with MSVC and checked end to end, installer) runs on GitHub Actions.
 
 | Clone | Original | Deviation | Editor |
 |---|---|---|---|
@@ -26,13 +28,14 @@ Tested on Linux with native VST3/LV2 plugins and Windows plugins via yabridge.
 | DirectionalCompressor Clone | IEM Directional Compressor | 0.71 dB level curve over 224 settings | 77 % structure, 96 % colour |
 | GxBoss DS1 Clone | GxBoss DS1 (Guitarix, LV2) | fundamental 0.68 dB, harmonics 1.8 dB, small signal 1.23 dB | still rough |
 
-Batch runs over all installed plugins of a class (without editor, as of 16 Nov; delays 15 Nov):
+Batch runs over all installed plugins of a class (without editor; dynamics 23 Nov, delays and reverbs 20 Nov,
+distortions and EQs 16 Nov):
 
 | Class | Plugins | Clone vs. original |
 |---|---|---|
-| Compressors, limiters, gates, expanders | 12 | 0.34–3.55 dB: 9 good or better, 2 usable, 1 without measurable compression (e.g. OmniCompressor 0.34 · x42-dpl 0.40 · ZamComp 0.45 · Open Optical 0.52 · ZamGate 1.88) |
-| Delays | 12 | 1.43–15.7 dB: 3 very good (ZamDelay 1.43 · Gxdigital_delay 1.95), 2 good (Tal-Dub-3 2.87 · GxEcho-Stereo 3.12), 2 usable, 4 inaccurate, 1 without a measurable echo |
-| Reverbs | 19 | 1.48–6.97 dB: 12 good or better, 7 usable (e.g. ZamVerb 1.48 · Dragonfly Hall 1.67 · Tal-Reverb-III 1.68 · FdnReverb 4.08) |
+| Compressors, limiters, gates, expanders | 12 | 0.33–3.34 dB: 9 good or better, 2 usable, 1 without measurable compression (e.g. OmniCompressor 0.33 · x42-dpl 0.40 · ZamComp 0.45 · Open Optical 0.52 · ZamGate 1.92) |
+| Delays (both channels) | 12 | 1.43–21.3 dB: 3 very good (ZamDelay 1.43 · Gxdigital_delay 1.89), 2 good (Tal-Dub-3 2.88 · GxEcho-Stereo 3.46), 4 usable (GxDelay-Stereo 4.28 · DualDelay 7.81 …), 3 inaccurate (ducking delays, GxTubeDelay), 1 without a measurable echo |
+| Reverbs | 19 | 1.48–6.97 dB: 12 good or better, 7 usable (e.g. ZamVerb 1.48 · Dragonfly Hall 1.67 · Tal-Reverb-III 1.68 · FdnReverb 4.08); stereo width within 2.5 dB of the original for all |
 | Distortions | 73 | 0.06–18.4 dB: 46 good or better, 14 usable, 13 inaccurate (e.g. GxMicroAmp 0.06 · Wolf Shaper 0.44 · GxBoss DS1 1.15 · GxTubeScreamer 1.93) |
 | EQs | 5 | 0.04–0.83 dB: IEM MultiEQ 0.04 · x42-eq 0.50 · ZamGEQ31 0.66 · GxBarkGraphicEQ 0.62 · GxGraphicEQ 0.83 |
 
@@ -55,10 +58,37 @@ measured automatically with a fresh instance per setting. If a plugin still sett
 (switch-on click), the capture extends the pre-roll; if a distortion is silent at its default setting, it looks for
 a working point at which it makes sound.
 
-## Requirements
+## Installation
+
+The app brings everything it runs on (Node.js, the capture host, the plugin templates, JUCE). It unpacks this once
+on its first start into its data folder. **Building clones needs CMake and a C++ compiler on the system** – the app
+checks for them at start and names the install command for your system if they are missing:
+
+| System | Install once |
+|---|---|
+| Arch, CachyOS, Manjaro | `sudo pacman -S cmake base-devel` |
+| Debian, Ubuntu, Mint | `sudo apt install cmake build-essential` |
+| Fedora | `sudo dnf install cmake gcc-c++ make` |
+| Windows | [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/) with "Desktop development with C++" (includes CMake) |
+
+Optional: **Xvfb** (rebuilding the original's editor without a window on your desktop), **Tesseract** (reading its
+texts), **yabridge** (Windows plugins on Linux), **Ninja** (faster builds), **Python with PyTorch** for the
+universal clone (set up from the app).
+
+- **Linux – AppImage:** `npm run app:appimage` builds `vst-cloner_<version>_amd64.AppImage` (about 175 MB) in
+  `apps/desktop/src-tauri/target/release/bundle/appimage/`; make it executable and start it.
+- **Windows – installer:** every push builds it on GitHub Actions ([Windows workflow](https://github.com/darkaivisions/vst-cloner/actions/workflows/windows.yml),
+  artifact "vst-cloner-windows-installer", about 58 MB). Downloads as release files will follow.
+
+Plugins are found in the usual folders (`~/.vst3`, `~/.lv2`, `/usr/lib/vst3`, `/usr/lib/lv2` …; on Windows
+`C:\Program Files\Common Files\VST3`). Clones are installed to `~/.vst3` and `~/.lv2` when you tick
+"Install".
+
+## Development
 
 - Node.js ≥ 22.18 (TypeScript runs directly, no build step)
 - CMake ≥ 3.22 and a C++20 compiler (GCC/Clang on Linux, MSVC on Windows)
+- for the app: Rust (`cargo`) and, on Linux, WebKitGTK 4.1
 
 ## Setup
 
@@ -105,8 +135,10 @@ is opened invisibly once for this, see below). "Capture the editor again" and "F
 already stored in the profile, e.g. after the detection has improved. Images open enlarged inside the app with a click.
 
 Profiles and clones are kept in `~/.local/share/vst-cloner/` (Windows: `%APPDATA%\vst-cloner`).
-Additionally required: Rust (`cargo`) and, on Linux, WebKitGTK 4.1.
-For now the app uses Node.js and the project folder – standalone installers will follow with milestone 9.
+Started from the project folder (`npm run app`), the app runs on its sources; the AppImage and the Windows installer
+bring their own copy (see [Installation](#installation)).
+If CMake or a compiler is missing, a banner names what is missing, what it is for and how to install it, with
+"Check again" after installing.
 
 ## Usage (command line)
 
@@ -301,6 +333,13 @@ and become real choice parameters in the clone. For compressors a test tone also
 original to find and calibrate the gain reduction needle and level bars. Only the layout is saved (`model/gui.json`),
 no graphics of the original. The clone ↔ original comparison is kept as an image in the cache.
 
+Transfer curves and time graphs in the clone carry numbers: the original's own scale where its numbers can be read
+(only those that line up as an even scale are taken), otherwise the clone labels its own grid.
+
+The recognition is measured on a bench of real editors (`vch gui-bench`, labels in `clone/test/gui-bench/`): on
+10 compressor and gate editors 96 % of the controls are recognised as the right kind and 99 % are found, 97 % of
+the displays (as of 23 Nov).
+
 `--refit-gui` captures the editor again instead of using the layout stored in the profile.
 
 Additionally required: `xorg-server-xvfb`, optionally `tesseract` with `tesseract-data-eng`/`-deu`.
@@ -324,7 +363,10 @@ Since milestone 3 the app creates such plans automatically depending on the effe
 
 ### Windows plugins
 
-- **On Linux via yabridge:** pass the yabridge folder (e.g. `~/.vst3/yabridge/…`).
+- **On Linux via yabridge:** pass the yabridge folder (e.g. `~/.vst3/yabridge/…`). In the app, the plugin list marks
+  them "Windows"; selecting one first plays a second of audio through it and says whether the original already runs
+  on your system – then your DAW can use it as it is, and a clone is a choice (native, no Wine). Example: with Wine
+  11.22 and yabridge 5.1.1, FabFilter Pro-Q 3 loads but stays silent.
 - **On Windows:** build vch-host with CMake/MSVC and capture there, then
   process the profile further on Linux.
 
