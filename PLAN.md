@@ -213,8 +213,9 @@ vst-cloner/
 5. **Dynamics + distortion**
    - **5a Dynamics** ✔ – compressor, limiter, gate, expander, ducker; working point probe, interactions,
      models per switch position
-     - Open: fit time (1–4 min per plugin), GxCompressor and DirectionalCompressor on unseen
-       combinations (7–10 dB)
+     - Threshold below the test signal ✔ – compressors measured from −96 dB (GxCompressor unseen 7.79 → 5.50 dB)
+     - Open: fit time (1–4 min per plugin), unseen combinations of GxCompressor (5.5 dB), DirectionalCompressor
+       (9.6 dB) and GxExpander (10.2 dB)
    - **5b Distortion (pedals)** ✔ – Wiener-Hammerstein; GxBoss DS1: fundamental 0.68 dB, harmonics 1.8 dB
      - Detection sharpened (97 → 77 hits: a gain control alone is no longer enough); batch over 77 plugins:
        73 cloned, 46 good or better
@@ -353,8 +354,9 @@ vst-cloner/
 9. **Distribution** ← in progress – AppImage ✔ (`npm run app:appimage`, runtime unpacked on first start; needs
    CMake and a C++ compiler on the system); Windows on GitHub Actions ✔ – tests, host (MSVC), a clone built and
    verified through vch-host end to end, NSIS installer with the runtime (58 MB). Not yet tried on a real Windows
-   machine: installing, unpacking with directory junctions, a capture of a real plugin. Open: a check in the app
-   for CMake/compiler, updates, profile library, CLAP
+   machine: installing, unpacking with directory junctions, a capture of a real plugin. Toolchain check ✔ – the
+   app says which of CMake, compiler (Visual Studio via vswhere), Ninja, Xvfb, yabridge, Tesseract are missing
+   and how to install them. Open: a release workflow, updates, profile library, CLAP
 
 ## Deviations from the original plan
 - **Fixed engines instead of generated Faust code** for the known classes (Faust code generated per clone was
