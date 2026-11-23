@@ -346,8 +346,10 @@ vst-cloner/
 8. **yabridge check** ✔ – selecting a Windows plugin runs a second of audio through it via yabridge and says
    whether the original already works (first finding: Pro-Q 3 is silent since Wine 11.22)
 9. **Distribution** ← in progress – AppImage ✔ (`npm run app:appimage`, runtime unpacked on first start; needs
-   CMake and a C++ compiler on the system); Windows build check on GitHub Actions (tests, host, NSIS installer) –
-   first run pending; open: a check in the app for CMake/compiler, updates, profile library, CLAP
+   CMake and a C++ compiler on the system); Windows on GitHub Actions ✔ – tests, host (MSVC), a clone built and
+   verified through vch-host end to end, NSIS installer with the runtime (58 MB). Not yet tried on a real Windows
+   machine: installing, unpacking with directory junctions, a capture of a real plugin. Open: a check in the app
+   for CMake/compiler, updates, profile library, CLAP
 
 ## Deviations from the original plan
 - **Fixed engines instead of generated Faust code** for the known classes (Faust code generated per clone was
