@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { pluginInfo } from "@vst-cloner/capture";
 import type { Logger } from "../build.ts";
 import { analyzeGui } from "./analyze.ts";
@@ -29,7 +30,7 @@ export interface BenchLabels {
 }
 
 export const benchProbeRoot = () => join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "vst-cloner", "gui-bench");
-export const benchLabelDir = () => new URL("../../test/gui-bench/", import.meta.url).pathname;
+export const benchLabelDir = () => fileURLToPath(new URL("../../test/gui-bench/", import.meta.url));
 
 /** sine levels of the meter pass (dBFS; first = silence) */
 const METER_LEVELS = [-80, -30, -18, -6];
