@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fitAxis, misreadScaleValue, scaleNumber } from "../src/gui/analyze.ts";
+import { fitAxis, misreadScaleValue, scaleNumber, toFrame } from "../src/gui/analyze.ts";
 
 test("scale numbers: signs, units and a little junk around them", () => {
   assert.equal(scaleNumber("-24"), -24);
@@ -37,4 +37,17 @@ test("numbers of an axis read wrong take the axis value where they stand", () =>
   assert.equal(misreadScaleValue("36", -48, 12), undefined);
   assert.equal(misreadScaleValue("dB", -12, 12), undefined);
   assert.equal(misreadScaleValue("I.", -54, 12), undefined);
+});
+
+test("a graph found where its traces were grows to its frame, not into a panel of the same colour", () => {
+  // 100×80: graph background 30 with vertical grid lines every 20 px and a grid row at y 30, a frame line at
+  // y 60, below it a panel of the graph's colour without grid lines; traces were seen in x 20…79, y 35…54
+  const width = 100, height = 80, data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const grid = y < 60 && (x % 20 === 10 || y === 30), frame = y === 60;
+    const v = frame ? 120 : grid ? 60 : 30;
+    data.set([v, v, v, 255], (y * width + x) * 4);
+  }
+  const box = toFrame({ width, height, data } as never, { x: 20, y: 35, w: 60, h: 20 }, [30, 30, 30]);
+  assert.deepEqual(box, { x: 0, y: 0, w: 100, h: 60 });
 });

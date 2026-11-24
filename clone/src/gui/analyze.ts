@@ -2277,6 +2277,49 @@ async function levelMetersOf(probe: GuiProbe, series: MeterShot[], turned: boole
 }
 
 /**
+ * A graph's box grown to its frame: outwards as long as the rows (columns) are mostly its background, across
+ * grid lines up to 2 px with background behind them; a frame, a title bar or the next panel ends it.
+ */
+export function toFrame(img: Image, box: Box, bg: Rgb): Box {
+  const { width, height } = img;
+  const ground = (x0: number, y0: number, dx: number, dy: number, n: number) => {
+    let same = 0;
+    for (let k = 0; k < n; k++) if (colorDistance(pixel(img, x0 + k * dx, y0 + k * dy), bg) < 14) same++;
+    return same >= n * 0.6;
+  };
+  const off = (x: number, y: number) => colorDistance(pixel(img, x, y), bg) >= 14;
+  // The graph's own grid goes on to its edge: rows beyond it continue the vertical lines (columns the
+  // horizontal ones); the next panel, of the same colour, does not.
+  const lines = (n: number, m: number, at: (i: number, j: number) => [number, number]) =>
+    Array.from({ length: n }, (_, i) => i).filter((i) => {
+      let on = 0;
+      for (let j = 0; j < m; j++) if (off(...at(i, j))) on++;
+      return on >= m * 0.7;
+    });
+  const gridColumns = lines(box.w, box.h, (i, j) => [box.x + i, box.y + j]).map((i) => box.x + i);
+  const gridRows = lines(box.h, box.w, (i, j) => [box.x + j, box.y + i]).map((i) => box.y + i);
+  const continues = (cross: number[], at: (c: number) => [number, number]) => cross.length < 2 || cross.filter((c) => off(...at(c))).length >= cross.length * 0.6;
+  const row = (y: number) => ground(box.x, y, 1, 0, box.w) && continues(gridColumns, (x) => [x, y]);
+  // how far the background goes on from `from` in steps of `dir` (a line of up to 2 px with background behind it is crossed)
+  const reach = (from: number, dir: number, limit: number, isGround: (t: number) => boolean) => {
+    let last = from;
+    for (let t = from + dir; dir > 0 ? t < limit : t >= 0; t += dir) {
+      if (isGround(t)) { last = t; continue; }
+      let k = 1;
+      while (k <= 2 && (dir > 0 ? t + k * dir < limit : t + k * dir >= 0) && !isGround(t + k * dir)) k++;
+      if (k > 2 || !(dir > 0 ? t + k * dir < limit : t + k * dir >= 0)) break;
+      t += (k - 1) * dir;
+    }
+    return last;
+  };
+  const top = reach(box.y, -1, height, row), bottom = reach(box.y + box.h - 1, 1, height, row);
+  const grown = { x: box.x, y: top, w: box.w, h: bottom - top + 1 };
+  const column = (x: number) => ground(x, grown.y, 0, 1, grown.h) && continues(gridRows, (y) => [x, y]);
+  const left = reach(box.x, -1, width, column), right = reach(box.x + box.w - 1, 1, width, column);
+  return { x: left, y: top, w: right - left + 1, h: bottom - top + 1 };
+}
+
+/**
  * An LED chain in changed pixels: at least five blobs of about the same size in one row or column at an even
  * pitch. Returns their extent and number.
  */
@@ -2624,6 +2667,13 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
           kept.splice(j, 1);
         }
       }
+    }
+    // The traces only reach the levels that were played: a graph is the whole area of its background, as far as
+    // that takes in no other display (decided only now: grown first, a zone in a transfer curve would cover it).
+    for (const m of kept) {
+      if (m.role !== "analyzer") continue;
+      const grown = toFrame(base, m, dominantColor(base, m));
+      if (![...displays, ...kept].some((o) => o !== m && covered(o, grown) > Math.min(area(o), area(grown)) * 0.1)) Object.assign(m, grown);
     }
     displays.push(...kept);
   }
