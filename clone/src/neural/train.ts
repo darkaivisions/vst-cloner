@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CancelledError, regenerateTestSignal, throwIfCancelled } from "@vst-cloner/capture";
+import { CancelledError, emitLive, regenerateTestSignal, throwIfCancelled } from "@vst-cloner/capture";
 import { encodeWav, type Profile } from "@vst-cloner/profile";
 import { run, type Logger } from "../build.ts";
 import type { MeasuredSteps } from "@vst-cloner/capture";
@@ -133,6 +133,10 @@ export async function trainNeural(profile: Profile, options: NeuralTrainOptions)
             const budget = Number(message.budget) || minutes * 60;
             const seconds = Number(message.seconds) || 0;
             options.onProgress?.(Math.min(seconds, budget), budget, `Training: step ${message.step}, error ${Number(message.loss).toFixed(4)}`);
+            emitLive({ type: "training", step: Number(message.step), seconds, budget, loss: Number(message.loss) });
+          } else if (message.type === "validation") {
+            log("info", `step ${message.step}: validation ESR ${Number(message.esr).toFixed(4)}`);
+            emitLive({ type: "validation", step: Number(message.step), seconds: Number(message.seconds) || 0, esr: Number(message.esr) });
           } else if (message.type === "error") failure = String(message.message);
           else if (message.type === "result") {
             final = {

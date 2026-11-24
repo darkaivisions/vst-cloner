@@ -359,7 +359,50 @@ input:focus, select:focus { border-color: var(--accent); }
 .ov-label.display { fill: #ffc850; }
 .ov-label.active { font-size: 11px; }
 
-/* ---- live preview of the editor capture ---- */
-.live-preview { margin: 8px 0 0; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
-.live-image { max-width: 100%; max-height: 260px; border: 1px solid var(--line); border-radius: 6px; background: #000; }
+/* ---- clone view with the live panel beside it ---- */
+.clone-layout {
+  display: grid;
+  grid-template-columns: minmax(480px, 820px) minmax(400px, 760px);
+  gap: 16px;
+  justify-content: center;
+  align-items: start;
+}
+.clone-layout > .view { margin: 0; max-width: none; }
+/* too narrow for two columns: the live panel follows the steps */
+@media (max-width: 1000px) {
+  .clone-layout { grid-template-columns: minmax(0, 900px); }
+}
+
+.live-panel {
+  position: sticky; top: 0;
+  display: flex; flex-direction: column; gap: 10px;
+  max-height: calc(100vh - 140px); overflow-y: auto;
+}
+.live-header { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.live-header h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); align-self: center; }
+.live-panel.running .live-dot { background: var(--bad); animation: live-pulse 1.2s ease-in-out infinite; }
+@keyframes live-pulse { 50% { opacity: 0.3; } }
+.live-status { font-size: 12px; color: var(--muted); flex: 1; min-width: 0; }
+.live-empty { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+.live-editors { display: flex; flex-direction: column; gap: 8px; }
+.live-editor { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.live-editor-image {
+  width: 100%; max-height: 320px; object-fit: contain;
+  border: 1px solid var(--line); border-radius: 6px; background: #000; cursor: zoom-in;
+}
 .live-caption { font-size: 11px; color: var(--muted); }
+
+.live-controls { display: flex; flex-wrap: wrap; gap: 4px; font-size: 11px; }
+.live-render { font-family: var(--mono); color: var(--muted); padding: 2px 6px 2px 0; }
+.live-control { background: var(--panel-2); border-radius: 4px; padding: 2px 6px; font-variant-numeric: tabular-nums; }
+.live-control .muted, .live-control.muted { color: var(--muted); }
+
+.live-legend { display: flex; gap: 12px; font-size: 11px; color: var(--muted); }
+.live-key { display: inline-flex; align-items: center; gap: 5px; }
+.live-key i { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
+
+.live-plot { display: flex; flex-direction: column; gap: 4px; }
+.live-plot-title { font-size: 12px; color: var(--muted); }
+.live-canvas { width: 100%; height: 170px; display: block; background: var(--panel-2); border-radius: 6px; }

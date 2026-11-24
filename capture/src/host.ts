@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { delimiter, dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Parameter } from "@vst-cloner/profile";
 
@@ -114,12 +114,39 @@ export function throwIfCancelled(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new CancelledError();
 }
 
+/** A render vch-host has just written (absolute paths), for a live view. */
+export interface HostRendered {
+  id: string;
+  output: string;
+  input: string;
+  params: { index: number; value: number; text: string }[];
+}
+
+/**
+ * Receives every render of every vch-host job as it is written (measuring and verifying alike). One receiver for
+ * the process – the app's bridge tells the jobs apart; nothing happens without one.
+ */
+export const hostRenders: { listener?: (render: HostRendered) => void } = {};
+
+/** the input file of a render job (absolute), read only when somebody listens */
+function jobInput(args: string[]): string | undefined {
+  if (args[0] !== "render" || !args[1] || !hostRenders.listener) return undefined;
+  try {
+    const job = JSON.parse(readFileSync(args[1], "utf8")) as { input?: string };
+    return job.input ? resolvePath(dirname(resolvePath(args[1])), job.input) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function runHost(
   args: string[],
   options: { hostPath?: string; onMessage?: (m: HostMessage) => void; signal?: AbortSignal } = {},
 ): Promise<HostMessage[]> {
   const hostPath = options.hostPath ?? findHost();
   throwIfCancelled(options.signal);
+
+  const input = jobInput(args);
 
   return new Promise((resolve, reject) => {
     const child = spawn(hostPath, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -141,6 +168,7 @@ export function runHost(
           const message = JSON.parse(line) as HostMessage;
           messages.push(message);
           options.onMessage?.(message);
+          if (message.type === "render" && input) hostRenders.listener?.({ id: message.id, output: message.output, input, params: message.params });
         } catch {
           stderr += `[unparsed stdout] ${line}\n`;
         }

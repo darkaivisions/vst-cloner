@@ -382,7 +382,7 @@ def main():
             score = float(np.mean([v["esr"] for v in evaluate(model, validate, device, channels)]))
             if score < best:
                 best, best_state = score, {k: v.detach().clone() for k, v in model.state_dict().items()}
-            emit("info", message=f"step {step}: validation ESR {score:.4f}")
+            emit("validation", step=step, seconds=round(elapsed), esr=score)
 
     if best_state is not None:
         final = float(np.mean([v["esr"] for v in evaluate(model, validate, device, channels)]))

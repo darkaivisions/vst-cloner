@@ -7,11 +7,17 @@
 #include "Protocol.h"
 #include "ScreenCapture.h"
 
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <iostream>
+#include <mutex>
+#include <optional>
 #include <stdexcept>
+#include <string>
+#include <thread>
 
 namespace
 {
@@ -32,7 +38,51 @@ a sine ramping from fromDb to toDb – and records the editor every frameMs into
 header (uint32 time in ms, float32 input level in dBFS, −200 for silence, uint32 compressed size) and the frame XOR
 the previous one (RGBA), zlib-compressed. The first frame is XORed with zeros.
 Each step starts from the plugin's initial parameter values. Results are JSON lines on stdout.
+With "follow": true the editor stays open after the steps: further steps arrive as JSON lines on stdin (one step
+per line, same form), until stdin closes or a line { "quit": true } arrives (live view while a plugin is measured).
 )";
+
+    /** Lines from stdin, read on a thread of their own so that the message loop keeps running while waiting. */
+    class StdinLines
+    {
+    public:
+        StdinLines()
+        {
+            reader = std::thread ([this] {
+                std::string line;
+                while (std::getline (std::cin, line))
+                {
+                    const std::lock_guard<std::mutex> lock (mutex);
+                    lines.push_back (line);
+                }
+                closed = true;
+            });
+            reader.detach();
+        }
+
+        /** only the newest waiting line (the live view wants the current state, not every one in between) */
+        std::optional<std::string> newest()
+        {
+            const std::lock_guard<std::mutex> lock (mutex);
+            if (lines.empty())
+                return std::nullopt;
+            auto line = std::move (lines.back());
+            lines.clear();
+            return line;
+        }
+
+        bool finished()
+        {
+            const std::lock_guard<std::mutex> lock (mutex);
+            return closed && lines.empty();
+        }
+
+    private:
+        std::thread reader;
+        std::mutex mutex;
+        std::deque<std::string> lines;
+        std::atomic<bool> closed { false };
+    };
 
     struct Holder final : public juce::Component
     {
@@ -344,7 +394,7 @@ Each step starts from the plugin's initial parameter values. Results are JSON li
         std::vector<int> touched;
         AudioFeed feed { *plugin };
 
-        for (auto& step : *steps)
+        const auto runStep = [&] (const juce::var& step)
         {
             for (auto index : touched)
                 parameters[index]->setValueNotifyingHost (initial[(size_t) index]);
@@ -372,7 +422,7 @@ Each step starts from the plugin's initial parameter values. Results are JSON li
                 const auto area = screenArea (*holder);
                 vch::emit (vch::makeObject ({ { "type", "film" }, { "id", id }, { "file", file.getFullPathName() },
                                          { "width", area.getWidth() }, { "height", area.getHeight() }, { "frames", frames } }));
-                continue;
+                return;
             }
 
             // Audio runs in every step, silent unless the step asks for a tone: many editors (LV2 in particular) learn
@@ -417,11 +467,49 @@ Each step starts from the plugin's initial parameter values. Results are JSON li
 
             vch::emit (vch::makeObject ({ { "type", "shot" }, { "id", id }, { "file", raw.getFullPathName() },
                                      { "png", pngPath }, { "width", w }, { "height", h } }));
+        };
+
+        int done = 0;
+        for (auto& step : *steps)
+        {
+            runStep (step);
+            ++done;
+        }
+
+        if ((bool) job.getProperty ("follow", false))
+        {
+            vch::emit (vch::makeObject ({ { "type", "follow" } }));
+            StdinLines input;
+            for (;;)
+            {
+                auto line = input.newest();
+                if (! line)
+                {
+                    if (input.finished())
+                        break;
+                    // keep the editor alive (meters, animations) while waiting for the next step
+                    if ((bool) job.getProperty ("process", true))
+                        feed.run (30, 1000.0, -200.0);
+                    else
+                        pump (30);
+                    continue;
+                }
+                const auto text = juce::String::fromUTF8 (line->c_str()).trim();
+                if (text.isEmpty())
+                    continue;
+                juce::var step;
+                if (juce::JSON::parse (text, step).failed() || ! step.isObject())
+                    continue;
+                if ((bool) step.getProperty ("quit", false))
+                    break;
+                runStep (step);
+                ++done;
+            }
         }
 
         // Report success first: some plugins crash while their editor is torn down on a bare X server.
         // Exiting directly is safe – the OS closes all resources (also bridged plugin hosts).
-        vch::emit (vch::makeObject ({ { "type", "done" }, { "steps", steps->size() } }));
+        vch::emit (vch::makeObject ({ { "type", "done" }, { "steps", done } }));
         std::fflush (stdout);
         std::fflush (stderr);
         std::_Exit (0);

@@ -8,6 +8,8 @@ export type JobEvent =
   | { kind: "stage"; stage: string; title: string; time: number; job: string }
   | { kind: "progress"; done: number; total: number; label?: string; time: number; job: string }
   | { kind: "preview"; src: string; label: string; time: number; job: string }
+  /** live view data (bridge/src/live.ts): a render, training progress, the rebuilt editor */
+  | { kind: "live"; live: { type: string } & Record<string, unknown>; time: number; job: string }
   | { kind: "done"; result: unknown; time: number; job: string }
   | { kind: "failed"; error: string; cancelled: boolean; time: number; job: string };
 

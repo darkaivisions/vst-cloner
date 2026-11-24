@@ -1,4 +1,5 @@
-import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { checkYabridge } from "./yabridge.ts";
@@ -70,6 +71,9 @@ import {
   type CloneStage,
   type GuiModel,
   type LogLevel,
+  LiveEditor,
+  virtualDisplayAvailable,
+  withVirtualDisplay,
 } from "@vst-cloner/clone";
 import {
   configPath,
@@ -97,6 +101,7 @@ import { clonesDir, dataDir, fileSize, profilesDir, scanPlugins } from "./paths.
 import { pluginKinds, profileKind } from "./kinds.ts";
 import { replayFrame, replayInfo } from "./replay.ts";
 import { jobPreview } from "./preview.ts";
+import { jobLive, type JobLive } from "./live.ts";
 
 // ---- protocol -----------------------------------------------------------------------------------
 
@@ -120,6 +125,8 @@ interface JobContext {
   log: (level: LogLevel | "success" | "error", message: string) => void;
   stage: (stage: string, title: string) => void;
   progress: (done: number, total: number, label?: string) => void;
+  /** live view of the job (renders, training, editor) */
+  live: JobLive;
 }
 
 /** Starts a long-running job; events are streamed, the request returns the job id at once. */
@@ -129,17 +136,24 @@ function startJob(kind: string, run: (ctx: JobContext) => Promise<unknown>): { j
   jobs.set(id, { id, controller });
 
   const event = (data: Json) => send({ type: "event", job: id, time: Date.now(), ...data });
+  const live: JobLive = { phase: "measure", send: (data) => event({ kind: "live", live: data as unknown as Json }) };
   const ctx: JobContext = {
     id,
     signal: controller.signal,
     log: (level, message) => event({ kind: "log", level, message }),
-    stage: (stage, title) => event({ kind: "stage", stage, title }),
+    stage: (stage, title) => {
+      // renders of the clone are compared with the original's from here on
+      if (stage === "verify") live.phase = "verify";
+      else if (stage === "capture") live.phase = "measure";
+      event({ kind: "stage", stage, title });
+    },
     progress: (done, total, label) => event({ kind: "progress", done, total, ...(label ? { label } : {}) }),
+    live,
   };
 
-  // pictures of an editor capture inside this job reach the app as live previews
+  // pictures of an editor capture inside this job reach the app as live previews, renders and training as live data
   const preview = (src: string, label: string) => event({ kind: "preview", src, label });
-  void jobPreview.run(preview, async () => {
+  void jobLive.run(live, () => jobPreview.run(preview, async () => {
     try {
       const result = await run(ctx);
       event({ kind: "done", result: (result ?? null) as Json });
@@ -149,7 +163,7 @@ function startJob(kind: string, run: (ctx: JobContext) => Promise<unknown>): { j
     } finally {
       jobs.delete(id);
     }
-  });
+  }));
 
   return { job: id };
 }
@@ -159,6 +173,43 @@ const str = (params: Json, key: string): string => {
   if (typeof value !== "string" || !value) throw new Error(`Parameter "${key}" is missing`);
   return value;
 };
+
+/** Measures a plugin for the app (capture.start): the profile lands in the library. */
+async function runCapture(ctx: JobContext, plugin: string, mode: Mode, info: Awaited<ReturnType<typeof pluginInfo>>) {
+  const output = join(profilesDir(), `${slugify(info.plugin.name)}-${timestamp()}.vcprofile`);
+  ctx.log("info", PLAN_NOTES[mode]);
+  const names = new Map(info.parameters.map((p) => [p.index, p.name]));
+  let isolated = false, retries = 0;
+  let stepped: { name: string; positions: number }[] = [];
+
+  const started = Date.now();
+  const profile = await capture({
+    plugin,
+    output,
+    sampleRate: 48000,
+    blockSize: 512,
+    channels: 2,
+    prerollSeconds: 0.5,
+    tailSeconds: mode === "eq" ? 0.25 : mode === "neural" ? 0.5 : 2,
+    plan: { ...DEFAULT_PLAN },
+    ...(mode === "generic" ? {} : { planner: PLANNERS[mode] }),
+    signal: ctx.signal,
+    onProgress: (event) => {
+      if (event.stage === "render") ctx.progress(event.done, event.total, event.id);
+      else if (event.stage === "step") ctx.progress(Math.min(event.done, event.total), event.total, CAPTURE_STEPS[event.step]);
+      else if (event.stage === "begin") ctx.stage(event.step, CAPTURE_STEPS[event.step]);
+      else if (event.stage === "plan") ctx.stage("render", "Measuring settings");
+      else if (event.stage === "repeat") isolated = !event.repeatable;
+      else if (event.stage === "survey") stepped = event.stepped.map((s) => ({ name: names.get(s.index) ?? `#${s.index}`, positions: s.positions }));
+      else if (event.stage === "retry") retries++;
+      const message = captureMessage(event, names);
+      if (message) ctx.log(event.stage === "retry" || (event.stage === "repeat" && !event.repeatable) ? "warn" : "info", message);
+    },
+  });
+  const bytes = await fileSize(output);
+  ctx.log("success", `${profile.captures.renders.length} settings measured in ${((Date.now() - started) / 1000).toFixed(1)} s (${(bytes / 1024 / 1024).toFixed(1)} MiB)`);
+  return { profile: output, renders: profile.captures.renders.length, bytes, name: info.plugin.name, isolated, stepped, retries };
+}
 
 // ---- helpers -------------------------------------------------------------------------------------
 
@@ -590,43 +641,32 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
   "capture.start"(params) {
     const plugin = str(params, "path");
     const mode: Mode = MODES.find((m) => m === params.mode) ?? "eq";
+    // the original's editor follows the measurement in the live view (invisible display: Linux only)
+    const showEditor = params.editor !== false && process.platform === "linux" && virtualDisplayAvailable();
     return startJob("capture", async (ctx) => {
       ctx.stage("capture", "Measure");
       await mkdir(profilesDir(), { recursive: true });
       const info = await pluginInfo(plugin, { signal: ctx.signal });
-      const output = join(profilesDir(), `${slugify(info.plugin.name)}-${timestamp()}.vcprofile`);
-      ctx.log("info", PLAN_NOTES[mode]);
-      const names = new Map(info.parameters.map((p) => [p.index, p.name]));
-      let isolated = false, retries = 0;
-      let stepped: { name: string; positions: number }[] = [];
-
-      const started = Date.now();
-      const profile = await capture({
-        plugin,
-        output,
-        sampleRate: 48000,
-        blockSize: 512,
-        channels: 2,
-        prerollSeconds: 0.5,
-        tailSeconds: mode === "eq" ? 0.25 : mode === "neural" ? 0.5 : 2,
-        plan: { ...DEFAULT_PLAN },
-        ...(mode === "generic" ? {} : { planner: PLANNERS[mode] }),
-        signal: ctx.signal,
-        onProgress: (event) => {
-          if (event.stage === "render") ctx.progress(event.done, event.total, event.id);
-          else if (event.stage === "step") ctx.progress(Math.min(event.done, event.total), event.total, CAPTURE_STEPS[event.step]);
-          else if (event.stage === "begin") ctx.stage(event.step, CAPTURE_STEPS[event.step]);
-          else if (event.stage === "plan") ctx.stage("render", "Measuring settings");
-          else if (event.stage === "repeat") isolated = !event.repeatable;
-          else if (event.stage === "survey") stepped = event.stepped.map((s) => ({ name: names.get(s.index) ?? `#${s.index}`, positions: s.positions }));
-          else if (event.stage === "retry") retries++;
-          const message = captureMessage(event, names);
-          if (message) ctx.log(event.stage === "retry" || (event.stage === "repeat" && !event.repeatable) ? "warn" : "info", message);
-        },
-      });
-      const bytes = await fileSize(output);
-      ctx.log("success", `${profile.captures.renders.length} settings measured in ${((Date.now() - started) / 1000).toFixed(1)} s (${(bytes / 1024 / 1024).toFixed(1)} MiB)`);
-      return { profile: output, renders: profile.captures.renders.length, bytes, name: info.plugin.name, isolated, stepped, retries };
+      ctx.live.parameters = info.parameters;
+      if (!showEditor) return runCapture(ctx, plugin, mode, info);
+      return withVirtualDisplay(async (display) => {
+        const outputDir = await mkdtemp(join(tmpdir(), "vch-live-"));
+        const editor = new LiveEditor({
+          plugin,
+          identifier: info.plugin.identifier,
+          display,
+          outputDir,
+          onEnd: (error) => error && ctx.log("detail", `Live view of the editor ended: ${error}`),
+        });
+        ctx.live.onRendered = (render) => editor.show(render.id, render.params.map((p) => ({ index: p.index, value: p.value })));
+        try {
+          return await runCapture(ctx, plugin, mode, info);
+        } finally {
+          ctx.live.onRendered = undefined;
+          editor.stop();
+          setTimeout(() => void rm(outputDir, { recursive: true, force: true }), 4000).unref();
+        }
+      }, ctx.signal);
     });
   },
 
@@ -692,6 +732,9 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
     const gui = params.gui !== false || refitGui;
     const pluginPath = typeof params.plugin === "string" && params.plugin ? params.plugin : undefined;
     return startJob("clone", async (ctx) => {
+      ctx.live.profilePath = profilePath;
+      // the rebuilt editor stored in the profile shows at once (a new capture replaces it in the live view)
+      if (!refitGui) void replaySource(profilePath).then(({ model }) => model && ctx.live.send({ type: "editor", svg: renderSvg(model) }), () => {});
       const summary = await summarizeProfile(profilePath);
       const pluginName = `${summary.name} Clone`;
       if (summary.planner === "neural") {

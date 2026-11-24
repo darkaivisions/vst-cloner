@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { copyFile, mkdir, readdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { emitLive } from "@vst-cloner/capture";
 import type { Profile } from "@vst-cloner/profile";
 import type { Logger } from "../build.ts";
 import { analyzeGui } from "./analyze.ts";
@@ -101,7 +102,9 @@ export async function captureGuiLayout(
 
   const originalPng = join(workDir, "original.png");
   await copyFile(probe.basePng, originalPng);
-  await writeFile(join(workDir, "layout.svg"), renderSvg(model));
+  const svg = renderSvg(model);
+  await writeFile(join(workDir, "layout.svg"), svg);
+  emitLive({ type: "editor", svg });
   return { model, originalPng, originalRaw: probe.base };
 }
 

@@ -190,6 +190,14 @@ vst-cloner/
    - Preliminary renders are counted; the delay hint names the switch search and "at least n settings" ✔
    - Links to folders and images work (hidden folders were refused by the opener scope), images open
      enlarged inside the app, "capture the editor again" and "fit the model again" as options; English UI ✔
+   - Live view ✔ – a column beside the workflow shows the running job as it happens and keeps the last state:
+     the original's editor following every measured setting (opened a second time, invisibly; `vch-gui` takes
+     further steps on stdin with `follow`, only the newest waiting one – no slower measuring: ZamComp 14 vs. 15 s),
+     the controls of that setting, level over time and – per class – frequency response (EQ), transfer curve
+     (dynamics) or spectrum of every render; while verifying the clone's render over the original's and the
+     deviation per setting; the network's training error and validation; the rebuilt editor of the clone and,
+     when comparing, the clone's own editor. Every vch-host render reaches the bridge through `hostRenders`,
+     training and editor through `liveEvents`; at most four renders per second are summarised
    - **4b Editor reconstruction** (in progress) – wiggle test, OCR, needles, level bars, switch detection;
      74–82 % structural, 95–98 % colour similarity on four plugins
      - Knobs ✔ – rim and coloured outline, tick marks on mixed backgrounds, centre cap, direction of travel
@@ -365,7 +373,8 @@ vst-cloner/
    verified through vch-host end to end, NSIS installer with the runtime (58 MB). Not yet tried on a real Windows
    machine: installing, unpacking with directory junctions, a capture of a real plugin. Toolchain check ✔ – the
    app says which of CMake, compiler (Visual Studio via vswhere), Ninja, Xvfb, yabridge, Tesseract are missing
-   and how to install them. Open: a release workflow, updates, profile library, CLAP
+   and how to install them. Release workflow ✔ – a tag builds the Windows installer and the Linux AppImage and
+   publishes them as a GitHub release (v0.1.0). Open: updates, profile library, CLAP
 
 ## Deviations from the original plan
 - **Fixed engines instead of generated Faust code** for the known classes (Faust code generated per clone was

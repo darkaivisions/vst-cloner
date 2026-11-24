@@ -209,3 +209,80 @@ export async function runGuiSnapshot(
     });
   });
 }
+
+/**
+ * The original's editor kept open next to a measurement (live view): `show` moves its controls to the setting just
+ * measured and the picture reaches `guiPreview` labelled `live <id>`. vch-gui takes only the newest waiting setting,
+ * so a fast measurement is not slowed down. Failures only end the live view, never the measurement.
+ */
+export class LiveEditor {
+  private child?: ReturnType<typeof spawn>;
+  private closed = false;
+
+  constructor(options: { plugin: string; identifier?: string; display: string | undefined; outputDir: string; onEnd?: (error?: string) => void }) {
+    void (async () => {
+      try {
+        await mkdir(options.outputDir, { recursive: true });
+        const jobPath = join(options.outputDir, "live.json");
+        await writeFile(jobPath, JSON.stringify({
+          plugin: options.plugin,
+          ...(options.identifier ? { identifier: options.identifier } : {}),
+          output: options.outputDir,
+          settleMs: 1500,
+          stepMs: 120,
+          clicks: startupClicks(options.plugin),
+          follow: true,
+          steps: [{ id: "base", params: [] }],
+        }));
+        if (this.closed) return;
+        const env = { ...process.env, ...(options.display ? { DISPLAY: options.display } : {}) };
+        const child = spawn(findGuiHost(), ["snapshot", jobPath], { env, stdio: ["pipe", "pipe", "pipe"] });
+        this.child = child;
+        let buffer = "", error: string | undefined;
+        child.stdin!.on("error", () => {});
+        child.stdout!.setEncoding("utf8");
+        child.stdout!.on("data", (chunk: string) => {
+          buffer += chunk;
+          let newline: number;
+          while ((newline = buffer.indexOf("\n")) >= 0) {
+            const line = buffer.slice(0, newline).trim();
+            buffer = buffer.slice(newline + 1);
+            try {
+              const message = JSON.parse(line);
+              if (message.type === "shot") guiPreview.listener?.({ file: message.file, width: message.width, height: message.height, label: `live ${message.id}` });
+              else if (message.type === "error") error = message.message;
+            } catch {
+              // not JSON
+            }
+          }
+        });
+        child.stderr!.resume();
+        child.on("error", (e) => options.onEnd?.(e.message));
+        child.on("close", () => options.onEnd?.(this.closed ? undefined : error ?? "the editor closed"));
+      } catch (e) {
+        options.onEnd?.((e as Error).message);
+      }
+    })();
+  }
+
+  /** Moves the editor to a setting (every parameter given is set, the others go back to their initial value). */
+  show(id: string, params: { index: number; value: number }[]): void {
+    const stdin = this.child?.stdin;
+    if (this.closed || !stdin || stdin.destroyed) return;
+    stdin.write(`${JSON.stringify({ id: id.replace(/[^\w.-]/g, "_"), params })}\n`);
+  }
+
+  /** Closes the editor (asks politely, then kills it after a moment). */
+  stop(): void {
+    if (this.closed) return;
+    this.closed = true;
+    const child = this.child;
+    if (!child) return;
+    try {
+      child.stdin?.end(`${JSON.stringify({ quit: true })}\n`);
+    } catch {
+      // already gone
+    }
+    setTimeout(() => child.kill(), 3000).unref();
+  }
+}
