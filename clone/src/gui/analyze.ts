@@ -1600,12 +1600,15 @@ function textBlocks(img: Image, exclude: Uint8Array): { box: Box; color: Rgb; ba
   const contrast = new Uint8Array(width * height);
   // (also where controls lie: a text partly under a control's box keeps its colour – ZamEQ2's scale under the fader)
   const contrastAll = new Uint8Array(width * height);
+  // darker (1) or lighter (2) than its surroundings
+  const polarity = new Uint8Array(width * height);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const x0 = Math.max(0, x - r), x1 = Math.min(width, x + r + 1), y0 = Math.max(0, y - r), y1 = Math.min(height, y + r + 1);
       const sum = integral[y1 * (width + 1) + x1]! - integral[y0 * (width + 1) + x1]! - integral[y1 * (width + 1) + x0]! + integral[y0 * (width + 1) + x0]!;
       const mean = sum / ((x1 - x0) * (y1 - y0));
       if (Math.abs(lum[y * width + x]! - mean) > 45) {
+        polarity[y * width + x] = lum[y * width + x]! < mean ? 1 : 2;
         contrastAll[y * width + x] = 1;
         if (!exclude[y * width + x]) contrast[y * width + x] = 1;
       }
@@ -1644,7 +1647,47 @@ function textBlocks(img: Image, exclude: Uint8Array): { box: Box; color: Rgb; ba
   return components(merged, width, height, 15)
     .filter((c) => c.h >= 6 && c.h <= 60 && c.w >= c.h * 0.6 && c.w <= width * 0.8)
     .map((c) => {
-      const box = { x: c.x, y: c.y, w: c.w, h: c.h };
+      let box = { x: c.x, y: c.y, w: c.w, h: c.h };
+      // (boldness is judged on the component as found, before the box is narrowed to the text's polarity)
+      const componentArea = area(box);
+      // Text is darker or lighter than its ground, not both: a highlight of a bevel just above dark letters
+      // (ZamEQ2's top edge over "FREQ") is the other polarity and stays out of the block's box and colour.
+      const all0 = maskPoints(contrast, width, box);
+      // Which polarity is the text: letters break a row into several runs, a halo or bevel is one run per row.
+      // (Counting pixels would not do: a bevel's highlight can outweigh small letters.)
+      const runsPerRow = (want: number) => {
+        let runs = 0, rows = 0;
+        for (let y = box.y; y < box.y + box.h; y++) {
+          let inRun = false, any = false;
+          for (let x = box.x; x < box.x + box.w; x++) {
+            const on = contrast[y * width + x] === 1 && polarity[y * width + x] === want;
+            if (on && !inRun) runs++;
+            inRun = on;
+            any ||= on;
+          }
+          if (any) rows++;
+        }
+        return rows ? runs / rows : 0;
+      };
+      const dark = all0.filter(([x, y]) => polarity[y * width + x] === 1).length;
+      const mixed = dark >= all0.length * 0.15 && dark <= all0.length * 0.85;
+      // …weighed by how far it stands from the ground (black letters on grey over a light grey bevel)
+      const ground = luminance(ringColor(img, box));
+      const apart = (want: number) => {
+        const ps = all0.filter(([x, y]) => polarity[y * width + x] === want);
+        return ps.length ? ps.reduce((sum, [x, y]) => sum + Math.abs(lum[y * width + x]! - ground), 0) / ps.length : 0;
+      };
+      const score = (want: number) => runsPerRow(want) * apart(want);
+      const main = !mixed ? (dark > all0.length / 2 ? 1 : 2) : score(1) > score(2) * 1.3 ? 1 : score(2) > score(1) * 1.3 ? 2 : 0;
+      if (process.env.VCH_GUI_DEBUG && (c.y < 6 || c.y > height - 20)) console.error(`polarity ${c.x},${c.y} ${c.w}x${c.h}: ${dark} dark of ${all0.length} → ${main}`);
+      if (main) {
+        const kept = all0.filter(([x, y]) => polarity[y * width + x] === main);
+        if (kept.length >= 4) {
+          const xs = kept.map((p) => p[0]), ys = kept.map((p) => p[1]);
+          box = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs) + 1, h: Math.max(...ys) - Math.min(...ys) + 1 };
+          for (const [x, y] of all0) if (polarity[y * width + x] !== main) contrast[y * width + x] = 0;
+        }
+      }
       const points = maskPoints(contrast, width, box);
       // capitals all reach the cap height; in mixed case only ascender letters do.
       // Compare how many ink columns reach the top band with how many have ink in the middle band.
@@ -1656,9 +1699,9 @@ function textBlocks(img: Image, exclude: Uint8Array): { box: Box; color: Rgb; ba
       const ratio = middleColumns > 0 ? topColumns / middleColumns : 0;
       const uppercase = inkHeight >= 7 && ratio > 0.8;
       const background = ringColor(img, box);
-      const all = maskPoints(contrastAll, width, box).filter(([x, y]) => !straight[y * width + x]);
+      const all = maskPoints(contrastAll, width, box).filter(([x, y]) => !straight[y * width + x] && (!main || polarity[y * width + x] === main));
       const inkPoints = (all.length ? all : points).filter(([x, y]) => colorDistance(pixel(img, x, y), background) > 40);
-      return { box, color: dominantAt(img, inkPoints.length ? inkPoints : points), background, bold: points.length / area(box) > 0.3, uppercase };
+      return { box, color: dominantAt(img, inkPoints.length ? inkPoints : points), background, bold: points.length / componentArea > 0.3, uppercase };
     });
 }
 
@@ -2597,7 +2640,10 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     if (!read) return undefined;
     const words = read.text.trim().split(/\s+/);
     const fixed = words.map((w) => labelWord(w, uppercase, nameWords) ?? cleanNumber(w) ?? w);
-    return fixed.some((w, k) => w !== words[k]) ? { ...read, text: fixed.join(" "), confidence: Math.max(read.confidence, 80) } : undefined;
+    if (fixed.some((w, k) => w !== words[k])) return { ...read, text: fixed.join(" "), confidence: Math.max(read.confidence, 80) };
+    // a reading that is an editor word as it stands is sure enough, even at a middling confidence ("LMF" at 85)
+    const known = new Set([...LABEL_WORDS, ...nameWords.map((w) => w.toUpperCase())]);
+    return read.confidence >= 60 && read.confidence < 90 && words.every((w) => known.has(w.toUpperCase())) ? { ...read, confidence: 90 } : undefined;
   };
   // small labels tesseract reads differently with every margin ("DB" as "w", "o8", "08"): a few margins more,
   // the first that gives an editor word is taken
@@ -2668,8 +2714,10 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
       const fits = [...new Set(vocabulary)].filter((w) => w.length === read.length).map((w) => {
         let score = 0;
         for (let k = 0; k < w.length; k++) {
-          const c = read[k]!.candidates, ch = w[k]!;
-          if (!c.length) continue;
+          // (only candidates about as close as the closest count: "0" at 0.12 is no "B" at 0.23)
+          const all = read[k]!.candidates, ch = w[k]!;
+          if (!all.length) continue;
+          const c = all.filter((x) => x.d <= all[0]!.d + 0.05);
           if (c.some((x) => x.char.toUpperCase() === ch)) score += 1;
           else if (c.some((x) => lookAlike(x.char) === lookAlike(ch))) score += 0.5;
           else return { w, score: -1 };
