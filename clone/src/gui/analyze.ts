@@ -996,13 +996,20 @@ function linearFit(points: [number, number][]): { a: number; b: number } | undef
  */
 function analyzeEqDisplay(base: Image, bands: { param: ProbedParameter; frames: Image[] }[], parameters: Parameter[], noise: Uint8Array): Display | undefined {
   const { width, height } = base;
-  const changed = new Uint8Array(width * height);
+  // Every band control moves the curve, but each turns only its own knob: the display is what several of them
+  // change. (With a single band control there is nothing to tell apart – everything it changes counts.)
+  const counts = new Uint8Array(width * height);
   for (const { frames } of bands) {
+    const own = new Uint8Array(width * height);
     for (const f of frames) {
       const m = diffMask(f, base, 24, noise);
-      for (let p = 0; p < m.length; p++) if (m[p]) changed[p] = 1;
+      for (let p = 0; p < m.length; p++) if (m[p]) own[p] = 1;
     }
+    for (let p = 0; p < own.length; p++) counts[p] = counts[p]! + own[p]!;
   }
+  const changed = new Uint8Array(width * height);
+  const needed = bands.length >= 2 ? 2 : 1;
+  for (let p = 0; p < counts.length; p++) if (counts[p]! >= needed) changed[p] = 1;
   const parts = components(dilate(changed, width, height, 3), width, height, 20);
   if (!parts.length) return undefined;
   const touched = union(parts);
@@ -2053,15 +2060,25 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   const changeSets: { changed: Uint8Array; frames: Image[] }[] = [];
   const contains = (outer: Box, inner: Box) =>
     inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
+  // EQ: the controls of one band were recorded with the other bands turned (so that the curve shows) – against
+  // that picture ("bandbase") the curve is the display, and what is left of each change is its knob
+  const bandParams = probe.visible.filter((p) => p.bandRole);
+  const bandReference = bandParams[0]?.reference ? await loadRaw(bandParams[0].reference, width, height) : base;
+  for (const param of bandParams) bandFootprints.push({ param, frames: await Promise.all(param.frames.map((f) => loadRaw(f.file, width, height))) });
+  const eqDisplay = bandFootprints.length ? analyzeEqDisplay(bandReference, bandFootprints, parameters, noise) : undefined;
+  const bandIgnore = noise.slice();
+  if (eqDisplay) {
+    const d = clampBox(grow({ x: eqDisplay.x, y: eqDisplay.y, w: eqDisplay.w, h: eqDisplay.h }, 2), base);
+    for (let y = d.y; y < d.y + d.h; y++) for (let x = d.x; x < d.x + d.w; x++) bandIgnore[y * width + x] = 1;
+  }
+
   for (const param of probe.visible) {
-    const frames = await Promise.all(param.frames.map((f) => loadRaw(f.file, width, height)));
-    if (param.bandRole) {
-      bandFootprints.push({ param, frames });
-      continue;
-    }
+    const band = bandFootprints.find((b) => b.param === param);
+    const frames = band?.frames ?? await Promise.all(param.frames.map((f) => loadRaw(f.file, width, height)));
+    const reference = band ? bandReference : base;
     const changed = new Uint8Array(width * height);
     for (const f of frames) {
-      const m = diffMask(f, base, 24, noise);
+      const m = diffMask(f, reference, 24, band ? bandIgnore : noise);
       for (let p = 0; p < m.length; p++) if (m[p]) changed[p] = 1;
     }
     changeSets.push({ changed, frames });
@@ -2074,7 +2091,7 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     const large = allParts.filter((p) => area(p) > width * height * 0.08);
     const displayBox = large.length ? union(large) : undefined;
     // (a switch outside an EQ shows or hides something rather than drawing a display)
-    if (displayBox && changedPixels > width * height * 0.01 && (!param.discrete || eqParams.has(param.index))) {
+    if (!band && displayBox && changedPixels > width * height * 0.01 && (!param.discrete || eqParams.has(param.index))) {
       // one control may move two displays (a gate's curve and its threshold line in a time graph): each on its own
       for (const part of large) {
         // displays a few pixels apart (a graph, a meter, a curve side by side) only merge at the coarse dilation
@@ -2156,7 +2173,6 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   const controls = footprints.map((fp) => analyzeControl(fp, noise)).filter((c): c is Control => Boolean(c))
     .filter((c) => c.x >= -2 && c.y >= -2 && c.x + c.w <= width + 2 && c.y + c.h <= height + 2 && c.w * c.h <= width * height * 0.08);
   splitSharedValues(controls);
-  const eqDisplay = bandFootprints.length ? analyzeEqDisplay(base, bandFootprints, parameters, noise) : undefined;
 
   // merge overlapping display regions
   const displays: Display[] = eqDisplay ? [eqDisplay] : [];
