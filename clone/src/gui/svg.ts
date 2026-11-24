@@ -146,9 +146,21 @@ function renderControl(c: Control, value: number, fill: (f: Fill) => string): st
     if (s.cap) parts.push(`<circle cx="${s.cx}" cy="${s.cy}" r="${s.cap.radius}" fill="${s.cap.color}"/>`);
   } else if ((c.kind === "slider-h" || c.kind === "slider-v") && c.slider) {
     const s = c.slider;
-    parts.push(`<rect x="${c.x}" y="${c.y}" width="${c.w}" height="${c.h}" fill="${s.track}" rx="${Math.min(c.w, c.h) / 2}"/>`);
-    if (c.kind === "slider-h") parts.push(`<rect x="${c.x + value * (c.w - s.thumbSize)}" y="${c.y}" width="${s.thumbSize}" height="${c.h}" fill="${s.thumb}" rx="2"/>`);
-    else parts.push(`<rect x="${c.x}" y="${c.y + (1 - value) * (c.h - s.thumbSize)}" width="${c.w}" height="${s.thumbSize}" fill="${s.thumb}" rx="2"/>`);
+    const horizontal = c.kind === "slider-h";
+    // (same rules as Fader in CloneEditor.cpp)
+    if (s.trackWidth) {
+      parts.push(horizontal
+        ? `<rect x="${c.x}" y="${c.y + c.h / 2 - s.trackWidth / 2}" width="${c.w}" height="${s.trackWidth}" fill="${s.track}"/>`
+        : `<rect x="${c.x + c.w / 2 - s.trackWidth / 2}" y="${c.y}" width="${s.trackWidth}" height="${c.h}" fill="${s.track}"/>`);
+    } else parts.push(`<rect x="${c.x}" y="${c.y}" width="${c.w}" height="${c.h}" fill="${s.track}" rx="${Math.min(c.w, c.h) / 2}"/>`);
+    const at = horizontal ? c.x + value * (c.w - s.thumbSize) : c.y + (1 - value) * (c.h - s.thumbSize);
+    if (s.roundThumb) {
+      const d = Math.min(s.thumbSize, horizontal ? c.h : c.w);
+      parts.push(horizontal
+        ? `<circle cx="${at + s.thumbSize / 2}" cy="${c.y + c.h / 2}" r="${d / 2}" fill="${s.thumb}"/>`
+        : `<circle cx="${c.x + c.w / 2}" cy="${at + s.thumbSize / 2}" r="${d / 2}" fill="${s.thumb}"/>`);
+    } else if (horizontal) parts.push(`<rect x="${at}" y="${c.y}" width="${s.thumbSize}" height="${c.h}" fill="${s.thumb}" rx="2"/>`);
+    else parts.push(`<rect x="${c.x}" y="${at}" width="${c.w}" height="${s.thumbSize}" fill="${s.thumb}" rx="2"/>`);
   } else if (c.kind === "toggle" && c.toggle) {
     parts.push(`<rect x="${c.x}" y="${c.y}" width="${c.w}" height="${c.h}" rx="${c.toggle.radius}" fill="${value > 0.5 ? c.toggle.on : c.toggle.off}"/>`);
   } else if (c.kind === "value" && c.choice) {

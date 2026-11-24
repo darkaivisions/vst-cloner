@@ -152,13 +152,24 @@ namespace
             const auto b = getLocalBounds().toFloat();
             const float value = (float) valueToProportionOfLength (getValue());
             const float thumb = control.f1;
+            const bool horizontal = control.kind == 1;
             g.setColour (colour (control.c1));
-            g.fillRoundedRectangle (b, std::min (b.getWidth(), b.getHeight()) / 2);
-            g.setColour (colour (control.c2));
-            if (control.kind == 1)
-                g.fillRoundedRectangle (b.getX() + value * (b.getWidth() - thumb), b.getY(), thumb, b.getHeight(), 2.0f);
+            if (control.trackWidth > 0.0f)
+                g.fillRect (horizontal ? b.withSizeKeepingCentre (b.getWidth(), control.trackWidth) : b.withSizeKeepingCentre (control.trackWidth, b.getHeight()));
             else
-                g.fillRoundedRectangle (b.getX(), b.getY() + (1 - value) * (b.getHeight() - thumb), b.getWidth(), thumb, 2.0f);
+                g.fillRoundedRectangle (b, std::min (b.getWidth(), b.getHeight()) / 2);
+            g.setColour (colour (control.c2));
+            const float at = horizontal ? b.getX() + value * (b.getWidth() - thumb) : b.getY() + (1 - value) * (b.getHeight() - thumb);
+            if (control.roundThumb)
+            {
+                const float d = std::min (thumb, horizontal ? b.getHeight() : b.getWidth());
+                const juce::Point<float> centre = horizontal ? juce::Point<float> (at + thumb / 2, b.getCentreY()) : juce::Point<float> (b.getCentreX(), at + thumb / 2);
+                g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (centre));
+            }
+            else if (horizontal)
+                g.fillRoundedRectangle (at, b.getY(), thumb, b.getHeight(), 2.0f);
+            else
+                g.fillRoundedRectangle (b.getX(), at, b.getWidth(), thumb, 2.0f);
         }
 
     private:

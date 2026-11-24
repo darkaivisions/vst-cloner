@@ -39,14 +39,9 @@ const PAD = 12;
  * Each pixel is placed on the line between background and text colour.
  */
 export function prepareTextImage(img: Image, box: Box, text: Rgb, background: Rgb): Image {
-  const span = Math.max(30, colorDistance(text, background));
   const w = box.w * SCALE + 2 * PAD, h = box.h * SCALE + 2 * PAD;
   const out: Image = { width: w, height: h, data: new Uint8Array(w * h * 4).fill(255) };
-  const ink = (x: number, y: number) => {
-    const cx = Math.min(img.width - 1, Math.max(0, x)), cy = Math.min(img.height - 1, Math.max(0, y));
-    // 0 = background, 1 = full text colour (small deviations from the background count as background)
-    return Math.min(1, Math.max(0, (colorDistance(pixel(img, cx, cy), background) / span - 0.15) / 0.7));
-  };
+  const ink = inkMeasure(img, box, text, background);
   for (let y = 0; y < box.h * SCALE; y++) {
     for (let x = 0; x < box.w * SCALE; x++) {
       // bilinear sampling of the ink amount
@@ -59,6 +54,64 @@ export function prepareTextImage(img: Image, box: Box, text: Rgb, background: Rg
     }
   }
   return out;
+}
+
+/**
+ * The words of a text block: groups of ink columns apart by more than about half the text height. A row of scale
+ * numbers ("-12 -6 0 +6 +12") is read better number by number – and each lands where it stands.
+ */
+export function splitWords(img: Image, box: Box, text: Rgb, background: Rgb): Box[] {
+  const ink = inkMeasure(img, box, text, background);
+  const columns: { top: number; bottom: number }[] = [];
+  for (let x = box.x; x < box.x + box.w; x++) {
+    let top = Infinity, bottom = -Infinity;
+    for (let y = box.y; y < box.y + box.h; y++) if (ink(x, y) > 0.5) { top = Math.min(top, y); bottom = Math.max(bottom, y); }
+    columns.push({ top, bottom });
+  }
+  const gap = Math.max(3, Math.round(box.h * 0.45));
+  const words: Box[] = [];
+  let start = -1, last = -1, top = Infinity, bottom = -Infinity;
+  const close = () => {
+    if (start >= 0) words.push({ x: box.x + start, y: top, w: last - start + 1, h: bottom - top + 1 });
+    start = -1; top = Infinity; bottom = -Infinity;
+  };
+  columns.forEach((c, i) => {
+    if (c.bottom < c.top) return;
+    if (start >= 0 && i - last > gap) close();
+    if (start < 0) start = i;
+    last = i;
+    top = Math.min(top, c.top);
+    bottom = Math.max(bottom, c.bottom);
+  });
+  close();
+  return words;
+}
+
+/** Ink amount of a pixel, 0 (background) … 1 (text colour), against the background of its row. */
+function inkMeasure(img: Image, box: Box, text: Rgb, background: Rgb): (x: number, y: number) => number {
+  const span = Math.max(30, colorDistance(text, background));
+  // The background of each row: a gradient behind the text (a bevel getting lighter towards the editor's edge)
+  // would otherwise read as a grey haze. Per row the pixels nearest the block's background colour stand for it.
+  const rowBackground = new Map<number, Rgb>();
+  const backgroundAt = (y: number): Rgb => {
+    const cached = rowBackground.get(y);
+    if (cached) return cached;
+    const row: Rgb[] = [];
+    for (let x = box.x - 2; x < box.x + box.w + 2; x++) row.push(pixel(img, Math.min(img.width - 1, Math.max(0, x)), y));
+    row.sort((a, b) => colorDistance(a, background) - colorDistance(b, background));
+    const near = row.slice(0, Math.max(1, Math.round(row.length * 0.3)));
+    const c = [0, 1, 2].map((k) => near.reduce((sum, p) => sum + p[k]!, 0) / near.length) as Rgb;
+    // (only a background that drifts – a row mostly covered by ink keeps the block's colour)
+    const result = colorDistance(c, background) < span * 0.5 ? c : background;
+    rowBackground.set(y, result);
+    return result;
+  };
+  const ink = (x: number, y: number): number => {
+    const cx = Math.min(img.width - 1, Math.max(0, x)), cy = Math.min(img.height - 1, Math.max(0, y));
+    // 0 = background, 1 = full text colour (small deviations from the background count as background)
+    return Math.min(1, Math.max(0, (colorDistance(pixel(img, cx, cy), backgroundAt(cy)) / span - 0.15) / 0.7));
+  };
+  return ink;
 }
 
 /** Parses tesseract's TSV output: words of level 5 with their confidence. */
@@ -97,7 +150,7 @@ const toImage = (b: Box, origin: Box): Box => {
 export async function recognizeBlocks(
   img: Image,
   blocks: { box: Box; color: Rgb; background: Rgb }[],
-  options: { languages?: string; concurrency?: number; /** only these characters (numbers of a scale) */ whitelist?: string } = {},
+  options: { languages?: string; concurrency?: number; /** only these characters (numbers of a scale) */ whitelist?: string; /** tesseract page segmentation (7: one line, 8: one word) */ psm?: number } = {},
 ): Promise<(OcrResult | undefined)[]> {
   const exe = findTesseract();
   if (!exe || !blocks.length) return blocks.map(() => undefined);
@@ -112,7 +165,7 @@ export async function recognizeBlocks(
         const file = join(dir, `${i}.png`);
         await writeFile(file, encodePng(prepareTextImage(img, box, color, background)));
         const tsv = await new Promise<string>((resolve) => {
-          execFile(exe, [file, "stdout", "-l", options.languages ?? "eng+deu", "--psm", "7", "-c", "tessedit_do_invert=0", ...(options.whitelist ? ["-c", `tessedit_char_whitelist=${options.whitelist}`] : []), "tsv"],
+          execFile(exe, [file, "stdout", "-l", options.languages ?? "eng+deu", "--psm", String(options.psm ?? 7), "-c", "tessedit_do_invert=0", ...(options.whitelist ? ["-c", `tessedit_char_whitelist=${options.whitelist}`] : []), "tsv"],
             { timeout: 15000, env: { ...process.env, OMP_THREAD_LIMIT: "1" } },
             (error, stdout) => resolve(error ? "" : stdout));
         });

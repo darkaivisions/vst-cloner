@@ -78,6 +78,10 @@ export interface SliderStyle {
   fill?: string;
   thumb: string;
   thumbSize: number;
+  /** the track is a line this thick along the middle (else it fills the control's box) */
+  trackWidth?: number;
+  /** the thumb is a disc */
+  roundThumb?: boolean;
 }
 
 export interface ToggleStyle {

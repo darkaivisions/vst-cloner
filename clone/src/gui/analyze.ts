@@ -21,7 +21,7 @@ import {
 import type { Circle, Control, Display, Fill, GuiModel, LevelBar, Line, Needle, Panel, Readout, RotaryStyle, TextItem } from "./model.ts";
 import type { GuiProbe, ProbedParameter } from "./probe.ts";
 import { METER_FILM, readFilm, segmentTimes, type FilmFrame } from "./film.ts";
-import { findTesseract, plausibleText, recognizeBlocks } from "./ocr.ts";
+import { findTesseract, plausibleText, recognizeBlocks, splitWords } from "./ocr.ts";
 
 const TAU = Math.PI * 2;
 
@@ -709,10 +709,30 @@ function analyzeControl(fp: Footprint, noise: Uint8Array): Control | undefined {
     const horizontal = main.w >= main.h;
     const thumbPoints = maskPoints(diffMask(frames[frames.length >> 1]!, median, 30, noise), median.width, main);
     const thumbExtent = thumbPoints.length ? (horizontal ? Math.max(...thumbPoints.map((p) => p[0])) - Math.min(...thumbPoints.map((p) => p[0])) : Math.max(...thumbPoints.map((p) => p[1])) - Math.min(...thumbPoints.map((p) => p[1]))) : 8;
+    const thumbAcross = thumbPoints.length ? (horizontal ? Math.max(...thumbPoints.map((p) => p[1])) - Math.min(...thumbPoints.map((p) => p[1])) : Math.max(...thumbPoints.map((p) => p[0])) - Math.min(...thumbPoints.map((p) => p[0]))) + 1 : thumbExtent;
+    // A thin track: lines along the slider (without the thumb – the median of all positions) that stand out
+    // from what lies around it (ZamEQ2's black line under a blue ball). Otherwise the box is the track.
+    const across = horizontal ? main.h : main.w;
+    const lineColor = (k: number) => medianColor(median, horizontal ? { x: main.x, y: main.y + k, w: main.w, h: 1 } : { x: main.x + k, y: main.y, w: 1, h: main.h });
+    const around = medianColor(median, clampBox(horizontal ? { x: main.x, y: main.y - 3, w: main.w, h: 2 } : { x: main.x - 3, y: main.y, w: 2, h: main.h }, median));
+    const lineDistances = Array.from({ length: across }, (_, k) => colorDistance(lineColor(k), around));
+    const peak = lineDistances.indexOf(Math.max(...lineDistances));
+    let from = peak, to = peak;
+    while (from > 0 && lineDistances[from - 1]! > 40) from--;
+    while (to < across - 1 && lineDistances[to + 1]! > 40) to++;
+    const thinTrack = lineDistances[peak]! > 40 && to - from + 1 <= across * 0.5;
+    const trackColor = thinTrack ? lineColor(Math.round((from + to) / 2)) : dominantColor(median, main);
+    // a disc fills about π/4 of its square
+    const fillRatio = thumbPoints.length / Math.max(1, (thumbExtent + 1) * thumbAcross);
+    const roundThumb = thumbPoints.length >= 12 && Math.abs(thumbExtent + 1 - thumbAcross) <= Math.max(2, thumbAcross * 0.2) && fillRatio > 0.6 && fillRatio < 0.9;
     return {
       ...base,
       kind: horizontal ? "slider-h" : "slider-v",
-      slider: { track: hex(dominantColor(median, main)), thumb: hex(dominantAt(frames[frames.length >> 1]!, thumbPoints)), thumbSize: Math.max(4, Math.min(thumbExtent, horizontal ? main.w / 3 : main.h / 3)) },
+      slider: {
+        track: hex(trackColor), thumb: hex(dominantAt(frames[frames.length >> 1]!, thumbPoints)), thumbSize: Math.max(4, Math.min(thumbExtent, horizontal ? main.w / 3 : main.h / 3)),
+        ...(thinTrack ? { trackWidth: to - from + 1 } : {}),
+        ...(roundThumb ? { roundThumb: true } : {}),
+      },
     };
   }
 
@@ -1483,15 +1503,48 @@ function textBlocks(img: Image, exclude: Uint8Array): { box: Box; color: Rgb; ba
   }
   const r = 7;
   const contrast = new Uint8Array(width * height);
+  // (also where controls lie: a text partly under a control's box keeps its colour – ZamEQ2's scale under the fader)
+  const contrastAll = new Uint8Array(width * height);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      if (exclude[y * width + x]) continue;
       const x0 = Math.max(0, x - r), x1 = Math.min(width, x + r + 1), y0 = Math.max(0, y - r), y1 = Math.min(height, y + r + 1);
       const sum = integral[y1 * (width + 1) + x1]! - integral[y0 * (width + 1) + x1]! - integral[y1 * (width + 1) + x0]! + integral[y0 * (width + 1) + x0]!;
       const mean = sum / ((x1 - x0) * (y1 - y0));
-      if (Math.abs(lum[y * width + x]! - mean) > 45) contrast[y * width + x] = 1;
+      if (Math.abs(lum[y * width + x]! - mean) > 45) {
+        contrastAll[y * width + x] = 1;
+        if (!exclude[y * width + x]) contrast[y * width + x] = 1;
+      }
     }
   }
+  // Long straight runs are edges, frames and tracks, not glyph strokes: left in, a bevel under a row of scale
+  // numbers joins them into one block whose "ink" is the bevel's colour (ZamEQ2's −12 … +12 read as "12").
+  const longRun = Math.max(30, Math.round(Math.min(width, height) * 0.15));
+  const straight = new Uint8Array(width * height);
+  // a run goes on through pixels of its colour and across short stretches of other ink lying over it (digits
+  // standing on a bevel), but not across background – the bottoms of a word's letters are no line
+  const scan = (count: number, length: number, at: (i: number, k: number) => number) => {
+    for (let i = 0; i < count; i++) {
+      for (let k = 0; k < length;) {
+        const p0 = at(i, k);
+        if (!contrast[p0]) { k++; continue; }
+        const colour = pixel(img, p0 % width, Math.floor(p0 / width));
+        const members: number[] = [];
+        let end = k, over = 0;
+        while (end < length) {
+          const p = at(i, end);
+          if (!contrast[p]) break;
+          if (colorDistance(pixel(img, p % width, Math.floor(p / width)), colour) < 40) { members.push(p); over = 0; }
+          else if (++over > 10) break;
+          end++;
+        }
+        if (members.length >= longRun) for (const p of members) straight[p] = 1;
+        k = Math.max(end, k + 1);
+      }
+    }
+  };
+  scan(height, width, (y, x) => y * width + x);
+  scan(width, height, (x, y) => y * width + x);
+  for (let p = 0; p < contrast.length; p++) if (straight[p]) contrast[p] = 0;
   const merged = dilate(contrast, width, height, 4, 1);
   return components(merged, width, height, 15)
     .filter((c) => c.h >= 6 && c.h <= 60 && c.w >= c.h * 0.6 && c.w <= width * 0.8)
@@ -1508,7 +1561,8 @@ function textBlocks(img: Image, exclude: Uint8Array): { box: Box; color: Rgb; ba
       const ratio = middleColumns > 0 ? topColumns / middleColumns : 0;
       const uppercase = inkHeight >= 7 && ratio > 0.8;
       const background = ringColor(img, box);
-      const inkPoints = points.filter(([x, y]) => colorDistance(pixel(img, x, y), background) > 40);
+      const all = maskPoints(contrastAll, width, box).filter(([x, y]) => !straight[y * width + x]);
+      const inkPoints = (all.length ? all : points).filter(([x, y]) => colorDistance(pixel(img, x, y), background) > 40);
       return { box, color: dominantAt(img, inkPoints.length ? inkPoints : points), background, bold: points.length / area(box) > 0.3, uppercase };
     });
 }
@@ -2417,6 +2471,27 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
       for (const [read] of reads) if (read && read.confidence > (ocr[i]?.confidence ?? 0) && plausibleText(read, 70)) ocr[i] = read;
     }
   }
+  // Rows of numbers (a scale, "-12 -6 0 +6 +12"): read as one line (single small numbers read worse), split at
+  // the gaps between them so that each stands where it stands in the original, letters a tick mark or a stroke
+  // turns a digit into put right ("T" for a "0" with the tick above it).
+  const numeric = blocks.map((_, i) => i).filter((i) => {
+    const t = ocr[i]?.text ?? "";
+    const digits = (t.match(/\d/g) ?? []).length, letters = (t.match(/\p{L}/gu) ?? []).length;
+    return digits >= 2 && digits >= (digits + letters) * 0.6 && /\s/.test(t.trim());
+  });
+  const asDigit: Record<string, string> = { T: "0", O: "0", o: "0", D: "0", Q: "0", l: "1", I: "1", "|": "1", ı: "1", i: "1", S: "5", s: "5", B: "8", "«": "+", "»": "+", "t": "+" };
+  for (const i of numeric.reverse()) {
+    const b = blocks[i]!, read = ocr[i]!;
+    const tokens = read.text.trim().split(/\s+/);
+    const words = splitWords(base, clampBox(grow(b.box, 1), base), b.color, b.background).filter((w) => w.h >= b.box.h * 0.5);
+    if (words.length !== tokens.length || words.length < 2) continue;
+    // (a faint "+" in front of a number reads as "ı", "«" or "t" – there it is a sign, not a 1)
+    const fixed = tokens.map((t) => [...t].map((ch, k) => (k === 0 && t.length > 1 && /[ı«»t]/.test(ch) ? "+" : asDigit[ch] ?? ch)).join(""));
+    if (!fixed.every((t) => /^[+-]?\d+(?:[.,]\d+)?%?$/.test(t))) continue;
+    blocks.splice(i, 1, ...words.map((w) => ({ ...b, box: w })));
+    ocr.splice(i, 1, ...words.map((w, k) => ({ text: fixed[k]!, confidence: Math.max(read.confidence, 75), box: w })));
+  }
+  if (process.env.VCH_GUI_DEBUG) blocks.forEach((b, i) => console.error(`text block ${b.box.x},${b.box.y} ${b.box.w}x${b.box.h} ink ${hex(b.color)} on ${hex(b.background)}: "${ocr[i]?.text ?? ""}" (${Math.round(ocr[i]?.confidence ?? 0)})`));
   const readText = (i: number, minConfidence = 70) => (plausibleText(ocr[i], minConfidence) ? ocr[i]!.text : undefined);
   /** box of the recognised words (icons next to the text are left out) */
   const readBox = (i: number) => (plausibleText(ocr[i]) && ocr[i]!.box ? ocr[i]!.box! : blocks[i]!.box);
@@ -2427,7 +2502,12 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   const readHeights = blocks.flatMap((b, i) => (readText(i) && /\p{L}{2}/u.test(ocr[i]!.text) ? [readBox(i).h] : []));
   const labelHeight = readHeights.length >= 2 ? percentile(readHeights, 0.5) : undefined;
   const readOther = (i: number) => Boolean(findTesseract() && ocr[i] && ocr[i]!.confidence >= 60 && ocr[i]!.text.trim().length > 0);
-  const inventable = (i: number) => !readOther(i) && (labelHeight === undefined || Math.abs(Math.log(blocks[i]!.box.h / labelHeight)) < 0.35);
+  // …and of their colour (a piece of a bevel is no label)
+  const readColors = blocks.flatMap((b, i) => (readText(i) && /\p{L}{2}/u.test(ocr[i]!.text) ? [b.color] : []));
+  const labelColor = readColors.length >= 2 ? dominantColorOf(readColors) : undefined;
+  const inventable = (i: number) => !readOther(i) &&
+    (labelHeight === undefined || Math.abs(Math.log(blocks[i]!.box.h / labelHeight)) < 0.35) &&
+    (labelColor === undefined || readColors.some((c) => colorDistance(c, blocks[i]!.color) < 60));
   const texts: TextItem[] = [];
   const used = new Set<number>();
 
@@ -2555,7 +2635,12 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   });
 
   // background, panels and lines
-  for (const b of blocks) mark(b.box, 2);
+  // texts are no panels – but a large block nothing could be read in is graphics (a badge, a knob), and its
+  // areas are panels
+  const glyphArea = (labelHeight ?? 10) ** 2 * 12;
+  blocks.forEach((b, i) => {
+    if (used.has(i) || area(b.box) <= glyphArea) mark(b.box, 2);
+  });
   for (let p = 0; p < occupied.length; p++) if (textExclude[p]) occupied[p] = 1;
   const regions = segment(base, occupied);
   const background = regions[0];

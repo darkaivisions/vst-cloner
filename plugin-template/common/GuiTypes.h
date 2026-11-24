@@ -44,6 +44,8 @@ struct Control
     Rotary rotary;
     uint32_t c1, c2; float f1;
     Readout readout;
+    /** slider: track as a line this thick along the middle (0: the whole box), thumb as a disc */
+    float trackWidth; bool roundThumb;
 };
 
 /** kind: 0 EQ curve, 1 generic area. EQ axes: log frequency fMin…fMax (left→right), linear dB dbTop…dbBottom;
