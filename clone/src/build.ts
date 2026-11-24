@@ -105,7 +105,18 @@ function userPluginDirs(): { vst3: string; lv2: string } {
  * file systems ("dRowAudio: Distortion" → "dRowAudio Distortion"). The DAW still shows the full name.
  */
 export function pluginFileName(name: string): string {
-  return name.replace(/[:/\\*?"<>|#$%;=`]/g, " ").replace(/\s+/g, " ").trim() || "vst-cloner clone";
+  return asciiPluginName(name).replace(/[:/\\*?"<>|#$%;=`]/g, " ").replace(/\s+/g, " ").trim() || "vst-cloner clone";
+}
+
+/**
+ * The clone's name in ASCII: JUCE's VST3 wrapper takes the plugin name byte by byte ("Verstärker" becomes
+ * "Verstￃﾤrker" in the factory, unlike the module info), and a host then refuses the bundle. Umlauts are
+ * spelled out, other accents dropped.
+ */
+export function asciiPluginName(name: string): string {
+  return name
+    .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/Ä/g, "Ae").replace(/Ö/g, "Oe").replace(/Ü/g, "Ue").replace(/ß/g, "ss")
+    .normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7e]/g, " ").replace(/\s+/g, " ").trim() || "vst-cloner clone";
 }
 
 export interface BuildOptions {
@@ -169,7 +180,7 @@ export async function buildPlugin(options: BuildOptions): Promise<BuildResult> {
   const configure = [
     "-S", workDir, "-B", buildDir,
     "-DCMAKE_BUILD_TYPE=Release",
-    `-DCLONE_NAME=${options.pluginName}`,
+    `-DCLONE_NAME=${asciiPluginName(options.pluginName)}`,
     `-DCLONE_FILE_NAME=${fileName}`,
     `-DCLONE_CODE=${code}`,
     `-DCLONE_GENERATED_DIR=${generated}`,

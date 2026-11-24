@@ -94,7 +94,7 @@ export async function cloneReverbProfile(options: ReverbCloneOptions): Promise<R
   const build = await buildPlugin({
     pluginName,
     modelHeader: header,
-    guiHeader: generateGuiHeader(undefined, params),
+    guiHeader: generateGuiHeader(undefined, params, profile.manifest.plugin.name),
     template: "reverb",
     outputDir: options.outputDir ?? join(process.cwd(), slugify(pluginName)),
     ...(options.install ? { install: true } : {}),

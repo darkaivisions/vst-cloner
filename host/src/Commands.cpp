@@ -17,6 +17,29 @@ namespace
 {
     using Object = juce::DynamicObject;
 
+    /** Text a plugin format read as Latin-1 although it was UTF-8 (JUCE's LV2 hosting: "Verstärker" arrives as
+        "VerstÃ¤rker"): every character below 256 and their bytes valid UTF-8 with multi-byte sequences → decoded
+        again. Anything else is returned as it is. */
+    juce::String repaired (const juce::String& text)
+    {
+        juce::MemoryBlock bytes;
+        bool multiByte = false;
+        for (auto it = text.getCharPointer(); ! it.isEmpty(); ++it)
+        {
+            const auto c = *it;
+            if (c > 0xff)
+                return text;
+            multiByte = multiByte || c >= 0x80;
+            const auto byte = (char) (unsigned char) c;
+            bytes.append (&byte, 1);
+        }
+        if (! multiByte || ! juce::CharPointer_UTF8::isValidString ((const char*) bytes.getData(), (int) bytes.getSize()))
+            return text;
+        const auto decoded = juce::String::fromUTF8 ((const char*) bytes.getData(), (int) bytes.getSize());
+        // valid UTF-8 by accident (a real "Ã" followed by a symbol) would shrink to fewer characters than were read
+        return decoded.isNotEmpty() && decoded.length() < text.length() ? decoded : text;
+    }
+
     juce::String optionValue (const juce::StringArray& args, const juce::String& name, const juce::String& fallback = {})
     {
         auto index = args.indexOf (name);
@@ -42,9 +65,9 @@ namespace
     juce::var describe (const juce::PluginDescription& d)
     {
         return makeObject ({
-            { "name", d.name },
+            { "name", repaired (d.name) },
             { "descriptiveName", d.descriptiveName },
-            { "manufacturer", d.manufacturerName },
+            { "manufacturer", repaired (d.manufacturerName) },
             { "version", d.version },
             { "format", d.pluginFormatName },
             { "category", d.category },
@@ -75,14 +98,14 @@ namespace
         for (int i = 0; i < count; ++i)
         {
             auto value = (float) i / (float) (count - 1);
-            texts.add (makeObject ({ { "value", value }, { "text", p.getText (value, 64) } }));
+            texts.add (makeObject ({ { "value", value }, { "text", repaired (p.getText (value, 64)) } }));
         }
 
         return makeObject ({
             { "index", p.getParameterIndex() },
             { "id", parameterId (p) },
-            { "name", p.getName (128) },
-            { "label", p.getLabel() },
+            { "name", repaired (p.getName (128)) },
+            { "label", repaired (p.getLabel()) },
             { "default", p.getDefaultValue() },
             { "value", p.getValue() },
             { "numSteps", steps },
@@ -431,7 +454,7 @@ int runRender (const juce::StringArray& args)
 
                 auto* p = parameters[paramIndex];
                 p->setValueNotifyingHost ((float) (double) entry["value"]);
-                applied.add (makeObject ({ { "index", paramIndex }, { "value", p->getValue() }, { "text", p->getCurrentValueAsText() } }));
+                applied.add (makeObject ({ { "index", paramIndex }, { "value", p->getValue() }, { "text", repaired (p->getCurrentValueAsText()) } }));
             }
         }
 

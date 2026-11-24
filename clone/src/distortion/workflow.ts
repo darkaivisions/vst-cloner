@@ -112,9 +112,11 @@ export async function cloneDistortionProfile(options: DistortionCloneOptions): P
           ...(options.signal ? { signal: options.signal } : {}),
           ...(options.onProgress ? { onProgress: options.onProgress } : {}),
         });
-        guiModel = captured.model;
-        originalRaw = captured.originalRaw;
-        profile.files.set(GUI_MODEL_FILE, strToU8(JSON.stringify(guiModel)));
+        if (captured) {
+          guiModel = captured.model;
+          originalRaw = captured.originalRaw;
+          profile.files.set(GUI_MODEL_FILE, strToU8(JSON.stringify(guiModel)));
+        }
       }
     }
   }
@@ -124,7 +126,7 @@ export async function cloneDistortionProfile(options: DistortionCloneOptions): P
   const build = await buildPlugin({
     pluginName,
     modelHeader: header,
-    guiHeader: generateGuiHeader(guiModel, params),
+    guiHeader: generateGuiHeader(guiModel, params, profile.manifest.plugin.name),
     template: "distortion",
     outputDir: options.outputDir ?? join(process.cwd(), slugify(pluginName)),
     ...(options.install ? { install: true } : {}),

@@ -2,12 +2,12 @@ import { existsSync } from "node:fs";
 import { copyFile, mkdir, readdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { emitLive } from "@vst-cloner/capture";
+import { CancelledError, emitLive } from "@vst-cloner/capture";
 import type { Profile } from "@vst-cloner/profile";
 import type { Logger } from "../build.ts";
 import { analyzeGui } from "./analyze.ts";
 import { runGuiSnapshot, withVirtualDisplay } from "./capture.ts";
-import { encodePng, loadRaw } from "./image.ts";
+import { colorDistance, encodePng, loadRaw, type Image, type Rgb } from "./image.ts";
 import type { GuiModel } from "./model.ts";
 import { probeGui } from "./probe.ts";
 import { renderSvg } from "./svg.ts";
@@ -79,6 +79,21 @@ export async function captureGuiLayout(
     /** compressors: gain reduction (dB) of the clone for a sine of this peak level – finds and calibrates meters */
     meterReduction?: (levelDb: number) => number;
   },
+): Promise<GuiCaptureResult | undefined> {
+  try {
+    return await captureGuiLayoutOrFail(profile, pluginPath, options);
+  } catch (error) {
+    // only a cancel stops the clone: without the original's editor it gets one of its own
+    if (error instanceof CancelledError || options.signal?.aborted) throw error;
+    options.log("warn", `Editor not rebuilt (${(error as Error).message.split("\n")[0]}) – the clone gets an editor of its own with all its controls`);
+    return undefined;
+  }
+}
+
+async function captureGuiLayoutOrFail(
+  profile: Profile,
+  pluginPath: string,
+  options: Parameters<typeof captureGuiLayout>[2],
 ): Promise<GuiCaptureResult> {
   const workDir = guiCacheDir(profile);
   const probe = await probeGui({
@@ -92,6 +107,9 @@ export async function captureGuiLayout(
     ...(options.signal ? { signal: options.signal } : {}),
     ...(options.onProgress ? { onProgress: options.onProgress } : {}),
   });
+  // an editor that is a few pixels or one colour all over (an LV2 plugin without a UI of its own) shows nothing
+  if (probe.width < 40 || probe.height < 40) throw new Error(`the original's editor is only ${probe.width}×${probe.height} pixels`);
+  if (probe.visible.length === 0 && uniform(await loadRaw(probe.base, probe.width, probe.height))) throw new Error("the original's editor is an empty window");
   options.log("info", "Analysing the editor (controls, colours, areas, labels) …");
   const model = await analyzeGui(probe, profile.parameters.parameters, profile.manifest.plugin.name,
     options.meterReduction ? { meterReduction: options.meterReduction } : {});
@@ -106,6 +124,14 @@ export async function captureGuiLayout(
   await writeFile(join(workDir, "layout.svg"), svg);
   emitLive({ type: "editor", svg });
   return { model, originalPng, originalRaw: probe.base };
+}
+
+/** Nearly all pixels of one colour. */
+function uniform(img: Image): boolean {
+  const first: Rgb = [img.data[0]!, img.data[1]!, img.data[2]!];
+  let same = 0;
+  for (let i = 0; i < img.data.length; i += 4) if (colorDistance([img.data[i]!, img.data[i + 1]!, img.data[i + 2]!], first) < 12) same++;
+  return same >= (img.data.length / 4) * 0.97;
 }
 
 /** Mean structural similarity (SSIM) on luminance, 8×8 windows. 1 = identical. */

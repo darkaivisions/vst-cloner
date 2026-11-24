@@ -134,9 +134,11 @@ export async function cloneNeuralProfile(options: NeuralCloneOptions): Promise<N
           ...(options.signal ? { signal: options.signal } : {}),
           ...(options.onProgress ? { onProgress: options.onProgress } : {}),
         });
-        guiModel = captured.model;
-        originalRaw = captured.originalRaw;
-        profile.files.set(GUI_MODEL_FILE, strToU8(JSON.stringify(guiModel)));
+        if (captured) {
+          guiModel = captured.model;
+          originalRaw = captured.originalRaw;
+          profile.files.set(GUI_MODEL_FILE, strToU8(JSON.stringify(guiModel)));
+        }
       }
     }
   }
@@ -146,7 +148,7 @@ export async function cloneNeuralProfile(options: NeuralCloneOptions): Promise<N
   const build = await buildPlugin({
     pluginName,
     modelHeader: header,
-    guiHeader: generateGuiHeader(guiModel, params),
+    guiHeader: generateGuiHeader(guiModel, params, profile.manifest.plugin.name),
     template: "neural",
     outputDir: options.outputDir ?? join(process.cwd(), slugify(pluginName)),
     ...(options.install ? { install: true } : {}),

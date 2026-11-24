@@ -150,9 +150,11 @@ export async function cloneProfile(options: CloneOptions): Promise<CloneResult> 
           ...(options.signal ? { signal: options.signal } : {}),
           ...(options.onProgress ? { onProgress: options.onProgress } : {}),
         });
-        guiModel = captured.model;
-        originalRaw = captured.originalRaw;
-        profile.files.set(GUI_MODEL_FILE, strToU8(JSON.stringify(guiModel)));
+        if (captured) {
+          guiModel = captured.model;
+          originalRaw = captured.originalRaw;
+          profile.files.set(GUI_MODEL_FILE, strToU8(JSON.stringify(guiModel)));
+        }
       }
     }
   }
@@ -162,7 +164,7 @@ export async function cloneProfile(options: CloneOptions): Promise<CloneResult> 
   const build = await buildPlugin({
     pluginName,
     modelHeader: header,
-    guiHeader: generateGuiHeader(guiModel, params),
+    guiHeader: generateGuiHeader(guiModel, params, profile.manifest.plugin.name),
     outputDir: options.outputDir ?? join(process.cwd(), `${slugify(pluginName)}`),
     ...(options.install ? { install: true } : {}),
     ...(options.signal ? { signal: options.signal } : {}),

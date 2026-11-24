@@ -102,7 +102,7 @@ export async function cloneDelayProfile(options: DelayCloneOptions): Promise<Del
   const build = await buildPlugin({
     pluginName,
     modelHeader: header,
-    guiHeader: generateGuiHeader(undefined, params),
+    guiHeader: generateGuiHeader(undefined, params, profile.manifest.plugin.name),
     template: "delay",
     outputDir: options.outputDir ?? join(process.cwd(), slugify(pluginName)),
     ...(options.install ? { install: true } : {}),

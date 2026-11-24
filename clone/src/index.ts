@@ -53,3 +53,4 @@ export * from "./neural/train.ts";
 export * from "./neural/workflow.ts";
 export * from "./compare.ts";
 export * from "./best.ts";
+export * from "./gui/generic.ts";

@@ -215,7 +215,19 @@ vst-cloner/
        falling as fast; the transfer curve live from the clone's own curve, with the original's fill and a dot at
        the current level; analyzers/time graphs as a running history of level and gain reduction. Checked by
        filming the clone's editor like the original's (ZamComp, OmniCompressor)
-     - Open: meter scales and labels inside displays; controls (45 extra detections, mostly LSP buttons);
+     - Sweep over all installed effects (24 Nov, 270 plugins: probe, analysis, the rebuilt editor drawn next to the
+       original): 196 with at least 80 % of the moving controls found; 31 without an editor of their own (LV2
+       without UI, Calf's GTK UIs, Zyn LV2, Ma* VST3) and ~10 empty windows; AIDA-X's VST3 editor stays 10×10
+       (its LV2 one opens). Without an editor the whole clone used to fail – now the clone gets an editor of its
+       own (all its controls in a grid: knobs with name and value, switches, selectors), also delay and reverb
+       clones that never rebuilt one
+     - Bench scores the look as well (SSIM and colour of the rebuilt editor drawn from its SVG): 59 → 63 %.
+       EQ band controls are controls (ZamEQ2's whole LMF band was missing), the EQ display is what several band
+       controls change; values written on knobs with the original's decimals, coloured knob rings, fader tracks
+       as lines with round thumbs, rows of scale numbers read and placed number by number, no labels invented
+       from bevels or logo badges
+     - Open: tick marks and scale ends of Zam knobs, logos, the EQ display draws a grid the original lacks;
+       meter scales and labels inside displays; controls (45 extra detections, mostly LSP buttons);
        gain reduction of LSP Gate; XY points, knobs with a gradient and a small pointer (DS1), meter scales, font
        weights within a title, logos, frames/decoration; more editors in the bench
 5. **Dynamics + distortion**
