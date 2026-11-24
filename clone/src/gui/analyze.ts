@@ -726,6 +726,20 @@ const valueAnchors = new Map<number, number>();
 
 function analyzeControl(fp: Footprint, noise: Uint8Array): Control | undefined {
   const { param, frames, main } = fp;
+  // Two options named other than on/off whose box keeps its colour while only the text in it changes (Omni-
+  // Compressor's N3D/SN3D) are a drop-down, not a switch. A text stands out of the box in several glyphs in both
+  // positions, a switch's handle (ZamComp's sidechain sliding over) in one or two blocks.
+  const onOff = /^(on|off|enabled?|disabled?|true|false|yes|no|active|inactive|bypass(ed)?|muted?|0|1)$/i;
+  const glyphs = (f: Image) => {
+    const ground = dominantColor(f, main), ink = new Uint8Array(f.width * f.height);
+    for (let y = main.y; y < main.y + main.h; y++) for (let x = main.x; x < main.x + main.w; x++) if (colorDistance(pixel(f, x, y), ground) > 80) ink[y * f.width + x] = 1;
+    const parts = components(ink, f.width, f.height, 2);
+    return parts.length;
+  };
+  const strokes = () => Math.min(glyphs(frames[0]!), glyphs(frames[1]!));
+
+  const dropDown = param.discrete && frames.length === 2 && param.options?.length === 2 && !param.options.every((o) => onOff.test(o.trim())) &&
+    colorDistance(dominantColor(frames[0]!, main), dominantColor(frames[1]!, main)) < 20 && strokes() >= 3;
   const median = medianImage(frames, clampBox(grow(fp.region, 8), frames[0]!));
   const name = prettifyName(param.name);
   const readout = readoutStyle(fp, median);
@@ -736,7 +750,7 @@ function analyzeControl(fp: Footprint, noise: Uint8Array): Control | undefined {
     x: main.x, y: main.y, w: main.w, h: main.h, ...(readout ? { readout } : {}),
   };
 
-  if (param.discrete && frames.length === 2) {
+  if (param.discrete && frames.length === 2 && !dropDown) {
     const off = dominantColor(frames[0]!, main);
     const on = dominantColor(frames[1]!, main);
     const round = Math.abs(main.w - main.h) < Math.max(3, main.w * 0.15);
