@@ -2112,7 +2112,10 @@ async function levelMetersOf(probe: GuiProbe, series: MeterShot[], turned: boole
     let keepsMoving = 0;
     if (moving) for (let y = box.y; y < box.y + box.h; y++) for (let x = box.x; x < box.x + box.w; x++) if (any[y * width + x] && moving[y * width + x]) keepsMoving++;
     // (a pronounced bar may flicker with its peak display: that is no graph)
-    if (long < short * 2.5 || densest < 0.25 || seen.length === 0 || (keepsMoving > lit * 0.3 && long < short * 4)) {
+    // (a short lit stretch beside a meter of its width is still a meter – a gate's gain reduction lights only a
+    // few LEDs; it spans as far as that meter)
+    const sibling = vertical ? displays.find((d) => d.kind === "bar" && d.h > d.w && Math.abs(d.w - box.w) <= 2 && d.y < box.y + box.h && box.y < d.y + d.h) : undefined;
+    if ((long < short * 2.5 && !(sibling && long >= short * 1.5)) || densest < 0.25 || seen.length === 0 || (keepsMoving > lit * 0.3 && long < short * 4)) {
       sparse.push(box);
       continue;
     }
@@ -2123,6 +2126,11 @@ async function levelMetersOf(probe: GuiProbe, series: MeterShot[], turned: boole
     if (!rising && !falling) {
       sparse.push(box);
       continue;
+    }
+    if (sibling && long < short * 2.5) {
+      const top = Math.min(box.y, sibling.y), bottom = Math.max(box.y + box.h, sibling.y + sibling.h);
+      box.y = top;
+      box.h = bottom - top;
     }
     // the end that stays put is where the bar starts
     const first = seen[0]!.e, last = seen[seen.length - 1]!.e;
