@@ -1,4 +1,4 @@
-import type { Control, Fill, GuiModel } from "./model.ts";
+import type { Control, Display, Fill, GuiModel } from "./model.ts";
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
@@ -57,6 +57,10 @@ export function renderSvg(model: GuiModel, values: Map<number, number> = new Map
       background = `url(#${id})`;
     }
     out.push(`<rect x="${d.x}" y="${d.y}" width="${d.w}" height="${d.h}" rx="${d.radius ?? 0}" fill="${background}"/>`);
+    if (d.kind === "generic" && d.role) {
+      out.push(...(d.role === "curve" ? transferCurve(d) : levelHistory(d)));
+      continue;
+    }
     const fMin = d.fMin ?? 10, fMax = d.fMax ?? 30000, top = d.dbTop ?? 13.3, bottom = d.dbBottom ?? -13.3;
     const plotH = d.h - (d.labelBand ?? 0);
     const xOf = (f: number) => d.x + (Math.log(f / fMin) / Math.log(fMax / fMin)) * d.w;
@@ -97,6 +101,73 @@ export function renderSvg(model: GuiModel, values: Map<number, number> = new Map
   }
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${model.width}" height="${model.height}" viewBox="0 0 ${model.width} ${model.height}"><defs>${defs.join("")}</defs>${out.join("")}</svg>`;
+}
+
+const font = `font-family="DejaVu Sans, sans-serif"`;
+
+/** the original's scale numbers, where they stood (drawScaleLabels in CloneEditor.cpp) */
+function scaleLabels(d: Display): string[] {
+  return (d.scale?.labels ?? []).map((l) =>
+    `<text x="${l.x + l.w / 2}" y="${l.y + l.h / 2}" font-size="${(l.h * 1.05).toFixed(2)}" fill="${l.color}" text-anchor="middle" dominant-baseline="central" ${font}>${esc(l.text)}</text>`);
+}
+
+/** a step of 1, 2, 3, 5, 6, 10, 12, 20 … dB that gives about `lines` grid lines over `range` (niceStep in CloneEditor.cpp) */
+function niceStep(range: number, lines: number): number {
+  return [1, 2, 3, 5, 6, 10, 12, 20, 24, 30, 50].find((s) => range / s <= lines) ?? 100;
+}
+
+/**
+ * Transfer curve (TransferCurve in CloneEditor.cpp): grid on the original's axes, the dashed diagonal, the
+ * numbers. The clone draws its own curve from the compressor it computes; the preview, which has none, draws
+ * the curve without reduction (output = input).
+ */
+function transferCurve(d: Display): string[] {
+  const out: string[] = [];
+  let lowDb = -60, highDb = 0, lowY = -60, highY = 0;
+  const sx = d.scale?.x, sy = d.scale?.y;
+  if (sx) { lowDb = sx.a + sx.b * d.x; highDb = sx.a + sx.b * (d.x + d.w); }
+  if (sy) {
+    lowY = sy.a + sy.b * (d.y + d.h); highY = sy.a + sy.b * d.y;
+    if (!sx) { lowDb = lowY; highDb = highY; }
+  } else { lowY = lowDb; highY = highDb; }
+  if (!(highDb > lowDb + 1 && highY > lowY + 1)) { lowDb = lowY = -60; highDb = highY = 0; }
+  const x = (db: number) => d.x + ((db - lowDb) / (highDb - lowDb)) * d.w;
+  const y = (db: number) => d.y + d.h - ((db - lowY) / (highY - lowY)) * d.h;
+  const step = niceStep(highDb - lowDb, 8), stepY = niceStep(highY - lowY, 8);
+  for (let db = Math.ceil(lowDb / step) * step; db <= highDb + 0.1; db += step) out.push(`<line x1="${x(db)}" y1="${d.y}" x2="${x(db)}" y2="${d.y + d.h}" stroke="${d.grid}" stroke-width="1"/>`);
+  for (let db = Math.ceil(lowY / stepY) * stepY; db <= highY + 0.1; db += stepY) out.push(`<line x1="${d.x}" y1="${y(db)}" x2="${d.x + d.w}" y2="${y(db)}" stroke="${d.grid}" stroke-width="1"/>`);
+  const from = Math.max(lowDb, lowY), to = Math.min(highDb, highY);
+  out.push(`<line x1="${x(from)}" y1="${y(from)}" x2="${x(to)}" y2="${y(to)}" stroke="${d.text}" stroke-opacity="0.5" stroke-dasharray="3 3" stroke-width="1"/>`);
+  if (d.scale?.labels.length) out.push(...scaleLabels(d));
+  else {
+    const labelStep = niceStep(highDb - lowDb, 4);
+    for (let db = Math.ceil(lowDb / labelStep) * labelStep; db < highDb - 0.1; db += labelStep) {
+      const t = String(Math.round(db));
+      out.push(`<text x="${x(db) + 2}" y="${d.y + d.h - 7}" font-size="10" fill="${d.text}" fill-opacity="0.75" dominant-baseline="central" ${font}>${t}</text>`);
+      if (db > lowDb + 0.1) out.push(`<text x="${d.x + 2}" y="${y(db) - 7}" font-size="10" fill="${d.text}" fill-opacity="0.75" dominant-baseline="central" ${font}>${t}</text>`);
+    }
+  }
+  out.push(`<line x1="${x(from)}" y1="${y(from)}" x2="${x(to)}" y2="${y(to)}" stroke="${d.curve}" stroke-width="2"/>`);
+  return out;
+}
+
+/**
+ * Analyzer or time graph (LevelHistory in CloneEditor.cpp), as it stands without audio: the grid, the input level
+ * at the bottom, no gain reduction, the numbers.
+ */
+function levelHistory(d: Display): string[] {
+  const out: string[] = [];
+  for (let k = 1; k < 6; k++) {
+    const y = Math.round(d.y + (d.h * k) / 6);
+    out.push(`<line x1="${d.x}" y1="${y}" x2="${d.x + d.w}" y2="${y}" stroke="${d.grid}" stroke-width="1"/>`);
+  }
+  const sy = d.scale?.y;
+  const y = (db: number) => d.y + Math.min(d.h, Math.max(0, sy && Math.abs(sy.b) > 1e-6 ? (db - sy.a) / sy.b - d.y : (-db / 72) * d.h));
+  out.push(`<line x1="${d.x}" y1="${y(-120)}" x2="${d.x + d.w}" y2="${y(-120)}" stroke="${d.curve}" stroke-width="1.5"/>`);
+  out.push(`<line x1="${d.x}" y1="${y(0)}" x2="${d.x + d.w}" y2="${y(0)}" stroke="${d.text}" stroke-width="1.5"/>`);
+  if (d.scale?.labels.length) out.push(...scaleLabels(d));
+  else for (let k = 1; k < 6; k++) out.push(`<text x="${d.x + 2}" y="${d.y + (d.h * k) / 6 - 6.5}" font-size="10" fill="${d.text}" fill-opacity="0.75" dominant-baseline="central" ${font}>${-12 * k}</text>`);
+  return out;
 }
 
 function polar(cx: number, cy: number, r: number, a: number): [number, number] {
