@@ -2063,8 +2063,13 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   // EQ: the controls of one band were recorded with the other bands turned (so that the curve shows) – against
   // that picture ("bandbase") the curve is the display, and what is left of each change is its knob
   const bandParams = probe.visible.filter((p) => p.bandRole);
-  const bandReference = bandParams[0]?.reference ? await loadRaw(bandParams[0].reference, width, height) : base;
   for (const param of bandParams) bandFootprints.push({ param, frames: await Promise.all(param.frames.map((f) => loadRaw(f.file, width, height))) });
+  // The recorded "bandbase" may show a knob before it was redrawn (ZamEQ2: the band's frequency knob), and then
+  // every frame differs from it there. With several band controls the median of all their frames is that picture:
+  // each knob stands still in the frames of the others.
+  const bandReference = bandFootprints.length >= 2
+    ? medianImage(bandFootprints.flatMap((b) => b.frames), { x: 0, y: 0, w: width, h: height })
+    : bandParams[0]?.reference ? await loadRaw(bandParams[0].reference, width, height) : base;
   const eqDisplay = bandFootprints.length ? analyzeEqDisplay(bandReference, bandFootprints, parameters, noise) : undefined;
   const bandIgnore = noise.slice();
   if (eqDisplay) {

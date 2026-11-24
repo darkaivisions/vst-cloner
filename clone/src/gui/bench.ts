@@ -3,16 +3,20 @@
  * against hand-made labels – which displays and controls an editor has and where. Every change to the recognition
  * shows in the numbers, for all editors at once, instead of in the one plugin that was looked at.
  */
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pluginInfo } from "@vst-cloner/capture";
 import type { Logger } from "../build.ts";
 import { analyzeGui } from "./analyze.ts";
 import type { Display, GuiModel } from "./model.ts";
-import { loadProbe, probeGui } from "./probe.ts";
+import { loadRaw } from "./image.ts";
+import { loadProbe, probeGui, type GuiProbe } from "./probe.ts";
+import { renderSvg } from "./svg.ts";
+import { ssim } from "./workflow.ts";
 
 /** Display types in the labels; the analysis's kinds are mapped onto them (benchKind). */
 export type BenchDisplayKind = "curve" | "meter" | "eq" | "analyzer" | "other";
@@ -64,6 +68,41 @@ export interface BenchScore {
   name: string;
   displays: { expected: number; found: number; rightKind: number; extra: number; misses: string[]; wrong: string[] };
   controls: { expected: number; found: number; rightKind: number; extra: number; misses: string[]; wrong: string[] };
+  /** how much the rebuilt editor looks like the original (rendered from its SVG), 0…1 */
+  look?: { structure: number; color: number };
+}
+
+let renderTools: boolean | undefined;
+const hasTool = (tool: string) => {
+  try {
+    execFileSync(tool, ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The rebuilt editor drawn from its SVG (same drawing rules as the clone's editor) against the original's
+ * picture: structural similarity (SSIM) and mean colour similarity. Needs rsvg-convert and ImageMagick; without
+ * them there is no score.
+ */
+export async function lookScore(probe: GuiProbe, model: GuiModel): Promise<BenchScore["look"]> {
+  renderTools ??= hasTool("rsvg-convert") && hasTool("magick");
+  if (!renderTools) return undefined;
+  const dir = await mkdtemp(join(tmpdir(), "vch-look-"));
+  try {
+    await writeFile(join(dir, "clone.svg"), renderSvg(model));
+    execFileSync("rsvg-convert", ["-w", String(probe.width), "-h", String(probe.height), "-b", "black", join(dir, "clone.svg"), "-o", join(dir, "clone.png")]);
+    execFileSync("magick", [join(dir, "clone.png"), "-depth", "8", `rgba:${join(dir, "clone.rgba")}`]);
+    const a = await loadRaw(probe.base, probe.width, probe.height);
+    const b = await loadRaw(join(dir, "clone.rgba"), probe.width, probe.height);
+    let total = 0;
+    for (let i = 0; i < a.data.length; i += 4) total += (Math.abs(a.data[i]! - b.data[i]!) + Math.abs(a.data[i + 1]! - b.data[i + 1]!) + Math.abs(a.data[i + 2]! - b.data[i + 2]!)) / 3;
+    return { structure: Math.max(0, ssim(a, b)), color: 1 - total / (a.data.length / 4) / 255 };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 /** Labels against an analysed editor: a display is found where a detected one lies at least half inside it (or it inside that). */
@@ -124,7 +163,9 @@ export async function runGuiBench(only?: string): Promise<{ scores: BenchScore[]
       for (const c of model.controls) console.error(`  ${name}: control ${c.name} ${c.kind} ${c.x},${c.y} ${c.w}x${c.h}`);
       for (const d of model.displays) console.error(`  ${name}: ${d.kind}${d.role ? `/${d.role}` : ""} ${d.x},${d.y} ${d.w}x${d.h}${d.bar ? ` ${d.bar.source} from ${d.bar.origin ?? "bottom"} ${d.bar.fromDb.toFixed(1)}…${d.bar.toDb.toFixed(1)} dB${d.bar.segments ? ` ${d.bar.segments} LEDs` : ""}` : ""}`);
     }
-    scores.push(scoreGui(name, labels, model, new Map(parameters.map((p) => [p.index, p.name.trim()]))));
+    const score = scoreGui(name, labels, model, new Map(parameters.map((p) => [p.index, p.name.trim()])));
+    const look = await lookScore(probe, model);
+    scores.push(look ? { ...score, look } : score);
   }
   return { scores, missing };
 }
@@ -135,9 +176,13 @@ export function formatBench(scores: BenchScore[]): string[] {
   const lines = scores.map((s) =>
     `${s.name.padEnd(26)} displays ${s.displays.rightKind}/${s.displays.expected} right (${s.displays.found} found, ${s.displays.extra} extra)` +
     `   controls ${s.controls.rightKind}/${s.controls.expected} right (${s.controls.found} found, ${s.controls.extra} extra)` +
+    (s.look ? `   look ${pct(s.look.structure * 100, 100)} structure, ${pct(s.look.color * 100, 100)} colour` : "") +
     [...s.displays.misses.map((m) => `\n    missing display: ${m}`), ...s.displays.wrong.map((m) => `\n    wrong display: ${m}`),
       ...s.controls.misses.map((m) => `\n    missing control: ${m}`), ...s.controls.wrong.map((m) => `\n    wrong control: ${m}`)].join(""));
+  const looks = scores.filter((s) => s.look);
+  const mean = (f: (s: BenchScore) => number) => looks.reduce((a, s) => a + f(s), 0) / Math.max(1, looks.length);
   lines.push(
+    (looks.length ? `MEAN LOOK: ${pct(mean((s) => s.look!.structure) * 100, 100)} structure, ${pct(mean((s) => s.look!.color) * 100, 100)} colour (${looks.length} editors)\n` : "") +
     `TOTAL displays: ${pct(sum((s) => s.displays.rightKind), sum((s) => s.displays.expected))} right, ${pct(sum((s) => s.displays.found), sum((s) => s.displays.expected))} found, ${sum((s) => s.displays.extra)} extra` +
     ` · controls: ${pct(sum((s) => s.controls.rightKind), sum((s) => s.controls.expected))} right, ${pct(sum((s) => s.controls.found), sum((s) => s.controls.expected))} found, ${sum((s) => s.controls.extra)} extra`,
   );
