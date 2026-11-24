@@ -50,11 +50,22 @@ export function renderSvg(model: GuiModel, values: Map<number, number> = new Map
       }
       continue;
     }
-    out.push(`<rect x="${d.x}" y="${d.y}" width="${d.w}" height="${d.h}" fill="${fill(d.backgroundTop && d.backgroundBottom ? { color: d.backgroundTop, gradient: d.backgroundBottom } : { color: d.background })}"/>`);
+    let background = fill(d.backgroundTop && d.backgroundBottom ? { color: d.backgroundTop, gradient: d.backgroundBottom } : { color: d.background });
+    if (d.backgroundRight) {
+      const id = `g${gradientId++}`;
+      defs.push(`<linearGradient id="${id}" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${d.background}"/><stop offset="1" stop-color="${d.backgroundRight}"/></linearGradient>`);
+      background = `url(#${id})`;
+    }
+    out.push(`<rect x="${d.x}" y="${d.y}" width="${d.w}" height="${d.h}" rx="${d.radius ?? 0}" fill="${background}"/>`);
     const fMin = d.fMin ?? 10, fMax = d.fMax ?? 30000, top = d.dbTop ?? 13.3, bottom = d.dbBottom ?? -13.3;
     const plotH = d.h - (d.labelBand ?? 0);
     const xOf = (f: number) => d.x + (Math.log(f / fMin) / Math.log(fMax / fMin)) * d.w;
     const yOf = (db: number) => d.y + ((top - db) / (top - bottom)) * plotH;
+    // (same rules as EqDisplay in CloneEditor.cpp)
+    if (d.plain) {
+      out.push(`<line x1="${d.curveLeft ?? d.x}" y1="${yOf(0)}" x2="${d.curveRight ?? d.x + d.w}" y2="${yOf(0)}" stroke="${d.curve}" stroke-width="2"/>`);
+      continue;
+    }
     for (let decade = 1; decade < 1e6; decade *= 10) for (const m of [1, 2, 5]) {
       const f = decade * m;
       if (f > fMin && f < fMax) out.push(`<line x1="${xOf(f)}" y1="${d.y}" x2="${xOf(f)}" y2="${d.y + plotH}" stroke="${d.grid}" stroke-width="1"/>`);
@@ -67,7 +78,7 @@ export function renderSvg(model: GuiModel, values: Map<number, number> = new Map
       out.push(`<line x1="${d.x}" y1="${yOf(db)}" x2="${d.x + d.w}" y2="${yOf(db)}" stroke="${d.grid}" stroke-width="1"/>`);
       out.push(`<text x="${d.dbLabelRight ?? d.x + d.w - 4}" y="${yOf(db)}" font-size="11" fill="${d.text}" text-anchor="end" dominant-baseline="central" font-family="DejaVu Sans, sans-serif">${db > 0 ? "+" : ""}${db}</text>`);
     }
-    out.push(`<line x1="${d.x}" y1="${yOf(0)}" x2="${d.x + d.w}" y2="${yOf(0)}" stroke="${d.curve}" stroke-width="2"/>`);
+    out.push(`<line x1="${d.curveLeft ?? d.x}" y1="${yOf(0)}" x2="${d.curveRight ?? d.x + d.w}" y2="${yOf(0)}" stroke="${d.curve}" stroke-width="2"/>`);
   }
 
   for (const t of model.texts) {

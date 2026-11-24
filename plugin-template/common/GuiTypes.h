@@ -77,6 +77,10 @@ struct Display
     int numScaleLabels; const ScaleLabel* scaleLabels;
     bool hasXAxis; float xAxisA, xAxisB;
     bool hasYAxis; float yAxisA, yAxisB;
+    /** EQ: only the curve, no grid, numbers or band handles (plain); where the curve begins and ends (display
+        coordinates, curveRight 0: to the right edge); background as a gradient from left to right; corner radius */
+    bool plain; float curveLeft, curveRight;
+    bool hasBackgroundRight; uint32_t backgroundRight; float radius;
 };
 
 } // namespace clonegui

@@ -427,6 +427,9 @@ namespace
         EqDisplay (CloneProcessor& p, const Display& d) : processor (p), display (d), panel (p, d)
         {
             addChildComponent (panel);
+            // a plain display (the original shows only its curve) is turned with the knobs, not on the display
+            if (display.plain)
+                setInterceptsMouseClicks (false, false);
             panel.onRemove = [this]
             {
                 if (selected >= 0)
@@ -446,8 +449,17 @@ namespace
         void paint (juce::Graphics& g) override
         {
             const auto b = getLocalBounds().toFloat();
-            g.setGradientFill (juce::ColourGradient (colour (display.background), 0, 0, colour (display.backgroundBottom), 0, b.getBottom(), false));
-            g.fillRect (b);
+            if (display.hasBackgroundRight)
+                g.setGradientFill (juce::ColourGradient (colour (display.background), 0, 0, colour (display.backgroundRight), b.getRight(), 0, false));
+            else
+                g.setGradientFill (juce::ColourGradient (colour (display.background), 0, 0, colour (display.backgroundBottom), 0, b.getBottom(), false));
+            g.fillRoundedRectangle (b, display.radius);
+
+            if (display.plain)
+            {
+                paintCurve (g);
+                return;
+            }
 
             // grid: decades and 2/5 steps, dB lines in steps that fit the range
             g.setColour (colour (display.grid));
@@ -476,15 +488,7 @@ namespace
                     g.drawText (label, display.labelBand > 0 ? juce::Rectangle<float> (xOf (f) - 20, b.getY() + plotHeight() + 2, 40, display.labelBand - 4)
                                                              : juce::Rectangle<float> (xOf (f) - 20, b.getBottom() - 16, 40, 14), juce::Justification::centred);
 
-            juce::Path curve;
-            for (int x = 0; x <= getWidth(); x += 2)
-            {
-                const float y = juce::jlimit (-4.0f, plotHeight() + 4.0f, yOf (processor.responseDb (frequencyOf ((float) x))));
-                if (x == 0) curve.startNewSubPath ((float) x, y);
-                else curve.lineTo ((float) x, y);
-            }
-            g.setColour (colour (display.curve));
-            g.strokePath (curve, juce::PathStrokeType (2.0f));
+            paintCurve (g);
 
             bool anyActive = false;
             for (int band = 0; band < clonemodel::numBands; ++band)
@@ -512,6 +516,25 @@ namespace
                 g.drawText (juce::String::fromUTF8 ("Click: add band  \xc2\xb7  Drag: frequency/gain  \xc2\xb7  Mouse wheel: Q  \xc2\xb7  Right-click: remove"),
                             juce::Rectangle<float> (0, plotHeight() * 0.62f, (float) getWidth(), 20), juce::Justification::centred);
             }
+        }
+
+        /** the clone's response, from where the original's curve begins to where it ends */
+        void paintCurve (juce::Graphics& g)
+        {
+            const float left = display.curveLeft, right = display.curveRight > 0 ? display.curveRight : (float) getWidth();
+            juce::Path curve;
+            for (float x = left; x <= right + 0.01f; x += 2.0f)
+            {
+                const float px = std::min (x, right);
+                const float y = juce::jlimit (-4.0f, plotHeight() + 4.0f, yOf (processor.responseDb (frequencyOf (px))));
+                if (x == left) curve.startNewSubPath (px, y);
+                else curve.lineTo (px, y);
+            }
+            g.saveState();
+            g.reduceClipRegion (getLocalBounds());
+            g.setColour (colour (display.curve));
+            g.strokePath (curve, juce::PathStrokeType (2.0f));
+            g.restoreState();
         }
 
         void mouseDown (const juce::MouseEvent& e) override

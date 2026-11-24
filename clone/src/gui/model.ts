@@ -179,6 +179,15 @@ export interface Display {
   labelBand?: number;
   /** x of the right edge of the dB labels (default: right edge of the plot) */
   dbLabelRight?: number;
+  /** EQ: the original shows only its curve – no grid, no numbers, no band handles (ZamEQ2) */
+  plain?: boolean;
+  /** EQ: where the curve begins and ends (editor x), where the original leaves a margin */
+  curveLeft?: number;
+  curveRight?: number;
+  /** horizontal gradient of the background: `background` on the left, this on the right */
+  backgroundRight?: string;
+  /** rounded corners (px) */
+  radius?: number;
   needle?: Needle;
   bar?: LevelBar;
   /** what a generic display shows, where it is known: a compressor's transfer curve, an analyzer or time graph */

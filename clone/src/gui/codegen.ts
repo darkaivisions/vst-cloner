@@ -117,7 +117,9 @@ export function generateGuiHeader(rebuilt: GuiModel | undefined, params: ClonePa
     `${argb(d.bar?.offColor ?? d.background)}, ${d.role === "curve" ? 1 : d.role === "analyzer" ? 2 : 0}, ` +
     `${d.bar?.ledDb && d.bar.segments ? `ledDb${i}` : "nullptr"}, ${f(d.bar?.fallDbPerSecond ?? 0)}, ${d.fill ? "true" : "false"}, ${argb(d.fill)}, ` +
     `${d.scale?.labels.length ?? 0}, ${d.scale?.labels.length ? `scaleLabels${i}` : "nullptr"}, ` +
-    `${d.scale?.x ? "true" : "false"}, ${f(d.scale?.x?.a ?? 0)}, ${f(d.scale?.x?.b ?? 0)}, ${d.scale?.y ? "true" : "false"}, ${f(d.scale?.y?.a ?? 0)}, ${f(d.scale?.y?.b ?? 0)} }`));
+    `${d.scale?.x ? "true" : "false"}, ${f(d.scale?.x?.a ?? 0)}, ${f(d.scale?.x?.b ?? 0)}, ${d.scale?.y ? "true" : "false"}, ${f(d.scale?.y?.a ?? 0)}, ${f(d.scale?.y?.b ?? 0)}, ` +
+    `${d.plain ? "true" : "false"}, ${f(d.curveLeft !== undefined ? d.curveLeft - d.x : 0)}, ${f(d.curveRight !== undefined ? d.curveRight - d.x : 0)}, ` +
+    `${d.backgroundRight ? "true" : "false"}, ${argb(d.backgroundRight)}, ${f(d.radius ?? 0)} }`));
 
   lines.push("} // namespace clonegui", "");
   return lines.join("\n");

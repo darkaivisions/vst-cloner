@@ -1271,10 +1271,31 @@ function analyzeEqDisplay(base: Image, bands: { param: ProbedParameter; frames: 
   const band = Math.max(2, Math.round(box.h * 0.08));
   const topColor = medianColor(base, { x: box.x, y: box.y, w: box.w, h: band });
   const bottomColor = medianColor(base, { x: box.x, y: box.y + box.h - band, w: box.w, h: band });
+  // a gradient from left to right (ZamEQ2: dark grey to black) – measured in the middle rows, away from the corners
+  const side = Math.max(2, Math.round(box.w * 0.05));
+  const leftColor = medianColor(base, { x: box.x + 2, y: box.y + Math.round(box.h * 0.25), w: side, h: Math.round(box.h * 0.2) });
+  const rightColor = medianColor(base, { x: box.x + box.w - side - 2, y: box.y + Math.round(box.h * 0.25), w: side, h: Math.round(box.h * 0.2) });
+  const horizontalGradient = colorDistance(leftColor, rightColor) > 12 && colorDistance(leftColor, rightColor) > colorDistance(topColor, bottomColor) * 1.5;
+  // Without grid lines and numbers the original shows only its curve: the clone then draws no grid, numbers or
+  // band handles either.
+  const plain = lineColumns(base, box).length < 3 && !labelBand && dbLabelRight === undefined;
+  // where the curve begins and ends: pixels of its colour in the picture with the other bands turned
+  let curveLeft = Infinity, curveRight = -Infinity;
+  for (let y = box.y; y < box.y + box.h; y++) for (let x = box.x; x < box.x + box.w; x++) {
+    if (colorDistance(pixel(base, x, y), curve) < 60) { curveLeft = Math.min(curveLeft, x); curveRight = Math.max(curveRight, x); }
+  }
+  const margins = curveRight > curveLeft && (curveLeft - box.x > 3 || box.x + box.w - 1 - curveRight > 3) && curveRight - curveLeft > box.w * 0.5;
+  // rounded corners: how far in along the diagonal the plot's own colour begins
+  let corner = 0;
+  while (corner < Math.min(box.w, box.h) / 4 && colorDistance(pixel(base, box.x + corner, box.y + corner), horizontalGradient ? leftColor : topColor) > 25) corner++;
+  const radius = corner >= 2 ? Math.min(20, Math.round(corner * 3.4)) : 0;
   return {
     kind: "eq", ...box,
-    background: hex(bg),
-    ...(colorDistance(topColor, bottomColor) > 8 ? { backgroundTop: hex(topColor), backgroundBottom: hex(bottomColor) } : {}),
+    background: hex(horizontalGradient ? leftColor : bg),
+    ...(horizontalGradient ? { backgroundRight: hex(rightColor) } : colorDistance(topColor, bottomColor) > 8 ? { backgroundTop: hex(topColor), backgroundBottom: hex(bottomColor) } : {}),
+    ...(plain ? { plain: true } : {}),
+    ...(margins ? { curveLeft, curveRight } : {}),
+    ...(radius ? { radius } : {}),
     grid: hex(dominantColor(base, box, subtle)),
     curve: hex(curve),
     text: hex(text),

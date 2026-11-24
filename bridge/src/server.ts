@@ -730,9 +730,19 @@ const methods: Record<string, (params: Json) => Promise<unknown> | unknown> = {
     // refitGui captures it again instead of using the layout stored in the profile
     const refitGui = params.refitGui === true;
     const gui = params.gui !== false || refitGui;
-    const pluginPath = typeof params.plugin === "string" && params.plugin ? params.plugin : undefined;
+    let pluginPath = typeof params.plugin === "string" && params.plugin ? params.plugin : undefined;
     return startJob("clone", async (ctx) => {
       ctx.live.profilePath = profilePath;
+      // the plugin given must be the one measured: the same name in another format numbers its parameters
+      // differently (ZamEQ2's VST3 has three more in front than its LV2) – then the workflow looks for it itself
+      if (pluginPath) {
+        const measured = (await summarizeProfile(profilePath)).format;
+        const given = /\.lv2$/i.test(pluginPath) ? "LV2" : /\.vst3$/i.test(pluginPath) ? "VST3" : undefined;
+        if (given && measured && given !== measured) {
+          ctx.log("detail", `The selected plugin is the ${given} version, the profile was measured from the ${measured} one – using that`);
+          pluginPath = undefined;
+        }
+      }
       // the rebuilt editor stored in the profile shows at once (a new capture replaces it in the live view)
       if (!refitGui) void replaySource(profilePath).then(({ model }) => model && ctx.live.send({ type: "editor", svg: renderSvg(model) }), () => {});
       const summary = await summarizeProfile(profilePath);
