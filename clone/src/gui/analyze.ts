@@ -1989,6 +1989,14 @@ async function analyzeLevelMeters(probe: GuiProbe, all: MeterSeries[], noise: Ui
     }
   }
   const displays = found;
+  // A short piece right at the end of a longer meter of the same width is the rest of that meter's LED chain, lit
+  // only in the other series (where the meter found first is left out): no meter of its own. (Not added to it:
+  // the meter's dB scale is fitted to its box.)
+  for (const piece of [...displays]) {
+    const long = displays.find((m) => m !== piece && m.bar && piece.bar && m.h > m.w && Math.abs(m.x - piece.x) <= 2 && Math.abs(m.w - piece.w) <= 2 && m.h > piece.h * 3 &&
+      (Math.abs(m.y - (piece.y + piece.h)) <= 6 || Math.abs(piece.y - (m.y + m.h)) <= 6));
+    if (long) displays.splice(displays.indexOf(piece), 1);
+  }
   // a bar that changes colour along its length (green, yellow, red) may fall into pieces: pieces in line join up
   for (let i = 0; i < displays.length; i++) {
     for (let j = displays.length - 1; j > i; j--) {
@@ -2437,6 +2445,13 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     const textShaped = (p: Box) => p.h <= 24 && p.w >= p.h * 2.2 && p.w >= 28;
     const knobShaped = !param.discrete && textShaped(parts[0]!) ? parts.find((p) => !textShaped(p) && area(p) >= area(parts[0]!) * 0.4) : undefined;
     if (knobShaped) parts = [knobShaped, ...parts.filter((p) => p !== knobShaped)];
+    // A control that also moves a curve or a graph (LSP: ratio and knee bend the transfer curve, the attack time
+    // moves the time graph) changes a larger area there than at itself: a part with its own value text right
+    // below it is the control, the larger part without one is not.
+    const withValue = (p: Box) => parts.some((q) => q !== p && q.h >= 6 && q.h <= 24 && q.w >= q.h * 1.3 && q.y >= p.y + p.h - 2 && q.y - (p.y + p.h) <= 24 && Math.abs(q.x + q.w / 2 - (p.x + p.w / 2)) <= p.w / 2);
+    const squarish = (p: Box) => p.w <= p.h * 1.4 && p.h <= p.w * 1.4;
+    const knobWithValue = !param.discrete && !withValue(parts[0]!) ? parts.find((p) => squarish(p) && area(p) < area(parts[0]!) && withValue(p)) : undefined;
+    if (knobWithValue) parts = [knobWithValue, ...parts.filter((p) => p !== knobWithValue)];
     const main0 = parts[0]!;
     const nearby = parts.filter((p) => Math.hypot(p.cx - main0.cx, p.cy - main0.cy) < Math.max(main0.w, main0.h) * 2.5 + 40);
     const region = union(nearby);
@@ -2650,7 +2665,7 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   const isNumber = (i: number) => /^[+-]?\d+(?:[.,]\d+)?[kK%]?$/.test(ocr[i]?.text.trim() ?? "");
   const small = blocks.map((_, i) => i).filter((i) => !isNumber(i) && blocks[i]!.box.h <= 14 && blocks[i]!.box.w <= 60 && !(ocr[i] && ocr[i]!.confidence >= 90) && !corrected(ocr[i], blocks[i]!.uppercase));
   const retries = await Promise.all([1, 2, 3].map((margin) => recognizeBlocks(base, small.map((i) => ({ box: clampBox(grow(blocks[i]!.box, 1 + margin), base), color: blocks[i]!.color, background: blocks[i]!.background })))));
-  if (process.env.VCH_GUI_DEBUG) small.forEach((i, k) => console.error(`retry ${blocks[i]!.box.x},${blocks[i]!.box.y}: ${retries.map((r) => `"${r[k]?.text ?? ""}"`).join(" ")}`));
+  if (process.env.VCH_GUI_DEBUG) small.forEach((i, k) => console.error(`retry ${blocks[i]!.box.x},${blocks[i]!.box.y}: ${retries.map((r) => `"${r[k]?.text ?? ""}" ${r[k]?.confidence ?? ""}`).join(" ")}`));
   // height of the labels read for sure: a corrected text in a taller block (a number merged with a knob's ring)
   // keeps only the piece of the block as tall as a label
   const sureHeights = blocks.flatMap((b, i) => (plausibleText(ocr[i], 85) ? [ocr[i]!.box?.h ?? b.box.h] : []));
@@ -2658,7 +2673,10 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   blocks.forEach((b, i) => {
     if (isNumber(i) || (b.box.h > 14 && (ocr[i]?.confidence ?? 0) >= 95)) return;
     const k = small.indexOf(i);
-    const fixed = corrected(ocr[i], b.uppercase) ?? (k >= 0 ? retries.map((r) => corrected(r[k], b.uppercase)).find(Boolean) : undefined);
+    // (all margins agreeing on one sure reading beat the first: "W ABOUT" at 79 with an icon's edge, "ABOUT" at 91)
+    const agreed = k >= 0 ? retries.map((r) => r[k]) : [];
+    const unanimous = agreed.length && agreed.every((r) => r && r.text.trim() === agreed[0]!.text.trim() && r.confidence >= 85 && r.confidence > (ocr[i]?.confidence ?? 0)) ? agreed[0] : undefined;
+    const fixed = corrected(ocr[i], b.uppercase) ?? (k >= 0 ? retries.map((r) => corrected(r[k], b.uppercase)).find(Boolean) : undefined) ?? unanimous;
     if (!fixed) return;
     let box = fixed.box ?? b.box;
     if (box.h > textHeight * 1.5) {
