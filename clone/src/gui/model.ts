@@ -67,7 +67,9 @@ export interface RotaryStyle {
   pointerWidth: number;
   pointerDot: boolean;
   /** value arc; `origin` (0…1 of the travel) where it starts when that is not the start, e.g. 0.5 for ±values */
-  arc?: { color: string; radius: number; width: number; track?: string; origin?: number };
+  arc?: { color: string; radius: number; width: number; track?: string; origin?: number;
+    /** where the track begins and ends when that is not the knob's travel (a printed ring open at the bottom) */
+    trackStart?: number; trackEnd?: number };
   ticks?: { angles: number[]; inner: number; outer: number; color: string; width: number };
   /** a small disc of its own colour on the axis (radius in pixels) */
   cap?: { radius: number; color: string };

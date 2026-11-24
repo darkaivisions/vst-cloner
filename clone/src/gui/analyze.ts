@@ -470,27 +470,63 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
     }
   }
 
+  let ringArc: RotaryStyle["arc"];
   // A coloured ring a little inside the rim (ZamComp's red, green, yellow … rings between black edges): per angle
   // the most saturated pixel near the rim; where most angles have one of the same hue, that is the knob's colour.
   // (Per angle rather than on one circle: a centre a pixel or two off misses a ring two pixels wide.)
   {
     const saturation = (c: Rgb) => Math.max(...c) - Math.min(...c);
     const hits: Rgb[] = [];
+    // where along each ray the ring lies and how wide it is there
+    const ringRadii: number[] = [], ringWidths: number[] = [], ringAngles: number[] = [];
     // (a body coloured all over – x42's yellow, red and blue knobs – has no ring of its own to find)
     const angles = 48;
     for (let k = 0; k < angles; k++) {
       const a = (k / angles) * Math.PI * 2;
-      let best: Rgb | undefined;
-      for (let r = radius * 0.7; r <= radius * 1.08; r += 0.5) {
+      let best: Rgb | undefined, bestR = 0;
+      // (inside the rim – ZamComp – or just outside a body with a bevel – ZamEQ2's 270° arcs)
+      for (let r = radius * 0.7; r <= radius * 1.3; r += 0.5) {
         const c = pixel(median, Math.round(cx + Math.sin(a) * r), Math.round(cy - Math.cos(a) * r));
-        if (saturation(c) > 60 && (!best || saturation(c) > saturation(best))) best = c;
+        if (saturation(c) > 60 && (!best || saturation(c) > saturation(best))) { best = c; bestR = r; }
       }
-      if (best) hits.push(best);
+      if (!best) continue;
+      hits.push(best);
+      ringAngles.push(a);
+      let r0 = bestR, r1 = bestR;
+      const like = (r: number) => colorDistance(pixel(median, Math.round(cx + Math.sin(a) * r), Math.round(cy - Math.cos(a) * r)), best!) < 90;
+      while (r0 - 0.5 >= radius * 0.6 && like(r0 - 0.5)) r0 -= 0.5;
+      while (r1 + 0.5 <= radius * 1.4 && like(r1 + 0.5)) r1 += 0.5;
+      ringRadii.push((r0 + r1) / 2);
+      ringWidths.push(r1 - r0 + 1);
     }
-    if (hits.length >= angles * 0.6 && saturation(centre) <= 50) {
+    if (process.env.VCH_GUI_DEBUG) console.error(`ring ${fp.param.name}: radius ${radius.toFixed(1)} centre ${cx.toFixed(1)},${cy.toFixed(1)} hits ${hits.length}/${angles} ${hits.length ? hex(dominantColorOf(hits)) : "-"} body ${hex(centre)}`);
+    // (a ring open at the bottom covers three quarters of the angles)
+    // (a thin arc open at the bottom covers well under three quarters of the angles; anti-aliasing spreads its shades)
+    if (hits.length >= angles * 0.35 && saturation(centre) <= 50) {
       const ring = dominantColorOf(hits);
-      const alike = hits.filter((c) => colorDistance(c, ring) < 80).length;
-      if (alike >= angles * 0.5 && colorDistance(ring, centre) > 40) outline = hex(ring);
+      const alike = hits.filter((c) => colorDistance(c, ring) < 110).length;
+      if (alike >= angles * 0.3 && colorDistance(ring, centre) > 40) {
+        const ringRadius = percentile(ringRadii, 0.5), ringWidth = Math.min(radius * 0.25, percentile(ringWidths, 0.5));
+        // A ring open at the bottom (Zam's 270°) is drawn as an arc over the travel – a track in the ring's colour;
+        // a closed one colours the outline. A "value arc" hardly apart from the body is no arc but this ring.
+        const closed = hits.length >= angles * 0.85;
+        const weakArc = arc && colorDistance(rgbOf(arc.color), centre) < 50;
+        if (!closed && ringWidth >= 1.5 && (!arc || weakArc)) {
+          // the ring's own extent: it ends where the largest gap between the angles it was found at begins
+          let gapAt = 0, gap = 0;
+          ringAngles.forEach((a, i) => {
+            const next = i + 1 < ringAngles.length ? ringAngles[i + 1]! : ringAngles[0]! + Math.PI * 2;
+            if (next - a > gap) { gap = next - a; gapAt = i; }
+          });
+          const half = Math.PI / angles;
+          let trackStart = (gapAt + 1 < ringAngles.length ? ringAngles[gapAt + 1]! : ringAngles[0]!) - half;
+          if (trackStart > Math.PI) trackStart -= Math.PI * 2;
+          const trackEnd = trackStart + (Math.PI * 2 - gap) + 2 * half;
+          ringArc = { color: hex(ring), radius: ringRadius, width: ringWidth, track: hex(ring), trackStart, trackEnd };
+          // the body lies inside the ring
+          radius = Math.min(radius, ringRadius - ringWidth / 2);
+        } else outline = hex(ring);
+      }
     }
   }
 
@@ -588,7 +624,7 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
     pointerOuter: Math.max(0.2, Math.min(1.05, outer)),
     pointerWidth: Math.max(1.5, Math.min(radius * 0.14, middle.length / length / 1.3)),
     pointerDot: inner > 0.45 && outer - inner < 0.35 && !radialMark,
-    ...(arc ? { arc } : {}),
+    ...(ringArc ?? arc ? { arc: ringArc ?? arc } : {}),
     ...(ticks ? { ticks } : {}),
   };
 }
@@ -792,14 +828,18 @@ function valueOnKnob(fp: Footprint, rotary: RotaryStyle, median: Image, noise: U
   if (w < h * 1.2) return undefined;
   const box: Box = { x: inner.x + left, y: inner.y + top, w, h };
   // a value changes with the control (a logo printed on the knob does not)
-  const changing = frames.slice(1).filter((f, k) => maskPoints(diffMask(f, frames[k]!, 40, noise), median.width, box).length >= h).length;
-  if (changing < (frames.length - 1) * 0.6) return undefined;
+  // (only steps that move the control: the band probe records some positions twice)
+  const steps = frames.slice(1).map((f, k) => ({ f, prev: frames[k]!, moved: fp.param.frames[k + 1]?.value !== fp.param.frames[k]?.value })).filter((s) => s.moved);
+  const changing = steps.filter((s) => maskPoints(diffMask(s.f, s.prev, 40, noise), median.width, box).length >= h).length;
+  if (changing < Math.max(1, steps.length * 0.6)) return undefined;
   const frame = frames[frames.length >> 1]!;
   const points: [number, number][] = [];
   for (let y = box.y; y < box.y + box.h; y++) for (let x = box.x; x < box.x + box.w; x++) if (ink(frame, x, y)) points.push([x, y]);
   if (points.length < h * 2) return undefined;
   const decimals = shownDecimals(frames, box, ink);
-  return { ...box, color: hex(dominantAt(frame, points)), size: Math.max(7, Math.round(h * 1.3)), onKnob: true, ...(decimals !== undefined ? { decimals } : {}) };
+  // the core of the glyphs: small anti-aliased text has more edge pixels than core ones, which would turn white grey
+  const core = points.map(([x, y]) => pixel(frame, x, y)).sort((a, b) => colorDistance(b, body) - colorDistance(a, body)).slice(0, Math.max(1, Math.round(points.length * 0.3)));
+  return { ...box, color: hex(dominantColorOf(core)), size: Math.max(7, Math.round(h * 1.3)), onKnob: true, ...(decimals !== undefined ? { decimals } : {}) };
 }
 
 /**

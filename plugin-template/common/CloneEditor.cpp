@@ -89,9 +89,10 @@ namespace
                     g.strokePath (p, juce::PathStrokeType (r.arcWidth, juce::PathStrokeType::curved, juce::PathStrokeType::butt));
                 };
                 if (r.hasTrack)
-                    arc (r.start, r.end, colour (r.track));
+                    arc (r.hasTrackRange ? r.trackStart : r.start, r.hasTrackRange ? r.trackEnd : r.end, colour (r.track));
+                // (a printed ring – a track of its own extent – does not move with the value)
                 const float from = r.start + r.arcOrigin * (r.end - r.start);
-                if (std::abs (angle - from) > 0.01f)
+                if (! r.hasTrackRange && std::abs (angle - from) > 0.01f)
                     arc (from, angle, colour (r.arcColor));
             }
 

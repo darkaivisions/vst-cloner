@@ -26,6 +26,7 @@ struct Rotary
     float arcOrigin;   // where the value arc starts, 0…1 of the travel (0.5: centre position)
     Ticks ticks;
     bool hasCap; float capRadius; uint32_t cap;   // small disc on the axis
+    bool hasTrackRange; float trackStart, trackEnd;   // the track's own extent (a printed ring open at the bottom)
 };
 
 struct Readout

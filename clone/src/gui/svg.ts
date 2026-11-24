@@ -141,9 +141,9 @@ function renderControl(c: Control, value: number, fill: (f: Fill) => string): st
       }
     }
     if (s.arc) {
-      if (s.arc.track) parts.push(`<path d="${arcPath(s.cx, s.cy, s.arc.radius, s.startAngle, s.endAngle)}" stroke="${s.arc.track}" stroke-width="${s.arc.width}" fill="none"/>`);
+      if (s.arc.track) parts.push(`<path d="${arcPath(s.cx, s.cy, s.arc.radius, s.arc.trackStart ?? s.startAngle, s.arc.trackEnd ?? s.endAngle)}" stroke="${s.arc.track}" stroke-width="${s.arc.width}" fill="none"/>`);
       const from = s.startAngle + (s.arc.origin ?? 0) * (s.endAngle - s.startAngle);
-      if (Math.abs(angle - from) > 0.01) parts.push(`<path d="${arcPath(s.cx, s.cy, s.arc.radius, from, angle)}" stroke="${s.arc.color}" stroke-width="${s.arc.width}" fill="none"/>`);
+      if (s.arc.trackStart === undefined && Math.abs(angle - from) > 0.01) parts.push(`<path d="${arcPath(s.cx, s.cy, s.arc.radius, from, angle)}" stroke="${s.arc.color}" stroke-width="${s.arc.width}" fill="none"/>`);
     }
     parts.push(`<circle cx="${s.cx}" cy="${s.cy}" r="${s.radius}" fill="${fill(s.body)}"${s.outline ? ` stroke="${s.outline}" stroke-width="1.5"` : ""}/>`);
     if (s.pointerDot) {
