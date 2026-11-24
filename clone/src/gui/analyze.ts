@@ -268,6 +268,8 @@ interface Footprint {
   value: number;
   /** value text of the original at `value` */
   valueText?: string;
+  /** the other places the parameter changes (in the order of their size) */
+  others?: Box[];
 }
 
 function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryStyle | undefined {
@@ -2573,6 +2575,7 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
       param, frames, region: union([region, main]), value, ...(valueText ? { valueText } : {}),
       main: clampBox(grow({ x: main.x, y: main.y, w: main.w, h: main.h }, -3), base),
       ...(near ? { readout: clampBox(grow({ x: near.x, y: near.y, w: near.w, h: near.h }, -3), base) } : {}),
+      others: parts.filter((p) => p !== main0).map((p) => ({ x: p.x, y: p.y, w: p.w, h: p.h })),
     });
   }
 
@@ -2676,6 +2679,28 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
       if (![...displays, ...kept].some((o) => o !== m && covered(o, grown) > Math.min(area(o), area(grown)) * 0.1)) Object.assign(m, grown);
     }
     displays.push(...kept);
+  }
+
+  // A choice that also redraws a graph (LSP's compressor mode moves the time graph's threshold lines) may have
+  // been placed in that graph: its own box is where its option text changes – a flat part outside every display
+  // and every other control.
+  for (let i = 0; i < controls.length; i++) {
+    const c = controls[i]!;
+    if (c.kind !== "choice") continue;
+    const shared = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+    if (!displays.some((d) => d.kind === "generic" && shared(d, c) > area(c) * 0.8)) continue;
+    const fp = footprints.find((f) => f.param.index === c.param);
+    const free = (b: Box) => !displays.some((d) => shared(grow(d, 4), b) > 0) &&
+      !controls.some((o) => o !== c && [o, ...(o.readout ? [o.readout] : [])].some((r) => shared(grow(r, 3), b) > area(b) * 0.3));
+    const own = fp?.others?.find((b) => b.h >= 10 && b.h <= 30 && b.w >= b.h * 1.5 && free(b));
+    if (!fp || !own) continue;
+    let main = clampBox(grow(own, -3), base);
+    // the option text sits in a box of its own colour (the drop-down): the control is that box
+    const box = growRegion(base, main.x, main.y + Math.floor(main.h / 2));
+    if (box.x <= main.x && box.y <= main.y && box.x + box.w >= main.x + main.w && box.y + box.h >= main.y + main.h && box.w <= main.w * 4 && box.h <= main.h * 2.5) main = box;
+    const moved = analyzeControl({ ...fp, main, region: own, readout: undefined }, noise);
+    if (process.env.VCH_GUI_DEBUG) console.error(`choice ${c.name} moved out of a display to ${main.x},${main.y} ${main.w}x${main.h}`);
+    if (moved) controls[i] = moved;
   }
 
   // scales of curves and graphs: the numbers along their axes, read where they stand
