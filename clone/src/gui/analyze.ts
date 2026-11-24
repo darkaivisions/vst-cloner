@@ -398,7 +398,11 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
   const arcPoints = maskPoints(diffMask(frames[frames.length - 1]!, frames[0]!, 30, noise), width, arcSearch)
     .filter((p) => dist(p) > radius * 0.85 && dist(p) < radius * 1.7);
   const bins = new Set(arcPoints.map((p) => Math.floor(along(angleOf(p[0] - cx, p[1] - cy)) * 24)).filter((b) => b >= 0 && b < 24));
-  if (arcPoints.length > 20 && bins.size >= 16) {
+  // (an arc lies on a circle: changes spread over a band of radii are something else changing nearby – ZamGate's
+  // LEDs above its knob)
+  const radii = arcPoints.map(dist);
+  const onCircle = radii.length > 0 && percentile(radii, 0.9) - percentile(radii, 0.1) <= radius * 0.6;
+  if (arcPoints.length > 20 && bins.size >= 16 && onCircle) {
     const d = arcPoints.map(dist);
     const arcRadius = percentile(d, 0.5);
     // in each changed pixel one of the two frames shows the arc, the other the track: the arc is the one that
@@ -2515,7 +2519,17 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
         }
       }
     }
-    const rest = allParts.filter((p) => !large.includes(p) && !(displayBox && contains(displayBox, p)));
+    // A knob close to the display it changes (ZamGate's max gate close under its LED row) merges with it at the
+    // coarse dilation: within a large part, a compact piece of a knob's size that is not one of a row of alike
+    // pieces (LEDs) is a control of its own.
+    const lone = large.flatMap((part) => {
+      const inside = new Uint8Array(width * height);
+      for (let y = part.y; y < part.y + part.h; y++) for (let x = part.x; x < part.x + part.w; x++) inside[y * width + x] = changed[y * width + x]!;
+      const pieces = components(dilate(inside, width, height, 1), width, height, 10);
+      return pieces.filter((q) => q.w >= 16 && q.h >= 16 && q.w <= q.h * 1.5 && q.h <= q.w * 1.5 && area(q) < width * height * 0.08 &&
+        !pieces.some((o) => o !== q && Math.abs(o.cy - q.cy) <= 4 && area(o) > area(q) * 0.6 && area(o) < area(q) * 1.6));
+    });
+    const rest = [...allParts.filter((p) => !large.includes(p) && !(displayBox && contains(displayBox, p))), ...lone];
     // Parts that look like a display are not the control while others are left: a tall and wide area (a curve
     // below the size of a "large" part), a wide band, or lines of the same width one below the other (a time
     // graph's traces). A long narrow fader is none of these.
@@ -2526,7 +2540,7 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     const controlLike = rest.filter((p) => !displayLike(p));
     const parts = controlLike.length ? controlLike : rest;
     if (!parts.length) continue;
-    if (displayBox && !(parts[0]!.w <= width * 0.3 && parts[0]!.h <= height * 0.3)) continue;
+    if (displayBox && !lone.includes(parts[0]!) && !(parts[0]!.w <= width * 0.3 && parts[0]!.h <= height * 0.3)) continue;
     const pendingParam = { param, frames, parts, changed };
     pending.push(pendingParam);
   }
@@ -2689,25 +2703,27 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     displays.push(...kept);
   }
 
-  // A choice that also redraws a graph (LSP's compressor mode moves the time graph's threshold lines) may have
-  // been placed in that graph: its own box is where its option text changes – a flat part outside every display
-  // and every other control.
+  // A choice or switch that also redraws a display (LSP's compressor mode moves the time graph's threshold lines)
+  // may have been placed in it: its own box is another place it changes, outside every display and every other
+  // control – for a choice a flat part, where its option text changes.
   for (let i = 0; i < controls.length; i++) {
     const c = controls[i]!;
-    if (c.kind !== "choice") continue;
+    if (c.kind !== "choice" && c.kind !== "toggle") continue;
     const shared = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
-    if (!displays.some((d) => d.kind === "generic" && shared(d, c) > area(c) * 0.8)) continue;
+    // (a switch that also lights a meter – ZamGate's open/shut mode its LED row – the same)
+    if (!displays.some((d) => shared(grow(d, 3), c) > area(c) * 0.8)) continue;
     const fp = footprints.find((f) => f.param.index === c.param);
     const free = (b: Box) => !displays.some((d) => shared(grow(d, 4), b) > 0) &&
       !controls.some((o) => o !== c && [o, ...(o.readout ? [o.readout] : [])].some((r) => shared(grow(r, 3), b) > area(b) * 0.3));
-    const own = fp?.others?.find((b) => b.h >= 10 && b.h <= 30 && b.w >= b.h * 1.5 && free(b));
+    const shaped = (b: Box) => (c.kind === "choice" ? b.h >= 10 && b.h <= 30 && b.w >= b.h * 1.5 : b.w >= 8 && b.h >= 8 && b.w <= 80 && b.h <= 50);
+    const own = fp?.others?.find((b) => shaped(b) && free(b));
     if (!fp || !own) continue;
     let main = clampBox(grow(own, -3), base);
     // the option text sits in a box of its own colour (the drop-down): the control is that box
     const box = growRegion(base, main.x, main.y + Math.floor(main.h / 2));
-    if (box.x <= main.x && box.y <= main.y && box.x + box.w >= main.x + main.w && box.y + box.h >= main.y + main.h && box.w <= main.w * 4 && box.h <= main.h * 2.5) main = box;
+    if (c.kind === "choice" && box.x <= main.x && box.y <= main.y && box.x + box.w >= main.x + main.w && box.y + box.h >= main.y + main.h && box.w <= main.w * 4 && box.h <= main.h * 2.5) main = box;
     const moved = analyzeControl({ ...fp, main, region: own, readout: undefined }, noise);
-    if (process.env.VCH_GUI_DEBUG) console.error(`choice ${c.name} moved out of a display to ${main.x},${main.y} ${main.w}x${main.h}`);
+    if (process.env.VCH_GUI_DEBUG) console.error(`${c.kind} ${c.name} moved out of a display to ${main.x},${main.y} ${main.w}x${main.h}`);
     if (moved) controls[i] = moved;
   }
 
