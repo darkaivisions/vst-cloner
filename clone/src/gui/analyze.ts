@@ -21,6 +21,7 @@ import {
 import type { Circle, Control, Display, Fill, GuiModel, LevelBar, Line, Needle, Panel, Readout, RotaryStyle, TextItem } from "./model.ts";
 import type { GuiProbe, ProbedParameter } from "./probe.ts";
 import { METER_FILM, readFilm, segmentTimes, type FilmFrame } from "./film.ts";
+import { cutGlyphs, glyphTemplates, readGlyphs } from "./glyphs.ts";
 import { findTesseract, plausibleText, recognizeBlocks, splitWords, type OcrResult } from "./ocr.ts";
 
 const TAU = Math.PI * 2;
@@ -2641,6 +2642,48 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     if (plausibleText(ocr[i], 70) || corrected(ocr[i], b.uppercase)) return;
     const source = sources.find((j) => j !== i && Math.abs(blocks[j]!.box.w - b.box.w) <= 1 && Math.abs(blocks[j]!.box.h - b.box.h) <= 1 && alike(b.box, blocks[j]!.box));
     if (source !== undefined) ocr[i] = { ...ocr[source]!, box: b.box };
+  });
+  // What is still unreadable is read with the editor's own glyphs: the characters of the labels read for sure,
+  // cut apart at the empty columns, against the glyphs of each block. A glyph no template matches is filled in
+  // by an editor word when exactly one fits ("?B" → "DB").
+  const templates = blocks.flatMap((b, i) => {
+    const read = ocr[i];
+    // (numbers from a scale row are read as a line and split: sure enough at 75)
+    if (!plausibleText(read, isNumber(i) ? 75 : 80) || !/^[\p{L}\p{N}+\-.,%\s]+$/u.test(read.text)) return [];
+    const text = b.uppercase ? read.text.toUpperCase() : read.text;
+    return glyphTemplates(cutGlyphs(base, read.box ?? b.box, b.color, b.background), text);
+  });
+  const vocabulary = [...LABEL_WORDS, ...nameWords.map((w) => w.toUpperCase())];
+  blocks.forEach((b, i) => {
+    if (plausibleText(ocr[i], 70) || isNumber(i) || b.box.h > 24 || b.box.w > 120) return;
+    const read = readGlyphs(cutGlyphs(base, b.box, b.color, b.background), templates);
+    if (read.length < 1 || read.length > 12) return;
+    if (process.env.VCH_GUI_DEBUG) console.error(`glyph read ${b.box.x},${b.box.y}: ${read.map((r) => `${r.space ? "_ " : ""}[${r.candidates.slice(0, 3).map((c) => `${c.char}${c.d.toFixed(2)}`).join(",")}]`).join(" ")}`);
+    // as written, where every glyph is close to one character only
+    const sure = read.every((r) => r.candidates.length && r.candidates[0]!.d <= 0.15 && (r.candidates.length === 1 || r.candidates[1]!.d - r.candidates[0]!.d > 0.08));
+    let text: string | undefined = sure ? read.map((r) => (r.space ? " " : "") + r.candidates[0]!.char).join("") : undefined;
+    if (!text) {
+      // else the one editor word that fits every glyph: one of its candidates, a look-alike of one, or an unknown
+      // glyph – at least half of the letters known
+      const fits = [...new Set(vocabulary)].filter((w) => w.length === read.length).map((w) => {
+        let score = 0;
+        for (let k = 0; k < w.length; k++) {
+          const c = read[k]!.candidates, ch = w[k]!;
+          if (!c.length) continue;
+          if (c.some((x) => x.char.toUpperCase() === ch)) score += 1;
+          else if (c.some((x) => lookAlike(x.char) === lookAlike(ch))) score += 0.5;
+          else return { w, score: -1 };
+        }
+        return { w, score };
+      }).filter((f) => f.score >= read.length / 2).sort((a, b) => b.score - a.score);
+      if (!fits.length || (fits.length > 1 && fits[1]!.score === fits[0]!.score)) return;
+      text = b.uppercase || fits[0]!.w.length <= 3 ? fits[0]!.w : fits[0]!.w[0] + fits[0]!.w.slice(1).toLowerCase();
+    }
+    const glyphs = read.map((r) => r.glyph);
+    if (!/[\p{L}\p{N}]/u.test(text)) return;
+    if (process.env.VCH_GUI_DEBUG) console.error(`glyphs ${b.box.x},${b.box.y}: "${text}" (tesseract: "${(ocr[i] as OcrResult | undefined)?.text ?? ""}")`);
+    const ink = glyphs.reduce((u, g) => ({ x0: Math.min(u.x0, g.x), y0: Math.min(u.y0, g.y), x1: Math.max(u.x1, g.x + g.w), y1: Math.max(u.y1, g.y + g.h) }), { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity });
+    ocr[i] = { text, confidence: 90, box: { x: ink.x0, y: ink.y0, w: ink.x1 - ink.x0, h: ink.y1 - ink.y0 } };
   });
   if (process.env.VCH_GUI_DEBUG) blocks.forEach((b, i) => console.error(`text block ${b.box.x},${b.box.y} ${b.box.w}x${b.box.h} ink ${hex(b.color)} on ${hex(b.background)}: "${ocr[i]?.text ?? ""}" (${Math.round(ocr[i]?.confidence ?? 0)})`));
   const readText = (i: number, minConfidence = 70) => (plausibleText(ocr[i], minConfidence) ? ocr[i]!.text : undefined);

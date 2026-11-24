@@ -88,7 +88,7 @@ export function splitWords(img: Image, box: Box, text: Rgb, background: Rgb): Bo
 }
 
 /** Ink amount of a pixel, 0 (background) … 1 (text colour), against the background of its row. */
-function inkMeasure(img: Image, box: Box, text: Rgb, background: Rgb): (x: number, y: number) => number {
+export function inkMeasure(img: Image, box: Box, text: Rgb, background: Rgb): (x: number, y: number) => number {
   const span = Math.max(30, colorDistance(text, background));
   // The background of each row: a gradient behind the text (a bevel getting lighter towards the editor's edge)
   // would otherwise read as a grey haze. Per row the pixels nearest the block's background colour stand for it.
