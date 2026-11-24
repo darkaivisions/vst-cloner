@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fitAxis, scaleNumber } from "../src/gui/analyze.ts";
+import { fitAxis, misreadScaleValue, scaleNumber } from "../src/gui/analyze.ts";
 
 test("scale numbers: signs, units and a little junk around them", () => {
   assert.equal(scaleNumber("-24"), -24);
@@ -27,4 +27,14 @@ test("no axis from numbers that are no scale", () => {
   // too few, and uneven steps (2.5 read as 25)
   assert.equal(fitAxis([{ at: 0, value: 0 }, { at: 50, value: 1 }]), undefined);
   assert.equal(fitAxis([{ at: 0, value: 5 }, { at: 100, value: 4 }, { at: 200, value: 25 }]), undefined);
+});
+
+test("numbers of an axis read wrong take the axis value where they stand", () => {
+  assert.equal(misreadScaleValue("I.", -60.6, 12), -60);
+  assert.equal(misreadScaleValue("48", -48.2, 12), -48);
+  assert.equal(misreadScaleValue("45", 4.52, 0.5), 4.5);
+  // other digits, words, or between two steps: no
+  assert.equal(misreadScaleValue("36", -48, 12), undefined);
+  assert.equal(misreadScaleValue("dB", -12, 12), undefined);
+  assert.equal(misreadScaleValue("I.", -54, 12), undefined);
 });

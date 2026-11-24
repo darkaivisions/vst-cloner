@@ -1715,6 +1715,20 @@ export function scaleNumber(text: string): number | undefined {
 }
 
 /**
+ * A block on an axis read wrong ("-60" as "I.", "-48" as "48", "4.5" as "45"): the axis value where it stands when
+ * that is right on a step of the scale and the reading is nothing but strokes or the value's own digits.
+ */
+export function misreadScaleValue(text: string, axisValue: number, step: number): number | undefined {
+  const t = text.replace(/\s/g, "");
+  if (!/^[-+−]?[\dIl|.,']*$/.test(t) || !(step > 0)) return undefined;
+  const k = Math.round(axisValue / step), v = k * step;
+  if (Math.abs(axisValue - v) > step * 0.15) return undefined;
+  // (digits compared without the point: "45" is a 4.5 whose point was lost)
+  const digits = t.replace(/\D/g, "");
+  return digits && digits !== String(Math.abs(v)).replace(/\D/g, "") ? undefined : v;
+}
+
+/**
  * Straight line through (position, value) of the numbers of one row or column: at least three, in order (the values
  * rise or fall with the position) and fitting within a tenth of their spacing – else they are no scale (value
  * readouts, misreadings). Up to a third of the numbers may be misread ("-48" as "-45", a lost minus).
@@ -1775,7 +1789,22 @@ async function readScale(img: Image, d: Box): Promise<Display["scale"]> {
       y = end + 1;
     }
   }
-  const blocks = textBlocks(img, outside).filter((b) => b.box.h <= 20 && b.box.w <= 60);
+  // Numbers in the colour of an axis line they stand on (LSP's transfer curve: grey digits along its 0 dB lines)
+  // lose their strokes along it in textBlocks, which takes them for part of the line. Without the grid lines the
+  // ink here is the numbers, the curves and their crossings: pieces of ink of a number's size, a few pixels apart
+  // in a row, are the numbers – and stand in for what textBlocks found there.
+  const inkMask = new Uint8Array(width * height);
+  for (let y = box.y; y < box.y + box.h; y++) for (let x = box.x; x < box.x + box.w; x++) if (!outside[y * width + x] && ink(x, y)) inkMask[y * width + x] = 1;
+  const own = components(dilate(inkMask, width, height, 2, 0), width, height, 6).flatMap((c) => {
+    const points = maskPoints(inkMask, width, { x: c.x, y: c.y, w: c.w, h: c.h });
+    if (points.length < 6) return [];
+    const xs = points.map((q) => q[0]), ys = points.map((q) => q[1]);
+    const tight = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs) + 1, h: Math.max(...ys) - Math.min(...ys) + 1 };
+    if (tight.h < 5 || tight.h > 20 || tight.w > 60) return [];
+    return [{ box: tight, color: dominantAt(img, points), background: bg }];
+  });
+  const found = textBlocks(img, outside).filter((b) => b.box.h <= 20 && b.box.w <= 60);
+  const blocks = [...own, ...found.filter((b) => !own.some((o) => overlaps(o.box, b.box)))];
   if (blocks.length < 3) return undefined;
   // read without the grid lines: they are painted over in the background colour
   const clean: Image = { width, height, data: img.data.slice() };
@@ -1783,11 +1812,14 @@ async function readScale(img: Image, d: Box): Promise<Display["scale"]> {
     if (outside[y * width + x]) clean.data.set([bg[0], bg[1], bg[2], 255], (y * width + x) * 4);
   }
   const reads = await recognizeBlocks(clean, blocks.map((b) => ({ box: clampBox(grow(b.box, 1), img), color: b.color, background: b.background })));
+  if (process.env.VCH_GUI_DEBUG) console.error(`scale ${d.x},${d.y} ${d.w}x${d.h}: ${blocks.map((b, i) => `${b.box.x},${b.box.y} ${b.box.w}x${b.box.h} "${reads[i]?.text ?? ""}" ${Math.round(reads[i]?.confidence ?? 0)}`).join(" | ")}`);
   const numbers = blocks.flatMap((b, i) => {
     const r = reads[i];
     const value = r && r.confidence >= 70 ? scaleNumber(r.text) : undefined;
     const at = r?.box ?? b.box;
-    return value === undefined ? [] : [{ text: String(value), value, x: at.x, y: at.y, w: at.w, h: at.h, color: b.color }];
+    // (the sign as printed: "+12" stays "+12")
+    const text = value !== undefined && value > 0 && /^\s*\+/.test(r!.text) ? `+${value}` : String(value);
+    return value === undefined ? [] : [{ text, value, x: at.x, y: at.y, w: at.w, h: at.h, color: b.color }];
   });
   if (numbers.length < 3) return undefined;
   // rows: numbers whose centres lie on one line; the largest group with a fitting line is the axis
@@ -1800,16 +1832,37 @@ async function readScale(img: Image, d: Box): Promise<Display["scale"]> {
     }
     return groups.sort((a, b) => b.length - a.length);
   };
-  const axisOf = (groups: (typeof numbers)[], at: (n: (typeof numbers)[number]) => number) => {
+  // Blocks of the axis misread (LSP: "-60" as "I.", "-48" as "48"): in its row or column, as wide as its numbers,
+  // right on a step of the scale, and read as nothing but those digits or strokes – they are the axis there.
+  const misread = blocks.flatMap((b, i) => {
+    const t = (reads[i]?.text ?? "").replace(/\s/g, "");
+    // (the block's box: what was read may leave out the glyph misread)
+    return !/^[-+−]?[\dIl|.,']*$/.test(t) ? [] : [{ ...b.box, read: reads[i]?.box ?? b.box, text: t, color: b.color }];
+  });
+  const fillIn = (labels: (typeof numbers)[number][], fit: { a: number; b: number }, along: (n: Box) => number, across: (n: Box) => number) => {
+    const values = labels.map((n) => n.value).sort((a, b) => a - b);
+    const step = Math.min(...values.slice(1).map((v, k) => v - values[k]!));
+    const line = labels.map((n) => across(n)), width = percentile(labels.map((n) => n.w), 0.5), height = percentile(labels.map((n) => n.h), 0.5);
+    const plus = labels.some((n) => n.text.startsWith("+"));
+    const added = misread.flatMap((m) => {
+      if (labels.some((n) => n.x === m.read.x && n.y === m.read.y)) return [];
+      if (!line.some((l) => Math.abs(l - across(m)) <= 3) || Math.abs(m.w - width) > 3 || Math.abs(m.h - height) > 2) return [];
+      const v = misreadScaleValue(m.text, fit.a + fit.b * along(m), step);
+      if (v === undefined || labels.some((n) => n.value === v)) return [];
+      return [{ text: v > 0 && (plus || m.text.startsWith("+")) ? `+${v}` : String(v), value: v, x: m.x, y: m.y, w: m.w, h: m.h, color: m.color }];
+    });
+    return [...labels, ...added];
+  };
+  const axisOf = (groups: (typeof numbers)[], at: (n: Box) => number, across: (n: Box) => number) => {
     for (const g of groups) {
       const fit = fitAxis(g.map((n) => ({ at: at(n), value: n.value, n })));
-      if (fit) return { fit: { a: fit.a, b: fit.b }, labels: fit.inliers.map((p) => p.n) };
+      if (fit) return { fit: { a: fit.a, b: fit.b }, labels: fillIn(fit.inliers.map((p) => p.n), fit, at, across) };
     }
     return undefined;
   };
-  const xAxis = axisOf(group((n) => n.y + n.h / 2), (n) => n.x + n.w / 2);
-  // a column of right-aligned numbers lines up at their right edge
-  const yAxis = axisOf([...group((n) => n.x + n.w), ...group((n) => n.x + n.w / 2)], (n) => n.y + n.h / 2);
+  const xAxis = axisOf(group((n) => n.y + n.h / 2), (n) => n.x + n.w / 2, (n) => n.y + n.h / 2);
+  // a column of numbers lines up at their right edge, centre or left edge
+  const yAxis = axisOf([...group((n) => n.x + n.w), ...group((n) => n.x + n.w / 2), ...group((n) => n.x)].sort((a, b) => b.length - a.length), (n) => n.y + n.h / 2, (n) => n.x + n.w / 2);
   if (!xAxis && !yAxis) return undefined;
   const labels = [...new Set([...(xAxis?.labels ?? []), ...(yAxis?.labels ?? [])])];
   return {
