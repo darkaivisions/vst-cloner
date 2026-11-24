@@ -21,7 +21,7 @@ import {
 import type { Circle, Control, Display, Fill, GuiModel, LevelBar, Line, Needle, Panel, Readout, RotaryStyle, TextItem } from "./model.ts";
 import type { GuiProbe, ProbedParameter } from "./probe.ts";
 import { METER_FILM, readFilm, segmentTimes, type FilmFrame } from "./film.ts";
-import { findTesseract, plausibleText, recognizeBlocks, splitWords } from "./ocr.ts";
+import { findTesseract, plausibleText, recognizeBlocks, splitWords, type OcrResult } from "./ocr.ts";
 
 const TAU = Math.PI * 2;
 
@@ -167,6 +167,39 @@ function editDistance(a: string, b: string): number {
 
 /** Words common on plugin editors; uncertain readings one letter away are corrected ("RISHT" → "RIGHT"). */
 const COMMON_WORDS = ["LEFT", "RIGHT", "FRONT", "BACK", "TOP", "BOTTOM", "MID", "SIDE", "INPUT", "OUTPUT", "GAIN", "LEVEL", "MIX", "DRY", "WET", "LOW", "HIGH", "BASS", "TREBLE", "ON", "OFF", "BYPASS", "STEREO", "MONO"];
+
+/** Words of editor labels: corrected when the reading is one of them seen through look-alike glyphs. */
+const LABEL_WORDS = [...COMMON_WORDS,
+  "FREQ", "FREQUENCY", "DB", "BW", "Q", "HZ", "KHZ", "MS", "LF", "MF", "HF", "LMF", "HMF", "LO", "HI", "SHELF", "PEAK", "PEAKS", "MASTER", "TRIM",
+  "DRIVE", "TONE", "VOLUME", "PRESENCE", "ATTACK", "RELEASE", "THRESHOLD", "RATIO", "KNEE", "MAKEUP", "SLEW", "HOLD", "RANGE", "SIDECHAIN",
+  "WIDTH", "DEPTH", "RATE", "SPEED", "TIME", "DELAY", "FEEDBACK", "DECAY", "SIZE", "PREDELAY", "DAMP", "DAMPING", "CUTOFF", "RESONANCE",
+  "FILTER", "MODE", "TYPE", "AMOUNT", "BLEND", "SHAPE", "BOOST", "CUT", "REDUCTION", "METER", "CLIP", "LIMIT", "CEILING", "LOOKAHEAD"];
+
+/** Glyphs tesseract confuses in small pixel fonts, by look: "08" is "DB", "FRED" is "FREQ", "Bw" is "BW". */
+function lookAlike(word: string): string {
+  const classes: Record<string, string> = { O: "O", "0": "O", D: "O", Q: "O", B: "B", "8": "B", E: "B", I: "I", "1": "I", L: "I", "|": "I", "!": "I", S: "S", "5": "S", Z: "Z", "2": "Z", G: "G", "6": "G" };
+  return [...word.toUpperCase()].map((c) => classes[c] ?? c).join("");
+}
+
+/**
+ * An uncertain reading that is an editor word seen through look-alike glyphs (or one letter away from a longer
+ * one) becomes that word, in the case of the block. Words of the plugin's parameter names count too.
+ */
+export function labelWord(read: string, uppercase: boolean, extra: string[] = []): string | undefined {
+  const text = read.trim().replace(/[^\p{L}\p{N}]/gu, "");
+  if (text.length < 2 || /^\d+$/.test(text)) return undefined;
+  const words = [...LABEL_WORDS, ...extra.map((w) => w.toUpperCase())];
+  const shape = lookAlike(text);
+  const match = words.find((w) => w.length === text.length && lookAlike(w) === shape)
+    ?? (text.length >= 4 ? words.find((w) => w.length === text.length && editDistance(lookAlike(w), shape) === 1) : undefined);
+  if (!match) return undefined;
+  // a word read right keeps its spelling ("Attack", "dB", "ms"); only an odd mix of cases is a misreading ("Bw")
+  if (match === text.toUpperCase()) {
+    const usual = text === text.toUpperCase() || text === text.toLowerCase() || (text.length > 2 && text.slice(1) === text.slice(1).toLowerCase()) || ["dB", "Hz", "kHz", "ms"].includes(text);
+    if (usual) return undefined;
+  }
+  return uppercase || text === text.toUpperCase() ? match : match[0] + match.slice(1).toLowerCase();
+}
 
 function commonWord(word: string, confidence: number): string {
   if (confidence >= 85 || word.length < 3) return word;
@@ -2552,6 +2585,63 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
     blocks.splice(i, 1, ...words.map((w) => ({ ...b, box: w })));
     ocr.splice(i, 1, ...words.map((w, k) => ({ text: fixed[k]!, confidence: Math.max(read.confidence, 75), box: w })));
   }
+  // labels read through look-alike glyphs: corrected against the words editors use and the parameters' names
+  const nameWords = [...new Set(parameters.flatMap((p) => p.name.split(/[^\p{L}]+/u)).filter((w) => w.length >= 2))];
+  // (a number with specks of the edge around it – "’20", "-50°", "*10" – is that number)
+  const cleanNumber = (w: string) => {
+    const bare = w.replace(/^[’'"“”‘°*«»^`.,]+|[’'"“”‘°*«»^`,]+$/g, "");
+    return bare !== w && /^[+-]?\d+(?:\.\d+)?[kK]?$/.test(bare) ? bare.replace(/k$/, "K") : undefined;
+  };
+  const corrected = (read: OcrResult | undefined, uppercase: boolean): OcrResult | undefined => {
+    if (!read) return undefined;
+    const words = read.text.trim().split(/\s+/);
+    const fixed = words.map((w) => labelWord(w, uppercase, nameWords) ?? cleanNumber(w) ?? w);
+    return fixed.some((w, k) => w !== words[k]) ? { ...read, text: fixed.join(" "), confidence: Math.max(read.confidence, 80) } : undefined;
+  };
+  // small labels tesseract reads differently with every margin ("DB" as "w", "o8", "08"): a few margins more,
+  // the first that gives an editor word is taken
+  const isNumber = (i: number) => /^[+-]?\d+(?:[.,]\d+)?[kK%]?$/.test(ocr[i]?.text.trim() ?? "");
+  const small = blocks.map((_, i) => i).filter((i) => !isNumber(i) && blocks[i]!.box.h <= 14 && blocks[i]!.box.w <= 60 && !(ocr[i] && ocr[i]!.confidence >= 90) && !corrected(ocr[i], blocks[i]!.uppercase));
+  const retries = await Promise.all([1, 2, 3].map((margin) => recognizeBlocks(base, small.map((i) => ({ box: clampBox(grow(blocks[i]!.box, 1 + margin), base), color: blocks[i]!.color, background: blocks[i]!.background })))));
+  if (process.env.VCH_GUI_DEBUG) small.forEach((i, k) => console.error(`retry ${blocks[i]!.box.x},${blocks[i]!.box.y}: ${retries.map((r) => `"${r[k]?.text ?? ""}"`).join(" ")}`));
+  // height of the labels read for sure: a corrected text in a taller block (a number merged with a knob's ring)
+  // keeps only the piece of the block as tall as a label
+  const sureHeights = blocks.flatMap((b, i) => (plausibleText(ocr[i], 85) ? [ocr[i]!.box?.h ?? b.box.h] : []));
+  const textHeight = sureHeights.length ? percentile(sureHeights, 0.5) : 10;
+  blocks.forEach((b, i) => {
+    if (isNumber(i) || (b.box.h > 14 && (ocr[i]?.confidence ?? 0) >= 95)) return;
+    const k = small.indexOf(i);
+    const fixed = corrected(ocr[i], b.uppercase) ?? (k >= 0 ? retries.map((r) => corrected(r[k], b.uppercase)).find(Boolean) : undefined);
+    if (!fixed) return;
+    let box = fixed.box ?? b.box;
+    if (box.h > textHeight * 1.5) {
+      const piece = splitWords(base, b.box, b.color, b.background).filter((w) => w.h <= textHeight * 1.5 && w.h >= textHeight * 0.5).sort((x, y) => area(y) - area(x))[0];
+      if (!piece) return;
+      box = piece;
+    }
+    ocr[i] = { ...fixed, box };
+  });
+  // An editor repeats its labels (ZamEQ2: FREQ, DB, BW at every band): a block nothing could be read in that looks
+  // like one that was read – same size, the same pixels within a pixel's shift – says the same.
+  const lumAt = (x: number, y: number) => luminance(pixel(base, Math.min(width - 1, Math.max(0, x)), Math.min(height - 1, Math.max(0, y))));
+  const alike = (a: Box, b: Box) => {
+    let best = Infinity;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      let sum = 0, n = 0;
+      for (let y = 0; y < Math.min(a.h, b.h); y++) for (let x = 0; x < Math.min(a.w, b.w); x++) {
+        sum += Math.abs(lumAt(a.x + x, a.y + y) - lumAt(b.x + x + dx, b.y + y + dy));
+        n++;
+      }
+      best = Math.min(best, sum / Math.max(1, n));
+    }
+    return best < 16;
+  };
+  const sources = blocks.map((_, i) => i).filter((i) => plausibleText(ocr[i], 80) && /\p{L}/u.test(ocr[i]!.text));
+  blocks.forEach((b, i) => {
+    if (plausibleText(ocr[i], 70) || corrected(ocr[i], b.uppercase)) return;
+    const source = sources.find((j) => j !== i && Math.abs(blocks[j]!.box.w - b.box.w) <= 1 && Math.abs(blocks[j]!.box.h - b.box.h) <= 1 && alike(b.box, blocks[j]!.box));
+    if (source !== undefined) ocr[i] = { ...ocr[source]!, box: b.box };
+  });
   if (process.env.VCH_GUI_DEBUG) blocks.forEach((b, i) => console.error(`text block ${b.box.x},${b.box.y} ${b.box.w}x${b.box.h} ink ${hex(b.color)} on ${hex(b.background)}: "${ocr[i]?.text ?? ""}" (${Math.round(ocr[i]?.confidence ?? 0)})`));
   const readText = (i: number, minConfidence = 70) => (plausibleText(ocr[i], minConfidence) ? ocr[i]!.text : undefined);
   /** box of the recognised words (icons next to the text are left out) */
