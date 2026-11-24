@@ -470,6 +470,30 @@ function analyzeRotary(fp: Footprint, median: Image, noise: Uint8Array): RotaryS
     }
   }
 
+  // A coloured ring a little inside the rim (ZamComp's red, green, yellow … rings between black edges): per angle
+  // the most saturated pixel near the rim; where most angles have one of the same hue, that is the knob's colour.
+  // (Per angle rather than on one circle: a centre a pixel or two off misses a ring two pixels wide.)
+  {
+    const saturation = (c: Rgb) => Math.max(...c) - Math.min(...c);
+    const hits: Rgb[] = [];
+    // (a body coloured all over – x42's yellow, red and blue knobs – has no ring of its own to find)
+    const angles = 48;
+    for (let k = 0; k < angles; k++) {
+      const a = (k / angles) * Math.PI * 2;
+      let best: Rgb | undefined;
+      for (let r = radius * 0.7; r <= radius * 1.08; r += 0.5) {
+        const c = pixel(median, Math.round(cx + Math.sin(a) * r), Math.round(cy - Math.cos(a) * r));
+        if (saturation(c) > 60 && (!best || saturation(c) > saturation(best))) best = c;
+      }
+      if (best) hits.push(best);
+    }
+    if (hits.length >= angles * 0.6 && saturation(centre) <= 50) {
+      const ring = dominantColorOf(hits);
+      const alike = hits.filter((c) => colorDistance(c, ring) < 80).length;
+      if (alike >= angles * 0.5 && colorDistance(ring, centre) > 40) outline = hex(ring);
+    }
+  }
+
   // tick marks around the knob: short marks at regular angles on a ring outside the body
   let ticks: RotaryStyle["ticks"];
   const background = outside;
@@ -694,6 +718,7 @@ function analyzeControl(fp: Footprint, noise: Uint8Array): Control | undefined {
 
   const rotary = analyzeRotary(fp, median, noise);
   if (!rotary) return undefined;
+  const onKnob = readout ? undefined : valueOnKnob(fp, rotary, median, noise);
   const extent = rotary.radius * Math.max(1, rotary.ticks?.outer ?? 1, rotary.arc ? (rotary.arc.radius + rotary.arc.width / 2) / rotary.radius : 1);
   return {
     ...base,
@@ -703,7 +728,82 @@ function analyzeControl(fp: Footprint, noise: Uint8Array): Control | undefined {
     w: Math.round(extent * 2 + 2),
     h: Math.round(extent * 2 + 2),
     rotary,
+    ...(onKnob ? { readout: onKnob } : {}),
   };
+}
+
+const rgbOf = (h: string): Rgb => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+
+/**
+ * A value written on the knob itself (ZamComp's "10.0" in the middle of the knob): rows around the centre that
+ * change from almost every position to the next – a pointer passes any row only now and then. The rows form a
+ * flat band, the text is what stands out from the knob body there.
+ */
+function valueOnKnob(fp: Footprint, rotary: RotaryStyle, median: Image, noise: Uint8Array): Readout | undefined {
+  const { frames } = fp;
+  if (frames.length < 4) return undefined;
+  const r = rotary.radius;
+  const inner = clampBox({ x: Math.round(rotary.cx - r * 0.8), y: Math.round(rotary.cy - r * 0.55), w: Math.round(r * 1.6), h: Math.round(r * 1.1) }, median);
+  const body = rgbOf(rotary.body.color);
+  // text stands out from the body in every frame; a pointer is a thin line that crosses a row only now and then
+  const ink = (f: Image, x: number, y: number) => colorDistance(pixel(f, x, y), body) > 110;
+  const rows = new Float64Array(inner.h);
+  for (const f of frames) for (let y = 0; y < inner.h; y++) {
+    let n = 0;
+    for (let x = inner.x; x < inner.x + inner.w; x++) if (ink(f, x, inner.y + y)) n++;
+    if (n >= 2) rows[y]! += 1;
+  }
+  const always = frames.length * 0.6;
+  const centre = Math.round(rotary.cy - inner.y);
+  let top = -1, bottom = -1;
+  for (let d = 0; d < inner.h / 2 && top < 0; d++) for (const y of [centre - d, centre + d]) if (top < 0 && y >= 0 && y < inner.h && rows[y]! >= always) top = bottom = y;
+  if (process.env.VCH_GUI_DEBUG) console.error(`value on knob ${fp.param.name}: r ${r.toFixed(1)} rows ${[...rows].join(",")} (of ${frames.length})`);
+  if (top < 0) return undefined;
+  // (a thin row inside the text – the bar of an "e", a gap between lines of a glyph – does not end the band)
+  const strong = (y: number) => y >= 0 && y < inner.h && rows[y]! >= always;
+  while (strong(top - 1) || (strong(top - 2) && rows[top - 1]! > 0)) top -= strong(top - 1) ? 1 : 2;
+  while (strong(bottom + 1) || (strong(bottom + 2) && rows[bottom + 1]! > 0)) bottom += strong(bottom + 1) ? 1 : 2;
+  const h = bottom - top + 1;
+  if (h < Math.max(5, r * 0.15) || h > r * 0.7 || Math.abs(inner.y + (top + bottom) / 2 - rotary.cy) > r * 0.4) return undefined;
+  // columns: ink in any frame
+  let left = inner.w, right = -1;
+  for (const f of frames) for (let y = top; y <= bottom; y++) for (let x = 0; x < inner.w; x++) if (ink(f, inner.x + x, inner.y + y)) { left = Math.min(left, x); right = Math.max(right, x); }
+  const w = right - left + 1;
+  if (w < h * 1.2) return undefined;
+  const box: Box = { x: inner.x + left, y: inner.y + top, w, h };
+  // a value changes with the control (a logo printed on the knob does not)
+  const changing = frames.slice(1).filter((f, k) => maskPoints(diffMask(f, frames[k]!, 40, noise), median.width, box).length >= h).length;
+  if (changing < (frames.length - 1) * 0.6) return undefined;
+  const frame = frames[frames.length >> 1]!;
+  const points: [number, number][] = [];
+  for (let y = box.y; y < box.y + box.h; y++) for (let x = box.x; x < box.x + box.w; x++) if (ink(frame, x, y)) points.push([x, y]);
+  if (points.length < h * 2) return undefined;
+  const decimals = shownDecimals(frames, box, ink);
+  return { ...box, color: hex(dominantAt(frame, points)), size: Math.max(7, Math.round(h * 1.3)), onKnob: true, ...(decimals !== undefined ? { decimals } : {}) };
+}
+
+/**
+ * Digits after the point in a value text, counted on the glyphs: columns with ink separate them, a decimal point
+ * is a small blot at the bottom. The most frequent count over all frames (a frame may show an integer like "200").
+ */
+function shownDecimals(frames: Image[], box: Box, ink: (f: Image, x: number, y: number) => boolean): number | undefined {
+  const counts = new Map<number, number>();
+  for (const f of frames) {
+    const glyphs: { x0: number; x1: number; top: number; bottom: number }[] = [];
+    let open: (typeof glyphs)[number] | undefined;
+    for (let x = box.x; x <= box.x + box.w; x++) {
+      let top = Infinity, bottom = -Infinity;
+      if (x < box.x + box.w) for (let y = box.y; y < box.y + box.h; y++) if (ink(f, x, y)) { top = Math.min(top, y); bottom = Math.max(bottom, y); }
+      if (bottom >= top) open = open ? { ...open, x1: x, top: Math.min(open.top, top), bottom: Math.max(open.bottom, bottom) } : { x0: x, x1: x, top, bottom };
+      else if (open) { glyphs.push(open); open = undefined; }
+    }
+    if (glyphs.length < 2) continue;
+    const dot = glyphs.findIndex((g) => g.x1 - g.x0 + 1 <= box.h * 0.35 && g.bottom - g.top + 1 <= box.h * 0.4 && g.bottom >= box.y + box.h * 0.6);
+    const n = dot >= 0 ? glyphs.length - dot - 1 : 0;
+    if (n <= 4) counts.set(n, (counts.get(n) ?? 0) + 1);
+  }
+  const best = [...counts].sort((a, b) => b[1] - a[1])[0];
+  return best && best[1] >= frames.length * 0.4 ? best[0] : undefined;
 }
 
 /**
@@ -2178,6 +2278,14 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   const controls = footprints.map((fp) => analyzeControl(fp, noise)).filter((c): c is Control => Boolean(c))
     .filter((c) => c.x >= -2 && c.y >= -2 && c.x + c.w <= width + 2 && c.y + c.h <= height + 2 && c.w * c.h <= width * height * 0.08);
   splitSharedValues(controls);
+  // values on knobs of one editor share their format (majority): a point stuck to the next digit is no integer
+  const onKnob = controls.filter((c) => c.readout?.onKnob && c.readout.decimals !== undefined);
+  if (onKnob.length >= 3) {
+    const votes = new Map<number, number>();
+    for (const c of onKnob) votes.set(c.readout!.decimals!, (votes.get(c.readout!.decimals!) ?? 0) + 1);
+    const [decimals, n] = [...votes].sort((a, b) => b[1] - a[1])[0]!;
+    if (n > onKnob.length / 2) for (const c of onKnob) c.readout!.decimals = decimals;
+  }
 
   // merge overlapping display regions
   const displays: Display[] = eqDisplay ? [eqDisplay] : [];
@@ -2314,6 +2422,12 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
   const readBox = (i: number) => (plausibleText(ocr[i]) && ocr[i]!.box ? ocr[i]!.box! : blocks[i]!.box);
   const wordCounts = new Map<string, number>();
   for (const c of controls) for (const w of new Set(c.name.toLowerCase().split(/\s+/))) wordCounts.set(w, (wordCounts.get(w) ?? 0) + 1);
+  // A parameter name stands in for an unreadable block only where nothing else was read there ("4" above a knob
+  // is no "Knee") and where the block is as tall as the labels that were read (a logo badge is no "SIDECHAIN").
+  const readHeights = blocks.flatMap((b, i) => (readText(i) && /\p{L}{2}/u.test(ocr[i]!.text) ? [readBox(i).h] : []));
+  const labelHeight = readHeights.length >= 2 ? percentile(readHeights, 0.5) : undefined;
+  const readOther = (i: number) => Boolean(findTesseract() && ocr[i] && ocr[i]!.confidence >= 60 && ocr[i]!.text.trim().length > 0);
+  const inventable = (i: number) => !readOther(i) && (labelHeight === undefined || Math.abs(Math.log(blocks[i]!.box.h / labelHeight)) < 0.35);
   const texts: TextItem[] = [];
   const used = new Set<number>();
 
@@ -2389,7 +2503,7 @@ export async function analyzeGui(probe: GuiProbe, parameters: Parameter[], plugi
         return { ...b, score, align: (side === score ? "left" : "center") as "left" | "center" };
       })
       .filter((b) => Number.isFinite(b.score))
-      .map((b) => ({ ...b, text: readText(b.i) ?? nameLike(ocr[b.i]?.text, c.name) ?? fitLabel(c.name, b.box.w, b.box.h, b.uppercase, wordCounts) }))
+      .map((b) => ({ ...b, text: readText(b.i) ?? nameLike(ocr[b.i]?.text, c.name) ?? (inventable(b.i) ? fitLabel(c.name, b.box.w, b.box.h, b.uppercase, wordCounts) : undefined) }))
       .filter((b): b is typeof b & { text: string } => b.text !== undefined);
     const best = candidates.sort((a, b) => a.score - b.score)[0];
     if (!best) continue;

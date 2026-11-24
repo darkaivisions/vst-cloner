@@ -30,7 +30,26 @@ export function renderSvg(model: GuiModel, values: Map<number, number> = new Map
 
   for (const d of model.displays) {
     if (d.kind === "meter") continue; // drawn after the texts (needle only)
-    if (d.kind === "bar") continue; // empty without audio: the unlit bar is part of the static layout
+    if (d.kind === "bar") {
+      // unlit, as the clone shows it without audio (same rules as LevelBar in CloneEditor.cpp)
+      const bar = d.bar!, off = bar.offColor ?? d.background;
+      const vertical = (bar.origin ?? "bottom") === "bottom" || bar.origin === "top";
+      if (!bar.segments) {
+        out.push(`<rect x="${d.x}" y="${d.y}" width="${d.w}" height="${d.h}" fill="${off}"/>`);
+        continue;
+      }
+      const pitch = (vertical ? d.h : d.w) / bar.segments;
+      for (let k = 0; k < bar.segments; k++) {
+        const from = k * pitch + pitch * 0.1, to = (k + 1) * pitch - pitch * 0.1;
+        let x = vertical ? d.x : d.x + from, y = vertical ? d.y + from : d.y, w = vertical ? d.w : to - from, h = vertical ? to - from : d.h;
+        if (vertical) { x += w * 0.08; w *= 0.84; } else { y += h * 0.08; h *= 0.84; }
+        if (bar.round) {
+          const r = Math.min(w, h) / 2;
+          out.push(`<circle cx="${(x + w / 2).toFixed(2)}" cy="${(y + h / 2).toFixed(2)}" r="${r.toFixed(2)}" fill="${off}"/>`);
+        } else out.push(`<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${w.toFixed(2)}" height="${h.toFixed(2)}" fill="${off}"/>`);
+      }
+      continue;
+    }
     out.push(`<rect x="${d.x}" y="${d.y}" width="${d.w}" height="${d.h}" fill="${fill(d.backgroundTop && d.backgroundBottom ? { color: d.backgroundTop, gradient: d.backgroundBottom } : { color: d.background })}"/>`);
     const fMin = d.fMin ?? 10, fMax = d.fMax ?? 30000, top = d.dbTop ?? 13.3, bottom = d.dbBottom ?? -13.3;
     const plotH = d.h - (d.labelBand ?? 0);
@@ -82,14 +101,23 @@ function arcPath(cx: number, cy: number, r: number, a0: number, a1: number): str
   return `M${x0} ${y0} A${r} ${r} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${x1} ${y1}`;
 }
 
+/** the value as the original shows it: the plugin's text, with the digits after the point the original shows */
+export function shownValue(text: string, decimals: number | undefined): string {
+  if (decimals === undefined || !/^\s*[-+]?\d+(\.\d+)?\s*$/.test(text)) return text;
+  return Number(text).toFixed(decimals);
+}
+
 function renderControl(c: Control, value: number, fill: (f: Fill) => string): string {
   const parts: string[] = [];
-  if (c.readout) {
-    const r = c.readout;
+  const readout = () => {
+    const r = c.readout!;
     if (r.background) parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" fill="${r.background}"${r.border ? ` stroke="${r.border}" stroke-width="1"` : ""}/>`);
-    const text = c.valueText && value === c.value ? c.valueText : (value * 100).toFixed(2);
-    parts.push(`<text x="${r.x + r.w / 2}" y="${r.y + r.h / 2}" font-size="${Math.min(r.size, r.h * 0.85)}" fill="${r.color}" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" textLength="${Math.min(r.w - 4, esc(text).length * r.size * 0.55)}" lengthAdjust="spacingAndGlyphs">${esc(text)}</text>`);
-  }
+    const text = shownValue(c.valueText && value === c.value ? c.valueText : (value * 100).toFixed(2), r.decimals);
+    const size = r.onKnob ? r.h * 1.3 : Math.min(r.size, r.h * 0.85);
+    parts.push(`<text x="${r.x + r.w / 2}" y="${r.y + r.h / 2}" font-size="${size}" fill="${r.color}" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" textLength="${Math.min(r.onKnob ? r.w : r.w - 4, esc(text).length * size * 0.55)}" lengthAdjust="spacingAndGlyphs">${esc(text)}</text>`);
+  };
+  // a value on the knob is drawn over it, any other one first
+  if (c.readout && !c.readout.onKnob) readout();
 
   if (c.kind === "rotary" && c.rotary) {
     const s = c.rotary;
@@ -132,5 +160,6 @@ function renderControl(c: Control, value: number, fill: (f: Fill) => string): st
     const size = Math.min(c.choice.size, c.h * 0.85);
     parts.push(`<text x="${c.x + c.w / 2}" y="${c.y + c.h / 2}" font-size="${size}" fill="${c.choice.text}" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif"${option.length * size * 0.55 > c.w - 4 ? ` textLength="${c.w - 4}" lengthAdjust="spacingAndGlyphs"` : ""}>${esc(option)}</text>`);
   }
+  if (c.readout?.onKnob) readout();
   return parts.join("");
 }

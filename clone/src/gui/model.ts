@@ -103,6 +103,10 @@ export interface Readout {
   background?: string;
   border?: string;
   size: number;
+  /** the value is written on the knob itself (drawn over it) */
+  onKnob?: boolean;
+  /** digits after the point the original shows ("10.0" for 10.000000) */
+  decimals?: number;
 }
 
 /** value: text showing the parameter value (changed by dragging), style in `choice` */

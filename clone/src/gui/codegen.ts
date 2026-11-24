@@ -92,8 +92,8 @@ export function generateGuiHeader(gui: GuiModel | undefined, params: CloneParam[
           : ["#000000", "#000000", 0];
     const ro = c.readout;
     const readout = ro
-      ? `{ true, ${f(ro.x)}, ${f(ro.y)}, ${f(ro.w)}, ${f(ro.h)}, ${f(ro.size * 0.85)}, ${argb(ro.color)}, ${ro.background ? "true" : "false"}, ${argb(ro.background)}, ${ro.border ? "true" : "false"}, ${argb(ro.border)} }`
-      : "{ false, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0u, false, 0u, false, 0u }";
+      ? `{ true, ${f(ro.x)}, ${f(ro.y)}, ${f(ro.w)}, ${f(ro.h)}, ${f(ro.onKnob ? ro.h * 1.3 : ro.size * 0.85)}, ${argb(ro.color)}, ${ro.background ? "true" : "false"}, ${argb(ro.background)}, ${ro.border ? "true" : "false"}, ${argb(ro.border)}, ${ro.onKnob ? "true" : "false"}, ${ro.decimals ?? -1} }`
+      : "{ false, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0u, false, 0u, false, 0u, false, -1 }";
     return `{ ${cloneIndex.get(c.param)}, ${KIND[c.kind]}, ${f(c.x)}, ${f(c.y)}, ${f(c.w)}, ${f(c.h)}, ${rotary}, ${argb(c1 as string)}, ${argb(c2 as string)}, ${f(f1 as number)}, ${readout} }`;
   }));
 

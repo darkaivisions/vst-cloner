@@ -32,6 +32,8 @@ struct Readout
 {
     bool present; float x, y, w, h, size;
     uint32_t color; bool hasBackground; uint32_t background; bool hasBorder; uint32_t border;
+    /** onKnob: written on the knob (drawn over it); decimals: digits after the point the original shows (−1: as the parameter's text) */
+    bool onKnob; int decimals;
 };
 
 /** kind: 0 rotary, 1 horizontal slider, 2 vertical slider, 3 toggle, 4 choice, 5 value text.

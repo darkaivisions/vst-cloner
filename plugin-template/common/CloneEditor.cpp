@@ -1176,12 +1176,23 @@ public:
             drawFitted (g, juce::String::fromUTF8 (t.text), { t.x, t.y, t.w, t.h }, t.h, t.bold, t.align, t.size);
         }
 
+        drawReadouts (g, false);
+    }
+
+    /** values written on knobs lie over the knob components */
+    void paintOverChildren (juce::Graphics& g) override
+    {
+        drawReadouts (g, true);
+    }
+
+    void drawReadouts (juce::Graphics& g, bool onKnob)
+    {
         for (int i = 0; i < clonegui::numControls; ++i)
         {
             const auto& c = clonegui::controls[i];
             const auto& r = c.readout;
             auto* parameter = processor.parameter (c.param);
-            if (! r.present || parameter == nullptr)
+            if (! r.present || parameter == nullptr || r.onKnob != onKnob)
                 continue;
             const juce::Rectangle<float> box (r.x, r.y, r.w, r.h);
             if (r.hasBackground)
@@ -1194,9 +1205,16 @@ public:
                 g.setColour (colour (r.border));
                 g.drawRect (box, 1.0f);
             }
+            auto text = parameter->getCurrentValueAsText().trim();
+            // the digits after the point the original shows ("10.0" where the parameter says 10.000000 ms); a value
+            // on a knob is the bare number, as the original writes it there
+            const auto number = text.initialSectionContainingOnly ("0123456789.-+");
+            if (r.decimals >= 0 && number.containsAnyOf ("0123456789"))
+                text = juce::String (number.getDoubleValue(), r.decimals) + (r.onKnob ? juce::String() : text.substring (number.length()));
             g.setColour (colour (r.color));
             g.setFont (makeFont (r.size, false));
-            g.drawText (parameter->getCurrentValueAsText(), box, juce::Justification::centred, false);
+            // (a value on a knob may be wider than the band measured on the narrow digits of the original font)
+            g.drawText (text, r.onKnob ? box.expanded (r.h, r.h * 0.5f) : box, juce::Justification::centred, false);
         }
     }
 
